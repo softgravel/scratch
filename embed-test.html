@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embed Test</title>
+<style>
+  body { background:#111; color:#eee; font-family: -apple-system, sans-serif; padding:16px; }
+  h3 { font-size:15px; }
+  .note { font-size:13px; color:#999; margin-bottom:20px; }
+  .embed-wrap { margin-bottom: 24px; border: 1px solid #333; padding: 10px; border-radius: 8px; }
+</style>
+</head>
+<body>
+<h3>Testing TikTok's official embed widget (real video)</h3>
+<p class="note">Watch what happens below: does real video actually render? Does it play automatically, or do you need to tap it? Does it feel heavy/slow?</p>
+<div id="embeds">Loading real embed data...</div>
+
+<script>
+const testIds = ["7660911615612685599", "7672328874046344480"];
+
+async function run() {
+  const container = document.getElementById('embeds');
+  container.innerHTML = '';
+  for (const id of testIds) {
+    const wrap = document.createElement('div');
+    wrap.className = 'embed-wrap';
+    wrap.innerHTML = '<div>Loading ' + id + '...</div>';
+    container.appendChild(wrap);
+    try {
+      const oembedUrl = 'https://www.tiktok.com/oembed?url=' +
+        encodeURIComponent('https://www.tiktok.com/@i/video/' + id);
+      const res = await fetch(oembedUrl);
+      const data = await res.json();
+      wrap.innerHTML = data.html;
+    } catch (e) {
+      wrap.innerHTML = 'FAILED for ' + id + ': ' + e.message;
+    }
+  }
+  // Load TikTok's embed script once, after the blockquotes exist
+  const script = document.createElement('script');
+  script.src = 'https://www.tiktok.com/embed.js';
+  script.async = true;
+  document.body.appendChild(script);
+}
+run();
+</script>
+</body>
+</html>
