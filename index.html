@@ -115,11 +115,10 @@
     scroll-snap-align: start;
     position: relative;
     overflow: hidden;
-    /* Skip layout/paint work for slides that are off-screen (Safari 18+, Chrome).
-       contain-intrinsic-size reserves the right height so scrolling stays correct. */
-    content-visibility: auto;
-    contain-intrinsic-size: 100vw 100vh;
-    contain: layout paint style;
+    /* NOTE: content-visibility:auto was removed here — it suspended off-screen
+       player iframes and disrupted IntersectionObserver playback detection,
+       causing autoplay to stop after a couple of videos. DOM windowing
+       (MAX_LIVE_SLIDES) handles the performance side instead. */
   }
   .slide-media {
     position: absolute; inset: 0;
@@ -147,6 +146,7 @@
     position: absolute; inset: 0;
     z-index: 4;
     background: transparent;
+    touch-action: pan-y; /* let vertical swipes scroll the feed; we only handle taps/holds */
   }
   /* Opaque masks covering the screen regions where TikTok renders its own
      clickable buttons (bottom caption/"Discover more" bar and the right-side
@@ -174,6 +174,26 @@
     text-shadow: 0 2px 8px rgba(0,0,0,0.5);
   }
   .slide-media.paused .pause-icon { opacity: 1; }
+  .slide-media.needs-tap::after {
+    content: '\25B6';
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    z-index: 6;
+    width: 76px; height: 76px; border-radius: 50%;
+    background: rgba(0,0,0,0.5); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px; padding-left: 5px;
+    pointer-events: none;
+  }
+  .slide-media.ffwd::after {
+    content: '\26A1 2\00D7';
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    z-index: 6;
+    font-size: 20px; font-weight: 700; color: #fff;
+    background: rgba(0,0,0,0.5); padding: 6px 14px; border-radius: 20px;
+    pointer-events: none;
+  }
   .play-badge {
     position: absolute; top: 50%; left: 50%;
     transform: translate(-50%,-50%);
@@ -236,6 +256,17 @@
     background: rgba(0,0,0,0.4);
     padding: 6px 12px; border-radius: 20px;
   }
+  #debugLog {
+    display: none;
+    position: absolute; left: 0; right: 0; bottom: 0;
+    max-height: 40vh; overflow-y: auto;
+    margin: 0; padding: 8px 10px;
+    background: rgba(0,0,0,0.82); color: #5f5;
+    font-family: ui-monospace, monospace; font-size: 10px; line-height: 1.35;
+    z-index: 40; white-space: pre-wrap;
+    pointer-events: none;
+  }
+  #debugLog.show { display: block; }
   .subtle-back {
     width: 30px; height: 30px; border-radius: 50%;
     border: none; background: rgba(0,0,0,0.3); color: rgba(255,255,255,0.75);
@@ -256,6 +287,24 @@
     padding: max(16px, env(safe-area-inset-top)) 14px 10px;
   }
   .grid-title { font-size: 15px; font-weight: 600; }
+  #datePanel {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: #161616; border-top: 1px solid var(--line);
+    max-height: 55vh; overflow-y: auto;
+    transform: translateY(100%); transition: transform 0.25s ease;
+    z-index: 16; padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  #datePanel.open { transform: translateY(0); }
+  .date-panel-inner { padding: 8px 12px; }
+  .date-year-hdr {
+    font-size: 13px; font-weight: 700; color: var(--accent);
+    padding: 12px 4px 6px; position: sticky; top: 0; background: #161616;
+  }
+  .date-month-row {
+    display: inline-flex; margin: 3px; padding: 7px 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    font-size: 13px; color: var(--text);
+  }
   .grid-scroll {
     flex: 1;
     overflow-y: auto;
@@ -405,9 +454,13 @@
   <div class="grid-top">
     <button class="subtle-back" id="gridBack">&lsaquo;</button>
     <div class="grid-title" id="gridTitle">All Videos</div>
+    <button class="subtle-back" id="dateJumpBtn" style="font-size:15px; display:none;">&#128197;</button>
   </div>
   <div class="grid-scroll" id="gridScroll">
     <div class="thumb-grid" id="thumbGrid"></div>
+  </div>
+  <div id="datePanel">
+    <div class="date-panel-inner" id="datePanelInner"></div>
   </div>
 </div>
 
@@ -416,9 +469,10 @@
   <div class="feed-top">
     <button class="subtle-back" id="feedBack">&lsaquo;</button>
     <div class="feed-label" id="feedLabel">All Videos</div>
-    <div style="width:30px"></div>
+    <button class="subtle-back" id="debugToggle" style="font-size:14px;">&#128027;</button>
   </div>
   <div class="reel" id="reel"></div>
+  <pre id="debugLog"></pre>
 </div>
 
 <!-- ============ Category picker sheet ============ -->
@@ -688,11 +742,12 @@ setInterval(() => {
   try { localStorage.setItem('thumb-cache', JSON.stringify(thumbCache)); } catch (e) {}
 }, 2000);
 
-let MAX_CONCURRENT_FETCHES = 4;
+let MAX_CONCURRENT_FETCHES = 6;
 let activeFetches = 0;
 // Pending requests keyed by id, each carrying a live priority() function so we
 // can always pick whatever is closest to the viewport right now.
 const pending = new Map();
+const inFlight = new Map(); // id -> AbortController, so we can cancel on scroll-away
 let feedActive = false; // when the video feed is open, throttle thumbnails hard
 
 function requestThumbnail(id, onReady, onFail, priorityFn) {
@@ -706,6 +761,10 @@ function requestThumbnail(id, onReady, onFail, priorityFn) {
 
 function cancelThumbnail(id) {
   pending.delete(id);
+  // Also abort an in-flight fetch for something we've scrolled well past,
+  // freeing a slot for what's actually on screen now.
+  const ctrl = inFlight.get(id);
+  if (ctrl) { ctrl.abort(); inFlight.delete(id); }
 }
 
 function retryThumbnail(id, onReady, onFail, priorityFn) {
@@ -728,19 +787,97 @@ function pumpQueue() {
 
     activeFetches++;
     const { id, onReady, onFail } = best;
+    const ctrl = new AbortController();
+    inFlight.set(id, ctrl);
     const oembedUrl = 'https://www.tiktok.com/oembed?url=' +
       encodeURIComponent('https://www.tiktok.com/@i/video/' + id);
-    fetch(oembedUrl)
+    fetch(oembedUrl, { signal: ctrl.signal })
       .then(res => res.json())
       .then(data => {
         thumbCache[id] = data.thumbnail_url || null;
         saveThumbCache();
         if (data.thumbnail_url) onReady(data.thumbnail_url); else if (onFail) onFail();
       })
-      .catch(() => { thumbCache[id] = null; saveThumbCache(); if (onFail) onFail(); })
-      .finally(() => { activeFetches--; pumpQueue(); });
+      .catch((err) => {
+        // Aborted (scrolled away) — leave uncached so it can retry later. Real
+        // failures cache null so we don't hammer a dead video.
+        if (err && err.name === 'AbortError') return;
+        thumbCache[id] = null; saveThumbCache(); if (onFail) onFail();
+      })
+      .finally(() => {
+        inFlight.delete(id);
+        activeFetches--;
+        pumpQueue();
+      });
   }
 }
+
+// ---------- Date jump navigation (for chronological views) ----------
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function setupDateJump(list, label) {
+  const btn = document.getElementById('dateJumpBtn');
+  // Only offer date jump for the chronological libraries (All Videos, Uncategorized).
+  const chronological = (label === 'All Videos' || label === 'Uncategorized');
+  btn.style.display = chronological ? '' : 'none';
+  document.getElementById('datePanel').classList.remove('open');
+  if (!chronological) return;
+
+  // Build an index: first list-position where each year/month appears.
+  // List is newest-first (as exported), so scanning gives descending periods.
+  const index = []; // { year, month, idx }
+  let lastKey = '';
+  list.forEach((item, i) => {
+    if (!item.date) return;
+    const d = new Date(item.date.replace(' ', 'T'));
+    if (isNaN(d)) return;
+    const key = d.getFullYear() + '-' + d.getMonth();
+    if (key !== lastKey) {
+      index.push({ year: d.getFullYear(), month: d.getMonth(), idx: i });
+      lastKey = key;
+    }
+  });
+  buildDatePanel(index);
+}
+
+function buildDatePanel(index) {
+  const inner = document.getElementById('datePanelInner');
+  inner.innerHTML = '';
+  let currentYear = null;
+  index.forEach(entry => {
+    if (entry.year !== currentYear) {
+      currentYear = entry.year;
+      const h = document.createElement('div');
+      h.className = 'date-year-hdr';
+      h.textContent = currentYear;
+      inner.appendChild(h);
+    }
+    const chip = document.createElement('span');
+    chip.className = 'date-month-row';
+    chip.textContent = MONTH_NAMES[entry.month];
+    chip.onclick = () => jumpToIndex(entry.idx);
+    inner.appendChild(chip);
+  });
+}
+
+// Ensure tiles are rendered up to targetIdx, then scroll it into view.
+function jumpToIndex(targetIdx) {
+  document.getElementById('datePanel').classList.remove('open');
+  // Render enough tiles to include the target.
+  while (gridRenderedCount <= targetIdx && gridRenderedCount < currentGridList.length) {
+    appendGridTiles(GRID_PAGE_SIZE);
+  }
+  const grid = document.getElementById('thumbGrid');
+  const tiles = grid.querySelectorAll('.thumb-tile');
+  const target = tiles[targetIdx];
+  if (target) {
+    target.scrollIntoView({ behavior: 'instant', block: 'start' });
+  }
+}
+
+document.getElementById('dateJumpBtn').onclick = () => {
+  document.getElementById('datePanel').classList.toggle('open');
+};
 
 // ---------- Grid view (thumbnail library per category) ----------
 const GRID_PAGE_SIZE = 30;
@@ -754,10 +891,12 @@ let gridScrollState = {}; // label -> { renderedCount, scrollTop }
 function openGrid(list, label) {
   currentGridList = list;
   currentGridLabel = label;
+  feedActive = false; // ensure thumbnails aren't throttled while browsing the grid
   document.getElementById('gridTitle').textContent = label;
   const grid = document.getElementById('thumbGrid');
   grid.innerHTML = '';
   gridRenderedCount = 0;
+  setupDateJump(list, label);
 
   if (gridSentinelObserver) gridSentinelObserver.disconnect();
   if (gridThumbObserver) gridThumbObserver.disconnect();
@@ -768,9 +907,8 @@ function openGrid(list, label) {
       if (entry.isIntersecting) {
         const tile = entry.target;
         const img = tile.querySelector('img');
-        if (img && img.src) return; // already has its thumbnail — nothing to do
+        if (img && img.src) { gridThumbObserver.unobserve(tile); return; }
         const markUnavailable = () => tile.classList.add('unavailable');
-        // Priority = distance of this tile from the centre of the viewport now.
         const priorityFn = () => {
           const scroller = document.getElementById('gridScroll');
           const r = tile.getBoundingClientRect();
@@ -784,10 +922,13 @@ function openGrid(list, label) {
             im.onerror = () => retryThumbnail(id, (freshUrl) => { im.src = freshUrl; }, markUnavailable, priorityFn);
             im.src = url;
           }
-        }, markUnavailable, priorityFn);
+          // Loaded (or resolved) — stop watching this tile to keep the
+          // observed set small; otherwise thousands of watched tiles flood
+          // the callback on every scroll and loading stalls.
+          gridThumbObserver.unobserve(tile);
+        }, () => { markUnavailable(); gridThumbObserver.unobserve(tile); }, priorityFn);
       } else {
-        // Scrolled out of the prefetch margin before we fetched it — cancel to
-        // free the queue for what's actually on screen.
+        // Scrolled out of the prefetch margin before we fetched it — cancel.
         cancelThumbnail(id);
       }
     });
@@ -875,6 +1016,17 @@ function playerSrc(id) {
   return 'https://www.tiktok.com/player/v1/' + id + '?' + params.toString();
 }
 
+// ---------- Debug overlay (toggle with the 🐞 button; helps trace playback) ----------
+let DEBUG = false;
+const debugLines = [];
+function dlog(msg) {
+  if (!DEBUG) return;
+  const el = document.getElementById('debugLog');
+  debugLines.unshift(new Date().toLocaleTimeString().slice(3) + ' ' + msg);
+  if (debugLines.length > 40) debugLines.pop();
+  if (el) el.textContent = debugLines.join('\n');
+}
+
 function sendToPlayer(iframe, type, value) {
   if (iframe && iframe.contentWindow) {
     iframe.contentWindow.postMessage({ 'x-tiktok-player': true, type, value }, '*');
@@ -895,9 +1047,16 @@ function bindPlayerMessages() {
       const f = s.querySelector('iframe');
       if (f && f.contentWindow === e.source) sourceSlide = s;
     });
-    if (!sourceSlide) return;
+    if (!sourceSlide) { dlog('msg ' + d.type + ' from UNMATCHED iframe'); return; }
     const iframe = sourceSlide.querySelector('iframe');
     const isActive = sourceSlide === currentPlayingSlide;
+    const short = (sourceSlide.dataset.id || '').slice(-4);
+    if (d.type !== 'onCurrentTime') dlog('msg ' + d.type + (d.value !== undefined ? ':' + JSON.stringify(d.value) : '') + ' ' + short + (isActive ? ' [active]' : ''));
+    if (d.type === 'onCurrentTime' && d.value !== undefined) {
+      // Track playback position for press-hold fast-forward.
+      sourceSlide._t = (typeof d.value === 'object' && d.value.currentTime !== undefined)
+        ? d.value.currentTime : Number(d.value);
+    }
 
     switch (d.type) {
       case 'onPlayerReady':
@@ -910,27 +1069,36 @@ function bindPlayerMessages() {
         break;
       case 'onStateChange':
         // value: 0 ended, 1 playing, 2 paused, 3 buffering, -1 init.
+        // Record the real state as the single source of truth for tap toggling.
+        sourceSlide._state = d.value;
         if (isActive) {
-          if ((d.value === 2 || d.value === 0) && sourceSlide.dataset.userPaused !== 'true') {
-            // Active video stopped without a user pause — restart it.
-            sendToPlayer(iframe, 'play');
-          }
           if (d.value === 1) {
-            // Video is now actually playing: re-assert the session mute state
-            // (this is what makes unmute STICK across new slides) and clear overlay.
+            if (sourceSlide._playTimer) { clearInterval(sourceSlide._playTimer); sourceSlide._playTimer = null; }
             sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
-            sourceSlide.querySelector('.slide-media').classList.remove('paused');
+            sourceSlide.querySelector('.slide-media').classList.remove('paused', 'needs-tap');
+          }
+          if (d.value === 2) {
+            sourceSlide.querySelector('.slide-media').classList.add('paused');
           }
         } else {
-          // A non-active player that somehow started: keep it paused.
           if (d.value === 1) sendToPlayer(iframe, 'pause');
         }
         break;
       case 'onPlayerError':
-        // 3002 = AUTOPLAY_ERROR (browser blocked autoplay). Retry muted, which is allowed.
+        dlog('ERR ' + JSON.stringify(d.value) + ' ' + short);
+        // 3002 = AUTOPLAY_ERROR: iOS blocked autoplay. Muted autoplay is far more
+        // permissively allowed, so force-mute and retry a few times; if it still
+        // fails, only a real user gesture can start it — show a tap-to-play button.
         if (d.value && d.value.errorCode === 3002 && isActive) {
-          sendToPlayer(iframe, 'mute');
-          sendToPlayer(iframe, 'play');
+          const s = sourceSlide;
+          s._autoplayRetries = (s._autoplayRetries || 0) + 1;
+          if (s._autoplayRetries <= 3) {
+            sendToPlayer(iframe, 'mute');
+            setTimeout(() => { if (s === currentPlayingSlide) sendToPlayer(iframe, 'play'); }, 150 * s._autoplayRetries);
+          } else {
+            // Give up on auto — surface a tap-to-play overlay for this slide.
+            s.querySelector('.slide-media').classList.add('needs-tap');
+          }
         }
         break;
     }
@@ -955,59 +1123,71 @@ function activateSlide(slide) {
 }
 
 function deactivateSlide(slide) {
-  // Pause but KEEP the iframe only if it's the NEXT slide after the active one
-  // (warm buffer in scroll direction); tear everything else down to stay light.
+  if (slide._playTimer) { clearInterval(slide._playTimer); slide._playTimer = null; }
   const iframe = slide.querySelector('iframe');
   if (!iframe) return;
-  const keepWarm = slide === currentPlayingSlide?.nextElementSibling;
-  sendToPlayer(iframe, 'pause');
-  if (!keepWarm) {
-    iframe.remove();
-    slide.querySelector('.slide-media').classList.remove('has-player');
-  }
+  // Fully tear down — no lingering paused players (which can get stuck).
+  iframe.remove();
+  slide.querySelector('.slide-media').classList.remove('has-player');
   delete slide.dataset.userPaused;
   slide.querySelector('.slide-media')?.classList.remove('paused');
 }
 
-// Pre-create only the NEXT slide's iframe (paused), deferred so it doesn't
-// compete with the active video's load. Warming both neighbours was too heavy.
+// Neighbour warming is intentionally disabled: pre-loading a player and then
+// pausing it (because it's not active yet) can trap TikTok's player in a state
+// where it refuses to autoplay once it does become active — the likely cause of
+// autoplay dying after the first couple of videos. We load fresh on activation.
 function warmNeighbours(slide) {
-  const n = slide.nextElementSibling;
-  if (n && n.classList.contains('slide') && !n.querySelector('iframe') &&
-      !n.classList.contains('unavailable-slide')) {
-    setTimeout(() => {
-      // Only warm if it's still the neighbour of the active slide.
-      if (currentPlayingSlide && n === currentPlayingSlide.nextElementSibling) {
-        activateSlide(n);
-        const f = n.querySelector('iframe');
-        setTimeout(() => sendToPlayer(f, 'pause'), 400);
-      }
-    }, 900);
-  }
+  /* no-op */
 }
 
 // Make the active slide play with the session's current mute state.
+// Retries a few times because a warmed/just-created player may not be ready
+// to accept 'play' immediately, and a single lost command = a stuck video.
 function ensurePlaying(slide) {
   const iframe = slide.querySelector('iframe');
   if (!iframe) return;
   delete slide.dataset.userPaused;
-  sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
-  sendToPlayer(iframe, 'play');
   slide.querySelector('.slide-media').classList.remove('paused');
+
+  if (slide._playTimer) clearInterval(slide._playTimer);
+  let tries = 0;
+  const attempt = () => {
+    // Stop retrying if this slide is no longer the active one, or the user paused it.
+    if (slide !== currentPlayingSlide || slide.dataset.userPaused === 'true') {
+      clearInterval(slide._playTimer); slide._playTimer = null; return;
+    }
+    const f = slide.querySelector('iframe');
+    if (f) {
+      sendToPlayer(f, desiredMuted ? 'mute' : 'unMute');
+      sendToPlayer(f, 'play');
+      dlog('ensurePlaying try ' + (tries+1) + ' ' + (slide.dataset.id||'').slice(-4));
+    }
+    if (++tries >= 6) { clearInterval(slide._playTimer); slide._playTimer = null; }
+  };
+  attempt();
+  slide._playTimer = setInterval(attempt, 500);
 }
 
 function togglePlay(slide) {
   const iframe = slide.querySelector('iframe');
   if (!iframe) return;
   const media = slide.querySelector('.slide-media');
-  if (slide.dataset.userPaused === 'true') {
-    delete slide.dataset.userPaused;
-    sendToPlayer(iframe, 'play');
-    media.classList.remove('paused');
-  } else {
+  // Use the player's real reported state (1=playing) as the source of truth.
+  const isPlaying = slide._state === 1;
+  if (isPlaying) {
+    // Pause. Stop the autoplay-retry loop so it can't immediately re-play.
+    if (slide._playTimer) { clearInterval(slide._playTimer); slide._playTimer = null; }
     slide.dataset.userPaused = 'true';
     sendToPlayer(iframe, 'pause');
     media.classList.add('paused');
+    dlog('tap → pause ' + (slide.dataset.id||'').slice(-4));
+  } else {
+    delete slide.dataset.userPaused;
+    sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
+    sendToPlayer(iframe, 'play');
+    media.classList.remove('paused', 'needs-tap');
+    dlog('tap → play ' + (slide.dataset.id||'').slice(-4));
   }
 }
 
@@ -1032,7 +1212,9 @@ function openFeed(list, label, startIndex = 0) {
   playObserver = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       const slide = entry.target;
+      const short = (slide.dataset.id || '').slice(-4);
       if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+        dlog('▶ active ' + short + ' (ratio ' + entry.intersectionRatio.toFixed(2) + ')');
         if (currentPlayingSlide && currentPlayingSlide !== slide) {
           deactivateSlide(currentPlayingSlide);
         }
@@ -1042,6 +1224,7 @@ function openFeed(list, label, startIndex = 0) {
         warmNeighbours(slide);
         activeSlideItem = currentFeedList.find(i => i.id === slide.dataset.id);
       } else if (!entry.isIntersecting) {
+        dlog('✕ leave ' + short);
         deactivateSlide(slide);
       }
     });
@@ -1071,6 +1254,32 @@ function openFeed(list, label, startIndex = 0) {
     if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
     scrollIdleTimer = setTimeout(() => { trimTop(); trimBottom(); }, 250);
   };
+
+  // CREATIVE AUTOPLAY ATTEMPT: iOS autoplay is not "sticky" — each video needs a
+  // *transient* user gesture at play time. A scroll/IntersectionObserver isn't one,
+  // but the finger-lift ending a swipe IS a real gesture. So when the user lifts
+  // their finger after swiping, we call play() on the centred slide from *inside*
+  // that touchend handler, which is the best shot at satisfying iOS per-video.
+  reel.addEventListener('touchend', () => {
+    // Let the snap settle, then play whatever is now centred — still within the
+    // gesture's grace window.
+    requestAnimationFrame(() => {
+      const centre = reel.scrollTop + reel.clientHeight / 2;
+      const slides = reel.querySelectorAll('.slide');
+      let best = null, bestDist = Infinity;
+      slides.forEach(s => {
+        const mid = s.offsetTop + s.offsetHeight / 2;
+        const dist = Math.abs(mid - centre);
+        if (dist < bestDist) { bestDist = dist; best = s; }
+      });
+      if (best && best.querySelector('iframe') && best.dataset.userPaused !== 'true') {
+        const f = best.querySelector('iframe');
+        sendToPlayer(f, desiredMuted ? 'mute' : 'unMute');
+        sendToPlayer(f, 'play');
+        dlog('swipe-end play ' + (best.dataset.id||'').slice(-4));
+      }
+    });
+  }, { passive: true });
 
   document.getElementById('feed').classList.add('open');
   feedActive = true;
@@ -1131,9 +1340,68 @@ function buildSlideEl(item) {
     img.src = url;
   }, markUnavailable, posterPriority);
 
-  // Transparent full-video tap layer: toggles play/pause in-app so a tap
-  // never reaches TikTok's own controls underneath.
-  slide.querySelector('.tap-catcher').onclick = () => togglePlay(slide);
+  // Robust tap vs hold vs scroll detection with a single pointer.
+  const tc = slide.querySelector('.tap-catcher');
+  let holdTimer = null, ffInterval = null;
+  let startX = 0, startY = 0, startT = 0, moved = false, holding = false;
+
+  const beginFF = () => {
+    holding = true;
+    const iframe = slide.querySelector('iframe');
+    if (!iframe) return;
+    slide.querySelector('.slide-media').classList.add('ffwd');
+    ffInterval = setInterval(() => {
+      const t = (slide._t || 0) + 0.5;
+      slide._t = t;
+      sendToPlayer(iframe, 'seekTo', t);
+    }, 250);
+  };
+  const stopFF = () => {
+    if (ffInterval) { clearInterval(ffInterval); ffInterval = null; }
+    slide.querySelector('.slide-media').classList.remove('ffwd');
+  };
+
+  const onTap = () => {
+    const media = slide.querySelector('.slide-media');
+    const iframe = slide.querySelector('iframe');
+    if (!iframe) return;
+    if (media.classList.contains('needs-tap')) {
+      media.classList.remove('needs-tap');
+      slide._autoplayRetries = 0;
+      sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
+      sendToPlayer(iframe, 'play');
+      delete slide.dataset.userPaused;
+      media.classList.remove('paused');
+      return;
+    }
+    togglePlay(slide);
+  };
+
+  tc.addEventListener('pointerdown', (e) => {
+    startX = e.clientX; startY = e.clientY; startT = Date.now();
+    moved = false; holding = false;
+    if (holdTimer) clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => { if (!moved) beginFF(); }, 350);
+  });
+  tc.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - startX) > 10 || Math.abs(e.clientY - startY) > 10) {
+      moved = true;
+      if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      // If they started fast-forwarding then moved to scroll, stop FF.
+      if (holding) stopFF();
+    }
+  });
+  tc.addEventListener('pointerup', (e) => {
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+    if (holding) { stopFF(); holding = false; return; }   // was a hold, not a tap
+    if (moved) return;                                     // was a scroll, not a tap
+    if (Date.now() - startT > 500) return;                 // too long for a tap
+    onTap();
+  });
+  tc.addEventListener('pointercancel', () => {
+    if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+    stopFF(); holding = false; moved = true;
+  });
 
   slide.querySelector('.tag-btn2').onclick = (e) => { e.stopPropagation(); openCategorySheet(item); };
   slide.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
@@ -1272,6 +1540,12 @@ function trimBottom() {
   }
   if (removed > 0) renderedEnd -= removed;
 }
+
+document.getElementById('debugToggle').onclick = () => {
+  DEBUG = !DEBUG;
+  document.getElementById('debugLog').classList.toggle('show', DEBUG);
+  dlog(DEBUG ? 'debug on' : '');
+};
 
 document.getElementById('feedBack').onclick = () => {
   if (currentPlayingSlide) deactivateSlide(currentPlayingSlide);
