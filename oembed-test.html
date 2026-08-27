@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>oEmbed Test</title>
+<style>
+  body { background:#111; color:#eee; font-family: -apple-system, sans-serif; padding:16px; }
+  .row { display:flex; gap:10px; align-items:center; margin-bottom:14px; border-bottom:1px solid #333; padding-bottom:14px; }
+  img { width:80px; height:100px; object-fit:cover; background:#222; border-radius:6px; }
+  .status { font-size:13px; }
+  .ok { color:#6f6; }
+  .fail { color:#f66; }
+  pre { font-size:11px; color:#888; white-space:pre-wrap; max-width:220px; }
+</style>
+</head>
+<body>
+<h3>Testing oEmbed thumbnail fetch (real video links)</h3>
+<div id="results">Running...</div>
+<script>
+const testUrls = [
+  "https://www.tiktokv.com/share/video/7660911615612685599/",
+  "https://www.tiktokv.com/share/video/7672328874046344480/",
+  "https://www.tiktokv.com/share/video/7672426385612328222/"
+];
+
+async function run() {
+  const container = document.getElementById('results');
+  container.innerHTML = '';
+  for (const url of testUrls) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = '<div class="status">Fetching ' + url + ' ...</div>';
+    container.appendChild(row);
+    try {
+      const res = await fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(url));
+      const data = await res.json();
+      row.innerHTML = `
+        <img src="${data.thumbnail_url}">
+        <div>
+          <div class="status ok">SUCCESS</div>
+          <div>${data.title ? data.title.slice(0,40) : ''}</div>
+          <div>${data.author_name || ''}</div>
+        </div>`;
+    } catch (e) {
+      row.innerHTML = `<div class="status fail">FAILED: ${e.message}</div>`;
+    }
+  }
+}
+run();
+</script>
+</body>
+</html>
