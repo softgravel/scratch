@@ -112,8 +112,6 @@
   .slide-media {
     position: absolute; inset: 0;
     background: linear-gradient(160deg, var(--a,#2a2a2a), var(--b,#101010));
-    transform: scale(1.0);
-    transition: transform 6s linear;
   }
   .slide-media img {
     position: absolute; inset: 0;
@@ -123,20 +121,23 @@
     transition: opacity 0.2s ease;
   }
   .slide-media img.loaded { opacity: 1; }
-  .slide.playing .slide-media {
-    transform: scale(1.08);
+  .slide-media iframe {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    border: 0;
+    z-index: 2;
   }
+  .slide-media.has-player .play-badge { display: none; }
   .play-badge {
     position: absolute; top: 50%; left: 50%;
     transform: translate(-50%,-50%);
     font-size: 13px;
-    color: rgba(255,255,255,0.25);
+    color: rgba(255,255,255,0.35);
     letter-spacing: 0.1em;
     text-transform: uppercase;
     font-weight: 600;
     pointer-events: none;
   }
-  .slide.playing .play-badge { display: none; }
   .slide-media.unavailable .play-badge {
     display: block !important;
     color: rgba(255,255,255,0.45);
@@ -150,19 +151,23 @@
   .slide-overlay {
     position: absolute; left: 0; right: 70px; bottom: max(28px, env(safe-area-inset-bottom));
     padding: 0 16px;
+    z-index: 3;
+    pointer-events: none;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
   }
   .slide-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
-  .slide-cat { font-size: 12px; color: rgba(255,255,255,0.65); }
+  .slide-cat { font-size: 12px; color: rgba(255,255,255,0.85); }
 
   .rail {
-    position: absolute; right: 10px; bottom: max(40px, env(safe-area-inset-bottom));
+    position: absolute; right: 10px; bottom: max(120px, calc(env(safe-area-inset-bottom) + 110px));
     display: flex; flex-direction: column; align-items: center; gap: 18px;
+    z-index: 3;
   }
   .rail .tag-btn, .rail .tag-btn2 {
     width: 46px; height: 46px;
     border-radius: 50%;
     border: none;
-    background: rgba(255,255,255,0.12);
+    background: rgba(0,0,0,0.45);
     color: var(--text);
     font-size: 18px;
   }
@@ -766,12 +771,54 @@ let renderedEnd = 0;
 let playObserver = null;
 let sentinelObserver = null;
 let topSentinelObserver = null;
+let currentPlayingSlide = null;
+
+function playerSrc(id) {
+  const params = new URLSearchParams({
+    rel: '0', autoplay: '1', loop: '1',
+    controls: '1', progress_bar: '1', play_button: '1', volume_control: '1',
+    fullscreen_button: '0', timestamp: '0', music_info: '0', description: '0',
+    native_context_menu: '0', closed_caption: '0'
+  });
+  return 'https://www.tiktok.com/player/v1/' + id + '?' + params.toString();
+}
+
+function sendToPlayer(iframe, type, value) {
+  if (iframe && iframe.contentWindow) {
+    iframe.contentWindow.postMessage({ 'x-tiktok-player': true, type, value }, '*');
+  }
+}
+
+// Swap a slide's thumbnail poster for the live TikTok player iframe.
+function activateSlide(slide) {
+  if (slide.querySelector('iframe')) return; // already active
+  const id = slide.dataset.id;
+  if (slide.classList.contains('unavailable-slide')) return;
+  const media = slide.querySelector('.slide-media');
+  const iframe = document.createElement('iframe');
+  iframe.src = playerSrc(id);
+  iframe.allow = 'autoplay; fullscreen';
+  iframe.setAttribute('scrolling', 'no');
+  media.appendChild(iframe);
+  media.classList.add('has-player');
+}
+
+// Tear the iframe back down so we never hold many live players at once.
+function deactivateSlide(slide) {
+  const iframe = slide.querySelector('iframe');
+  if (iframe) {
+    sendToPlayer(iframe, 'pause');
+    iframe.remove();
+    slide.querySelector('.slide-media').classList.remove('has-player');
+  }
+}
 
 function openFeed(list, label, startIndex = 0) {
   currentFeedList = list;
   document.getElementById('feedLabel').textContent = label;
   const reel = document.getElementById('reel');
   reel.innerHTML = '';
+  currentPlayingSlide = null;
 
   if (playObserver) playObserver.disconnect();
   if (sentinelObserver) sentinelObserver.disconnect();
@@ -779,11 +826,18 @@ function openFeed(list, label, startIndex = 0) {
 
   playObserver = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
+      const slide = entry.target;
       if (entry.intersectionRatio > 0.6) {
-        entry.target.classList.add('playing');
-        activeSlideItem = currentFeedList.find(i => i.id === entry.target.dataset.id);
+        // This is the active slide: activate its player, deactivate the previous.
+        if (currentPlayingSlide && currentPlayingSlide !== slide) {
+          deactivateSlide(currentPlayingSlide);
+        }
+        currentPlayingSlide = slide;
+        activateSlide(slide);
+        activeSlideItem = currentFeedList.find(i => i.id === slide.dataset.id);
       } else {
-        entry.target.classList.remove('playing');
+        // Fully scrolled away: tear its player down to free resources.
+        if (entry.intersectionRatio === 0) deactivateSlide(slide);
       }
     });
   }, { threshold: [0, 0.6, 1] });
@@ -822,28 +876,27 @@ function buildSlideEl(item) {
   slide.innerHTML = `
     <div class="slide-media" style="--a:${palette[0]};--b:${palette[1]}">
       <img alt="">
-      <div class="play-badge">tap to resume</div>
+      <div class="play-badge">loading…</div>
     </div>
     <div class="slide-overlay">
       <div class="slide-title">${item.label}</div>
       <div class="slide-cat">${item.category}</div>
     </div>
     <div class="rail">
-      <a class="tag-btn" href="${item.url}" target="_blank" style="text-decoration:none;display:flex;align-items:center;justify-content:center;">&#9654;</a>
       <button class="tag-btn2">&#127991;</button>
     </div>
   `;
   const img = slide.querySelector('img');
   const slideMedia = slide.querySelector('.slide-media');
   const markUnavailable = () => {
+    slide.classList.add('unavailable-slide');
     slideMedia.classList.add('unavailable');
     slideMedia.querySelector('.play-badge').textContent = 'Video unavailable — likely removed or private';
   };
+  // The thumbnail acts as a poster behind the iframe until the player loads.
   requestThumbnail(item.id, (url) => {
     img.onload = () => img.classList.add('loaded');
-    img.onerror = () => retryThumbnail(item.id, (freshUrl) => {
-      img.src = freshUrl;
-    }, markUnavailable);
+    img.onerror = () => retryThumbnail(item.id, (freshUrl) => { img.src = freshUrl; }, markUnavailable);
     img.src = url;
   }, markUnavailable);
   slide.querySelector('.tag-btn2').onclick = () => openCategorySheet(item);
@@ -905,6 +958,8 @@ function prependSlides(count) {
 }
 
 document.getElementById('feedBack').onclick = () => {
+  if (currentPlayingSlide) deactivateSlide(currentPlayingSlide);
+  currentPlayingSlide = null;
   document.getElementById('feed').classList.remove('open');
   if (playObserver) playObserver.disconnect();
   if (sentinelObserver) sentinelObserver.disconnect();
