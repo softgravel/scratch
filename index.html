@@ -440,17 +440,30 @@ function formatDate(iso) {
 }
 
 let state = JSON.parse(localStorage.getItem('gallery-state') || 'null');
+const DATA_VERSION = 3; // bump to force a clean re-hydration when the model changes
 
 async function ensureRealData() {
-  if (state && state.hydrated) { handleIncomingAdd(); renderHome(); return; }
+  // If saved state is missing, stale (old version), or still on mock data, re-hydrate.
+  const stale = !state || state.version !== DATA_VERSION;
+  if (state && state.hydrated && !stale) { handleIncomingAdd(); renderHome(); return; }
   showLoadingState();
   try {
     const res = await fetch('favorites.json');
     const raw = await res.json();
     const existingById = {};
-    if (state) state.items.forEach(i => { existingById[i.id] = i; });
+    // Preserve prior category assignments only from real (non-mock) items.
+    if (state && state.items) state.items.forEach(i => {
+      if (i.id && !String(i.id).startsWith('mock-')) existingById[i.id] = i;
+    });
 
-    const categories = (state && state.categories) || [];
+    // Carry over user-created categories, but drop the old mock defaults.
+    const MOCK_DEFAULTS = ['Recipes', 'Comedy', 'DIY', 'Music'];
+    let categories = ((state && state.categories) || []).filter(c => {
+      // keep a mock-named category only if it actually has real items assigned
+      if (!MOCK_DEFAULTS.includes(c)) return true;
+      return Object.values(existingById).some(i => i.category === c);
+    });
+
     const items = raw.map(entry => {
       const prev = existingById[entry.id];
       return {
@@ -461,14 +474,13 @@ async function ensureRealData() {
         category: (prev && prev.category) || 'Uncategorized'
       };
     });
-    if (items.some(i => i.category === 'Uncategorized') && !categories.includes('Uncategorized')) {
-      categories.unshift('Uncategorized');
-    }
-    state = { categories, items, hydrated: true };
+    if (!categories.includes('Uncategorized')) categories.unshift('Uncategorized');
+
+    state = { categories, items, hydrated: true, version: DATA_VERSION };
     save();
   } catch (e) {
     console.error('Failed to load favorites.json, falling back to empty state', e);
-    state = state || { categories: [], items: [], hydrated: false };
+    state = state || { categories: ['Uncategorized'], items: [], hydrated: false, version: DATA_VERSION };
   }
   handleIncomingAdd();
   renderHome();
@@ -859,15 +871,20 @@ function bindPlayerMessages() {
         break;
       case 'onStateChange':
         // value: 0 ended, 1 playing, 2 paused, 3 buffering, -1 init.
-        // If the ACTIVE video reports paused/ended but we didn't intend it, nudge it back.
-        if (isActive && (d.value === 2 || d.value === 0) &&
-            sourceSlide.dataset.userPaused !== 'true') {
-          sendToPlayer(iframe, 'play');
-        }
-        // Keep the pause overlay in sync with reality.
         if (isActive) {
-          const media = sourceSlide.querySelector('.slide-media');
-          if (d.value === 1) media.classList.remove('paused');
+          if ((d.value === 2 || d.value === 0) && sourceSlide.dataset.userPaused !== 'true') {
+            // Active video stopped without a user pause — restart it.
+            sendToPlayer(iframe, 'play');
+          }
+          if (d.value === 1) {
+            // Video is now actually playing: re-assert the session mute state
+            // (this is what makes unmute STICK across new slides) and clear overlay.
+            sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
+            sourceSlide.querySelector('.slide-media').classList.remove('paused');
+          }
+        } else {
+          // A non-active player that somehow started: keep it paused.
+          if (d.value === 1) sendToPlayer(iframe, 'pause');
         }
         break;
       case 'onPlayerError':
@@ -899,14 +916,13 @@ function activateSlide(slide) {
 }
 
 function deactivateSlide(slide) {
-  // Pause but KEEP the iframe if it's adjacent to the active slide (warm buffer
-  // for fast scrolling); only fully tear down slides further away.
+  // Pause but KEEP the iframe only if it's the NEXT slide after the active one
+  // (warm buffer in scroll direction); tear everything else down to stay light.
   const iframe = slide.querySelector('iframe');
   if (!iframe) return;
-  const isAdjacent = slide === currentPlayingSlide?.previousElementSibling ||
-                     slide === currentPlayingSlide?.nextElementSibling;
+  const keepWarm = slide === currentPlayingSlide?.nextElementSibling;
   sendToPlayer(iframe, 'pause');
-  if (!isAdjacent) {
+  if (!keepWarm) {
     iframe.remove();
     slide.querySelector('.slide-media').classList.remove('has-player');
   }
@@ -914,16 +930,21 @@ function deactivateSlide(slide) {
   slide.querySelector('.slide-media')?.classList.remove('paused');
 }
 
-// Pre-create the neighbours' iframes (paused) so scrolling to them is instant.
+// Pre-create only the NEXT slide's iframe (paused), deferred so it doesn't
+// compete with the active video's load. Warming both neighbours was too heavy.
 function warmNeighbours(slide) {
-  [slide.previousElementSibling, slide.nextElementSibling].forEach(n => {
-    if (n && n.classList.contains('slide') && !n.querySelector('iframe') &&
-        !n.classList.contains('unavailable-slide')) {
-      activateSlide(n);
-      const f = n.querySelector('iframe');
-      setTimeout(() => sendToPlayer(f, 'pause'), 400);
-    }
-  });
+  const n = slide.nextElementSibling;
+  if (n && n.classList.contains('slide') && !n.querySelector('iframe') &&
+      !n.classList.contains('unavailable-slide')) {
+    setTimeout(() => {
+      // Only warm if it's still the neighbour of the active slide.
+      if (currentPlayingSlide && n === currentPlayingSlide.nextElementSibling) {
+        activateSlide(n);
+        const f = n.querySelector('iframe');
+        setTimeout(() => sendToPlayer(f, 'pause'), 400);
+      }
+    }, 900);
+  }
 }
 
 // Make the active slide play with the session's current mute state.
@@ -972,22 +993,20 @@ function openFeed(list, label, startIndex = 0) {
   playObserver = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       const slide = entry.target;
-      if (entry.intersectionRatio > 0.6) {
-        // This is the active slide: activate its player, deactivate the previous.
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
         if (currentPlayingSlide && currentPlayingSlide !== slide) {
           deactivateSlide(currentPlayingSlide);
         }
         currentPlayingSlide = slide;
         activateSlide(slide);
-        ensurePlaying(slide); // always (re)start, even if the iframe already existed
-        warmNeighbours(slide); // pre-load prev/next for fast scrolling
+        ensurePlaying(slide);
+        warmNeighbours(slide);
         activeSlideItem = currentFeedList.find(i => i.id === slide.dataset.id);
-      } else {
-        // Fully scrolled away: tear its player down to free resources.
-        if (entry.intersectionRatio === 0) deactivateSlide(slide);
+      } else if (!entry.isIntersecting) {
+        deactivateSlide(slide);
       }
     });
-  }, { threshold: [0, 0.6, 1] });
+  }, { threshold: 0.6 });
 
   const topSentinel = document.createElement('div');
   topSentinel.className = 'top-sentinel';
