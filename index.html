@@ -141,14 +141,13 @@
     position: absolute; right: 10px; bottom: max(40px, env(safe-area-inset-bottom));
     display: flex; flex-direction: column; align-items: center; gap: 18px;
   }
-  .rail button {
+  .rail .tag-btn, .rail .tag-btn2 {
     width: 46px; height: 46px;
     border-radius: 50%;
     border: none;
     background: rgba(255,255,255,0.12);
     color: var(--text);
-    font-size: 20px;
-    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
   }
 
   .feed-top {
@@ -298,23 +297,60 @@
 </div>
 
 <script>
-// ---------- Mock data ----------
+// ---------- Real data loading ----------
 const PALETTE = [
   ["#2a2f3a","#101216"], ["#3a2f28","#161210"], ["#26332e","#0f1613"],
   ["#332a3a","#141017"], ["#3a3128","#161310"], ["#28323a","#0f1417"]
 ];
 
+function hashPalette(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return PALETTE[h % PALETTE.length];
+}
+
+function formatDate(iso) {
+  const d = new Date(iso.replace(' ', 'T'));
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 let state = JSON.parse(localStorage.getItem('gallery-state') || 'null');
-if (!state) {
-  const categories = ["Recipes", "Comedy", "DIY", "Music"];
-  const items = Array.from({length: 24}, (_, i) => ({
-    id: 'mock-' + i,
-    label: 'video ' + String(i + 1).padStart(4, '0'),
-    palette: PALETTE[i % PALETTE.length],
-    category: categories[i % categories.length]
-  }));
-  state = { categories, items };
-  localStorage.setItem('gallery-state', JSON.stringify(state));
+
+async function ensureRealData() {
+  if (state && state.hydrated) { handleIncomingAdd(); renderHome(); return; }
+  showLoadingState();
+  try {
+    const res = await fetch('favorites.json');
+    const raw = await res.json();
+    const existingById = {};
+    if (state) state.items.forEach(i => { existingById[i.id] = i; });
+
+    const categories = (state && state.categories) || [];
+    const items = raw.map(entry => {
+      const prev = existingById[entry.id];
+      return {
+        id: entry.id,
+        url: entry.url,
+        date: entry.date,
+        label: formatDate(entry.date),
+        palette: hashPalette(entry.id),
+        category: (prev && prev.category) || 'Uncategorized'
+      };
+    });
+    state = { categories, items, hydrated: true };
+    save();
+  } catch (e) {
+    console.error('Failed to load favorites.json, falling back to empty state', e);
+    state = state || { categories: [], items: [], hydrated: false };
+  }
+  handleIncomingAdd();
+  renderHome();
+}
+
+function showLoadingState() {
+  document.getElementById('catGrid').innerHTML = '';
+  document.getElementById('allCount').textContent = 'Loading…';
 }
 
 function save() { localStorage.setItem('gallery-state', JSON.stringify(state)); }
@@ -501,10 +537,11 @@ function openFeed(list, label) {
         <div class="slide-cat">${item.category}</div>
       </div>
       <div class="rail">
-        <button class="tag-btn">&#127991;</button>
+        <a class="tag-btn" href="${item.url}" target="_blank" style="text-decoration:none;display:flex;align-items:center;justify-content:center;">&#9654;</a>
+        <button class="tag-btn2">&#127991;</button>
       </div>
     `;
-    slide.querySelector('.tag-btn').onclick = () => openCategorySheet(item);
+    slide.querySelector('.tag-btn2').onclick = () => openCategorySheet(item);
     reel.appendChild(slide);
   });
   document.getElementById('feed').classList.add('open');
@@ -582,14 +619,16 @@ function handleIncomingAdd() {
   const incoming = params.get('add');
   if (!incoming) return;
 
-  const exists = state.items.some(i => i.sourceUrl === incoming);
+  const exists = state.items.some(i => i.url === incoming);
   if (!exists) {
+    const now = new Date();
     state.items.unshift({
       id: 'added-' + Date.now(),
-      label: 'new video',
-      palette: PALETTE[Math.floor(Math.random() * PALETTE.length)],
-      category: 'Uncategorized',
-      sourceUrl: incoming
+      url: incoming,
+      date: now.toISOString(),
+      label: formatDate(now.toISOString()),
+      palette: hashPalette(incoming),
+      category: 'Uncategorized'
     });
     if (!state.categories.includes('Uncategorized')) {
       state.categories.unshift('Uncategorized');
@@ -612,8 +651,7 @@ function showToast(msg) {
   setTimeout(() => t.remove(), 2200);
 }
 
-handleIncomingAdd();
-renderHome();
+ensureRealData();
 </script>
 </body>
 </html>
