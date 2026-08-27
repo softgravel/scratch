@@ -889,14 +889,44 @@ function activateSlide(slide) {
 }
 
 function deactivateSlide(slide) {
+  // Pause but KEEP the iframe if it's adjacent to the active slide (warm buffer
+  // for fast scrolling); only fully tear down slides further away.
   const iframe = slide.querySelector('iframe');
-  if (iframe) {
-    sendToPlayer(iframe, 'pause');
+  if (!iframe) return;
+  const isAdjacent = slide === currentPlayingSlide?.previousElementSibling ||
+                     slide === currentPlayingSlide?.nextElementSibling;
+  sendToPlayer(iframe, 'pause');
+  slide.dataset.playing = 'false';
+  if (!isAdjacent) {
     iframe.remove();
     slide.querySelector('.slide-media').classList.remove('has-player');
+    if (slide._unmuteTimer) { clearInterval(slide._unmuteTimer); slide._unmuteTimer = null; }
+    delete slide.dataset.playing;
   }
-  if (slide._unmuteTimer) { clearInterval(slide._unmuteTimer); slide._unmuteTimer = null; }
-  delete slide.dataset.playing;
+}
+
+// Warm the neighbours of the active slide by pre-creating their iframes (paused),
+// so scrolling to them shows video near-instantly.
+function warmNeighbours(slide) {
+  [slide.previousElementSibling, slide.nextElementSibling].forEach(n => {
+    if (n && n.classList.contains('slide') && !n.querySelector('iframe') &&
+        !n.classList.contains('unavailable-slide')) {
+      activateSlide(n);
+      const f = n.querySelector('iframe');
+      // Neighbours load but stay paused until they become active.
+      setTimeout(() => sendToPlayer(f, 'pause'), 300);
+      n.dataset.playing = 'false';
+    }
+  });
+}
+
+function ensurePlaying(slide) {
+  const iframe = slide.querySelector('iframe');
+  if (!iframe) return;
+  sendToPlayer(iframe, 'play');
+  if (audioUnlocked) sendToPlayer(iframe, 'unMute');
+  slide.dataset.playing = 'true';
+  slide.querySelector('.slide-media').classList.remove('paused');
 }
 
 function togglePlay(slide) {
@@ -908,6 +938,7 @@ function togglePlay(slide) {
     slide.querySelector('.slide-media').classList.add('paused');
   } else {
     sendToPlayer(iframe, 'play');
+    if (audioUnlocked) sendToPlayer(iframe, 'unMute');
     slide.dataset.playing = 'true';
     slide.querySelector('.slide-media').classList.remove('paused');
   }
@@ -934,13 +965,9 @@ function openFeed(list, label, startIndex = 0) {
         }
         currentPlayingSlide = slide;
         activateSlide(slide);
+        ensurePlaying(slide); // always (re)start, even if the iframe already existed
+        warmNeighbours(slide); // pre-load prev/next for fast scrolling
         activeSlideItem = currentFeedList.find(i => i.id === slide.dataset.id);
-        // Warm the next slide's thumbnail poster so arrival feels instant.
-        const next = slide.nextElementSibling;
-        if (next && next.classList.contains('slide')) {
-          const nextImg = next.querySelector('img');
-          if (nextImg && !nextImg.src) { /* thumbnail request already queued at build */ }
-        }
       } else {
         // Fully scrolled away: tear its player down to free resources.
         if (entry.intersectionRatio === 0) deactivateSlide(slide);
@@ -1020,11 +1047,12 @@ function buildSlideEl(item) {
   slide.querySelector('.tap-catcher').onclick = () => {
     if (!audioUnlocked) {
       audioUnlocked = true;
-      const iframe = slide.querySelector('iframe');
+      // Unmute the slide that's actually active right now (which may be this one).
+      const active = currentPlayingSlide || slide;
+      const iframe = active.querySelector('iframe');
       if (iframe) { sendToPlayer(iframe, 'unMute'); sendToPlayer(iframe, 'play'); }
-      // don't also toggle pause on this first unlocking tap
-      slide.dataset.playing = 'true';
-      slide.querySelector('.slide-media').classList.remove('paused');
+      active.dataset.playing = 'true';
+      active.querySelector('.slide-media').classList.remove('paused');
       return;
     }
     togglePlay(slide);
