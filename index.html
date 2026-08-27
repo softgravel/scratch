@@ -7,6 +7,11 @@
 <meta name="apple-mobile-web-app-title" content="Favorites">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="robots" content="noindex, nofollow">
+<!-- Warm the TikTok connections early so player iframes and thumbnail fetches start faster. -->
+<link rel="preconnect" href="https://www.tiktok.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.tiktok.com">
+<link rel="dns-prefetch" href="https://p16-sign-va.tiktokcdn.com">
+<link rel="dns-prefetch" href="https://lf16-tiktok-web.tiktokcdn-us.com">
 <title>Favorites</title>
 <style>
   :root {
@@ -102,12 +107,19 @@
     flex: 1;
     overflow-y: scroll;
     scroll-snap-type: y mandatory;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
   .slide {
     height: 100%;
     scroll-snap-align: start;
     position: relative;
     overflow: hidden;
+    /* Skip layout/paint work for slides that are off-screen (Safari 18+, Chrome).
+       contain-intrinsic-size reserves the right height so scrolling stays correct. */
+    content-visibility: auto;
+    contain-intrinsic-size: 100vw 100vh;
+    contain: layout paint style;
   }
   .slide-media {
     position: absolute; inset: 0;
@@ -704,10 +716,12 @@ function retryThumbnail(id, onReady, onFail, priorityFn) {
 function pumpQueue() {
   const limit = feedActive ? 1 : MAX_CONCURRENT_FETCHES;
   while (activeFetches < limit && pending.size > 0) {
-    // Pick the highest-priority (smallest distance-to-viewport) pending item.
-    let best = null;
+    // Compute each pending item's priority ONCE this cycle (priority() can be
+    // expensive, e.g. getBoundingClientRect), then pick the smallest.
+    let best = null, bestP = Infinity;
     pending.forEach(item => {
-      if (!best || item.priority() < best.priority()) best = item;
+      const p = item.priority();
+      if (p < bestP) { bestP = p; best = item; }
     });
     if (!best) break;
     pending.delete(best.id);
@@ -753,6 +767,8 @@ function openGrid(list, label) {
       const id = entry.target.dataset.id;
       if (entry.isIntersecting) {
         const tile = entry.target;
+        const img = tile.querySelector('img');
+        if (img && img.src) return; // already has its thumbnail — nothing to do
         const markUnavailable = () => tile.classList.add('unavailable');
         // Priority = distance of this tile from the centre of the viewport now.
         const priorityFn = () => {
@@ -762,11 +778,11 @@ function openGrid(list, label) {
           return Math.abs((r.top + r.height / 2) - centre);
         };
         requestThumbnail(id, (url) => {
-          const img = tile.querySelector('img');
-          if (img) {
-            img.onload = () => img.classList.add('loaded');
-            img.onerror = () => retryThumbnail(id, (freshUrl) => { img.src = freshUrl; }, markUnavailable, priorityFn);
-            img.src = url;
+          const im = tile.querySelector('img');
+          if (im) {
+            im.onload = () => im.classList.add('loaded');
+            im.onerror = () => retryThumbnail(id, (freshUrl) => { im.src = freshUrl; }, markUnavailable, priorityFn);
+            im.src = url;
           }
         }, markUnavailable, priorityFn);
       } else {
@@ -775,7 +791,7 @@ function openGrid(list, label) {
         cancelThumbnail(id);
       }
     });
-  }, { rootMargin: '300px' });
+  }, { root: document.getElementById('gridScroll'), rootMargin: '300px' });
 
   const saved = gridScrollState[label];
   const initialCount = saved ? Math.max(GRID_PAGE_SIZE, saved.renderedCount) : GRID_PAGE_SIZE;
@@ -799,7 +815,7 @@ function appendGridTiles(count) {
     tile.dataset.id = item.id;
     tile.style.setProperty('--a', palette[0]);
     tile.style.setProperty('--b', palette[1]);
-    tile.innerHTML = `<img alt=""><div class="thumb-date">${item.label}</div>`;
+    tile.innerHTML = `<img alt="" decoding="async"><div class="thumb-date">${item.label}</div>`;
     tile.onclick = () => {
       openFeed(currentGridList, currentGridLabel, idx);
     };
@@ -1048,6 +1064,14 @@ function openFeed(list, label, startIndex = 0) {
   }, { root: reel });
   topSentinelObserver.observe(topSentinel);
 
+  // Trim the DOM only once scrolling has settled, so scrollTop compensation
+  // never fights an in-progress momentum scroll.
+  let scrollIdleTimer = null;
+  reel.onscroll = () => {
+    if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
+    scrollIdleTimer = setTimeout(() => { trimTop(); trimBottom(); }, 250);
+  };
+
   document.getElementById('feed').classList.add('open');
   feedActive = true;
 
@@ -1065,7 +1089,7 @@ function buildSlideEl(item) {
   slide.dataset.id = item.id;
   slide.innerHTML = `
     <div class="slide-media" style="--a:${palette[0]};--b:${palette[1]}">
-      <img alt="">
+      <img alt="" decoding="async">
       <div class="play-badge">loading…</div>
       <div class="mask-bottom"></div>
       <div class="mask-rail"></div>
@@ -1090,12 +1114,22 @@ function buildSlideEl(item) {
     slideMedia.querySelector('.play-badge').textContent = 'Video unavailable — likely removed or private';
   };
   // The thumbnail acts as a poster behind the iframe until the player loads.
-  // High priority (0) so the poster for the slide you're on loads promptly.
+  // Priority = distance (in slides) from the active slide, so the visible
+  // poster loads first when scrolling fast.
+  const posterPriority = () => {
+    const reel = document.getElementById('reel');
+    if (!reel || !currentPlayingSlide) return 0;
+    const slides = reel.querySelectorAll('.slide');
+    const myIdx = Array.prototype.indexOf.call(slides, slide);
+    const activeIdx = Array.prototype.indexOf.call(slides, currentPlayingSlide);
+    if (myIdx < 0 || activeIdx < 0) return 0;
+    return Math.abs(myIdx - activeIdx);
+  };
   requestThumbnail(item.id, (url) => {
     img.onload = () => img.classList.add('loaded');
-    img.onerror = () => retryThumbnail(item.id, (freshUrl) => { img.src = freshUrl; }, markUnavailable, () => 0);
+    img.onerror = () => retryThumbnail(item.id, (freshUrl) => { img.src = freshUrl; }, markUnavailable, posterPriority);
     img.src = url;
-  }, markUnavailable, () => 0);
+  }, markUnavailable, posterPriority);
 
   // Transparent full-video tap layer: toggles play/pause in-app so a tap
   // never reaches TikTok's own controls underneath.
@@ -1138,6 +1172,8 @@ async function shareVideo(item) {
   }
 }
 
+const MAX_LIVE_SLIDES = 12; // keep at most this many slide elements in the DOM
+
 function appendSlides(count) {
   const reel = document.getElementById('reel');
   const oldSentinel = reel.querySelector('.bottom-sentinel');
@@ -1168,6 +1204,31 @@ function appendSlides(count) {
   }
 }
 
+// Remove slides that have scrolled far above the viewport so the DOM stays small.
+function trimTop() {
+  const reel = document.getElementById('reel');
+  const slides = reel.querySelectorAll('.slide');
+  const excess = slides.length - MAX_LIVE_SLIDES;
+  if (excess <= 0) return;
+  // Never trim the active slide or its immediate neighbours.
+  const activeIdx = currentPlayingSlide ?
+    Array.prototype.indexOf.call(slides, currentPlayingSlide) : slides.length;
+  let removed = 0;
+  for (let i = 0; i < excess && i < activeIdx - 2; i++) {
+    const s = slides[i];
+    if (s.querySelector('iframe')) deactivateSlide(s);
+    if (playObserver) playObserver.unobserve(s);
+    cancelThumbnail(s.dataset.id);
+    s.remove();
+    removed++;
+  }
+  if (removed > 0) {
+    renderedStart += removed;
+    // Compensate scroll so the visible content doesn't jump upward.
+    reel.scrollTop -= removed * reel.clientHeight;
+  }
+}
+
 function prependSlides(count) {
   const reel = document.getElementById('reel');
   const newStart = Math.max(0, renderedStart - count);
@@ -1190,6 +1251,26 @@ function prependSlides(count) {
 
   // Compensate scroll so the newly-inserted content above doesn't shove the view down visually.
   reel.scrollTop += actualCount * reel.clientHeight;
+}
+
+// Remove slides far below the viewport (mirror of trimTop for upward scrolling).
+function trimBottom() {
+  const reel = document.getElementById('reel');
+  const slides = reel.querySelectorAll('.slide');
+  const excess = slides.length - MAX_LIVE_SLIDES;
+  if (excess <= 0) return;
+  const activeIdx = currentPlayingSlide ?
+    Array.prototype.indexOf.call(slides, currentPlayingSlide) : 0;
+  let removed = 0;
+  for (let i = slides.length - 1; i >= 0 && removed < excess && i > activeIdx + 2; i--) {
+    const s = slides[i];
+    if (s.querySelector('iframe')) deactivateSlide(s);
+    if (playObserver) playObserver.unobserve(s);
+    cancelThumbnail(s.dataset.id);
+    s.remove();
+    removed++;
+  }
+  if (removed > 0) renderedEnd -= removed;
 }
 
 document.getElementById('feedBack').onclick = () => {
