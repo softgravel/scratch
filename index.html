@@ -824,6 +824,40 @@ function sendToPlayer(iframe, type, value) {
   }
 }
 
+// Central listener for messages coming FROM any TikTok player iframe.
+// We use onPlayerReady to explicitly start + unmute the active video,
+// rather than relying on a blind timer.
+let playerMessageBound = false;
+function bindPlayerMessages() {
+  if (playerMessageBound) return;
+  playerMessageBound = true;
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || !d['x-tiktok-player']) return;
+    // Find which slide's iframe sent this.
+    const slides = document.querySelectorAll('#reel .slide');
+    let sourceSlide = null;
+    slides.forEach(s => {
+      const f = s.querySelector('iframe');
+      if (f && f.contentWindow === e.source) sourceSlide = s;
+    });
+    if (!sourceSlide) return;
+
+    if (d.type === 'onPlayerReady') {
+      // Only the currently-active slide should actually play.
+      if (sourceSlide === currentPlayingSlide) {
+        const f = sourceSlide.querySelector('iframe');
+        sendToPlayer(f, 'play');
+        if (audioUnlocked) sendToPlayer(f, 'unMute');
+        sourceSlide.dataset.playing = 'true';
+        sourceSlide.querySelector('.slide-media').classList.remove('paused');
+      } else {
+        sendToPlayer(sourceSlide.querySelector('iframe'), 'pause');
+      }
+    }
+  });
+}
+
 // Swap a slide's thumbnail poster for the live TikTok player iframe,
 // wrapped in our own tap-catcher + edge masks so TikTok's own buttons
 // can never be reached and taps toggle play/pause in-app.
@@ -831,6 +865,7 @@ function activateSlide(slide) {
   if (slide.querySelector('iframe')) return; // already active
   const id = slide.dataset.id;
   if (slide.classList.contains('unavailable-slide')) return;
+  bindPlayerMessages();
   const media = slide.querySelector('.slide-media');
   const iframe = document.createElement('iframe');
   iframe.src = playerSrc(id);
@@ -840,13 +875,17 @@ function activateSlide(slide) {
   media.classList.add('has-player');
   slide.dataset.playing = 'true';
 
-  // Unmute shortly after load (autoplay starts muted on iOS by browser policy).
-  let readyTries = 0;
-  const unmuteTimer = setInterval(() => {
-    sendToPlayer(iframe, 'unMute');
-    if (++readyTries > 6) clearInterval(unmuteTimer);
-  }, 500);
-  slide._unmuteTimer = unmuteTimer;
+  // Belt-and-suspenders: also nudge play/unmute a few times in case the
+  // onPlayerReady message is missed, but the message handler is the primary path.
+  let tries = 0;
+  const t = setInterval(() => {
+    if (slide === currentPlayingSlide && slide.dataset.playing === 'true') {
+      sendToPlayer(iframe, 'play');
+      if (audioUnlocked) sendToPlayer(iframe, 'unMute');
+    }
+    if (++tries > 5) clearInterval(t);
+  }, 600);
+  slide._unmuteTimer = t;
 }
 
 function deactivateSlide(slide) {
@@ -935,6 +974,9 @@ function openFeed(list, label, startIndex = 0) {
   });
 }
 
+// Tracks whether the user has made a gesture that unlocks unmuted audio this session.
+let audioUnlocked = false;
+
 function buildSlideEl(item) {
   const palette = hashPalette(item.id);
   const slide = document.createElement('div');
@@ -972,9 +1014,21 @@ function buildSlideEl(item) {
     img.src = url;
   }, markUnavailable);
 
-  // Transparent full-video tap layer: toggles play/pause in-app so a tap
-  // never reaches TikTok's own controls underneath.
-  slide.querySelector('.tap-catcher').onclick = () => togglePlay(slide);
+  // Transparent full-video tap layer: first tap unlocks audio (iOS gesture
+  // requirement); taps toggle play/pause in-app so a tap never reaches
+  // TikTok's own controls underneath.
+  slide.querySelector('.tap-catcher').onclick = () => {
+    if (!audioUnlocked) {
+      audioUnlocked = true;
+      const iframe = slide.querySelector('iframe');
+      if (iframe) { sendToPlayer(iframe, 'unMute'); sendToPlayer(iframe, 'play'); }
+      // don't also toggle pause on this first unlocking tap
+      slide.dataset.playing = 'true';
+      slide.querySelector('.slide-media').classList.remove('paused');
+      return;
+    }
+    togglePlay(slide);
+  };
 
   slide.querySelector('.tag-btn2').onclick = (e) => { e.stopPropagation(); openCategorySheet(item); };
   slide.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
