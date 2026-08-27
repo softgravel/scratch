@@ -206,6 +206,7 @@
     font-size: 18px;
   }
   .rail .share-btn { transform: rotate(0deg); }
+  .rail .mute-btn.active { background: var(--accent); }
 
   .feed-top {
     position: absolute; top: max(16px, env(safe-area-inset-top)); left: 0; right: 0;
@@ -808,12 +809,17 @@ let sentinelObserver = null;
 let topSentinelObserver = null;
 let currentPlayingSlide = null;
 
+// Global mute state for the whole session — driven by the rail toggle button.
+// Starts muted (off), which also guarantees reliable autoplay on iOS.
+let desiredMuted = true;
+
 function playerSrc(id) {
   const params = new URLSearchParams({
     rel: '0', autoplay: '1', loop: '1',
     controls: '0', progress_bar: '0', play_button: '0', volume_control: '0',
     fullscreen_button: '0', timestamp: '0', music_info: '0', description: '0',
-    native_context_menu: '0', closed_caption: '0'
+    native_context_menu: '0', closed_caption: '0',
+    muted: desiredMuted ? '1' : '0'
   });
   return 'https://www.tiktok.com/player/v1/' + id + '?' + params.toString();
 }
@@ -825,8 +831,6 @@ function sendToPlayer(iframe, type, value) {
 }
 
 // Central listener for messages coming FROM any TikTok player iframe.
-// We use onPlayerReady to explicitly start + unmute the active video,
-// rather than relying on a blind timer.
 let playerMessageBound = false;
 function bindPlayerMessages() {
   if (playerMessageBound) return;
@@ -834,26 +838,45 @@ function bindPlayerMessages() {
   window.addEventListener('message', (e) => {
     const d = e.data;
     if (!d || !d['x-tiktok-player']) return;
-    // Find which slide's iframe sent this.
-    const slides = document.querySelectorAll('#reel .slide');
+    // Identify which slide's iframe sent this message.
     let sourceSlide = null;
-    slides.forEach(s => {
+    document.querySelectorAll('#reel .slide').forEach(s => {
       const f = s.querySelector('iframe');
       if (f && f.contentWindow === e.source) sourceSlide = s;
     });
     if (!sourceSlide) return;
+    const iframe = sourceSlide.querySelector('iframe');
+    const isActive = sourceSlide === currentPlayingSlide;
 
-    if (d.type === 'onPlayerReady') {
-      // Only the currently-active slide should actually play.
-      if (sourceSlide === currentPlayingSlide) {
-        const f = sourceSlide.querySelector('iframe');
-        sendToPlayer(f, 'play');
-        if (audioUnlocked) sendToPlayer(f, 'unMute');
-        sourceSlide.dataset.playing = 'true';
-        sourceSlide.querySelector('.slide-media').classList.remove('paused');
-      } else {
-        sendToPlayer(sourceSlide.querySelector('iframe'), 'pause');
-      }
+    switch (d.type) {
+      case 'onPlayerReady':
+        if (isActive) {
+          sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
+          sendToPlayer(iframe, 'play');
+        } else {
+          sendToPlayer(iframe, 'pause');
+        }
+        break;
+      case 'onStateChange':
+        // value: 0 ended, 1 playing, 2 paused, 3 buffering, -1 init.
+        // If the ACTIVE video reports paused/ended but we didn't intend it, nudge it back.
+        if (isActive && (d.value === 2 || d.value === 0) &&
+            sourceSlide.dataset.userPaused !== 'true') {
+          sendToPlayer(iframe, 'play');
+        }
+        // Keep the pause overlay in sync with reality.
+        if (isActive) {
+          const media = sourceSlide.querySelector('.slide-media');
+          if (d.value === 1) media.classList.remove('paused');
+        }
+        break;
+      case 'onPlayerError':
+        // 3002 = AUTOPLAY_ERROR (browser blocked autoplay). Retry muted, which is allowed.
+        if (d.value && d.value.errorCode === 3002 && isActive) {
+          sendToPlayer(iframe, 'mute');
+          sendToPlayer(iframe, 'play');
+        }
+        break;
     }
   });
 }
@@ -873,19 +896,6 @@ function activateSlide(slide) {
   iframe.setAttribute('scrolling', 'no');
   media.appendChild(iframe);
   media.classList.add('has-player');
-  slide.dataset.playing = 'true';
-
-  // Belt-and-suspenders: also nudge play/unmute a few times in case the
-  // onPlayerReady message is missed, but the message handler is the primary path.
-  let tries = 0;
-  const t = setInterval(() => {
-    if (slide === currentPlayingSlide && slide.dataset.playing === 'true') {
-      sendToPlayer(iframe, 'play');
-      if (audioUnlocked) sendToPlayer(iframe, 'unMute');
-    }
-    if (++tries > 5) clearInterval(t);
-  }, 600);
-  slide._unmuteTimer = t;
 }
 
 function deactivateSlide(slide) {
@@ -896,52 +906,56 @@ function deactivateSlide(slide) {
   const isAdjacent = slide === currentPlayingSlide?.previousElementSibling ||
                      slide === currentPlayingSlide?.nextElementSibling;
   sendToPlayer(iframe, 'pause');
-  slide.dataset.playing = 'false';
   if (!isAdjacent) {
     iframe.remove();
     slide.querySelector('.slide-media').classList.remove('has-player');
-    if (slide._unmuteTimer) { clearInterval(slide._unmuteTimer); slide._unmuteTimer = null; }
-    delete slide.dataset.playing;
   }
+  delete slide.dataset.userPaused;
+  slide.querySelector('.slide-media')?.classList.remove('paused');
 }
 
-// Warm the neighbours of the active slide by pre-creating their iframes (paused),
-// so scrolling to them shows video near-instantly.
+// Pre-create the neighbours' iframes (paused) so scrolling to them is instant.
 function warmNeighbours(slide) {
   [slide.previousElementSibling, slide.nextElementSibling].forEach(n => {
     if (n && n.classList.contains('slide') && !n.querySelector('iframe') &&
         !n.classList.contains('unavailable-slide')) {
       activateSlide(n);
       const f = n.querySelector('iframe');
-      // Neighbours load but stay paused until they become active.
-      setTimeout(() => sendToPlayer(f, 'pause'), 300);
-      n.dataset.playing = 'false';
+      setTimeout(() => sendToPlayer(f, 'pause'), 400);
     }
   });
 }
 
+// Make the active slide play with the session's current mute state.
 function ensurePlaying(slide) {
   const iframe = slide.querySelector('iframe');
   if (!iframe) return;
+  delete slide.dataset.userPaused;
+  sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
   sendToPlayer(iframe, 'play');
-  if (audioUnlocked) sendToPlayer(iframe, 'unMute');
-  slide.dataset.playing = 'true';
   slide.querySelector('.slide-media').classList.remove('paused');
 }
 
 function togglePlay(slide) {
   const iframe = slide.querySelector('iframe');
   if (!iframe) return;
-  if (slide.dataset.playing === 'true') {
-    sendToPlayer(iframe, 'pause');
-    slide.dataset.playing = 'false';
-    slide.querySelector('.slide-media').classList.add('paused');
-  } else {
+  const media = slide.querySelector('.slide-media');
+  if (slide.dataset.userPaused === 'true') {
+    delete slide.dataset.userPaused;
     sendToPlayer(iframe, 'play');
-    if (audioUnlocked) sendToPlayer(iframe, 'unMute');
-    slide.dataset.playing = 'true';
-    slide.querySelector('.slide-media').classList.remove('paused');
+    media.classList.remove('paused');
+  } else {
+    slide.dataset.userPaused = 'true';
+    sendToPlayer(iframe, 'pause');
+    media.classList.add('paused');
   }
+}
+
+// Apply the session mute state to whatever's currently playing.
+function applyMuteState() {
+  document.querySelectorAll('#reel .slide iframe').forEach(f => {
+    sendToPlayer(f, desiredMuted ? 'mute' : 'unMute');
+  });
 }
 
 function openFeed(list, label, startIndex = 0) {
@@ -1001,9 +1015,6 @@ function openFeed(list, label, startIndex = 0) {
   });
 }
 
-// Tracks whether the user has made a gesture that unlocks unmuted audio this session.
-let audioUnlocked = false;
-
 function buildSlideEl(item) {
   const palette = hashPalette(item.id);
   const slide = document.createElement('div');
@@ -1023,6 +1034,7 @@ function buildSlideEl(item) {
       <div class="slide-cat">${item.category}</div>
     </div>
     <div class="rail">
+      <button class="rail-btn mute-btn" aria-label="Mute or unmute">&#128263;</button>
       <button class="rail-btn share-btn" aria-label="Share">&#10148;</button>
       <button class="rail-btn tag-btn2" aria-label="Categorize">&#127991;</button>
     </div>
@@ -1041,26 +1053,27 @@ function buildSlideEl(item) {
     img.src = url;
   }, markUnavailable);
 
-  // Transparent full-video tap layer: first tap unlocks audio (iOS gesture
-  // requirement); taps toggle play/pause in-app so a tap never reaches
-  // TikTok's own controls underneath.
-  slide.querySelector('.tap-catcher').onclick = () => {
-    if (!audioUnlocked) {
-      audioUnlocked = true;
-      // Unmute the slide that's actually active right now (which may be this one).
-      const active = currentPlayingSlide || slide;
-      const iframe = active.querySelector('iframe');
-      if (iframe) { sendToPlayer(iframe, 'unMute'); sendToPlayer(iframe, 'play'); }
-      active.dataset.playing = 'true';
-      active.querySelector('.slide-media').classList.remove('paused');
-      return;
-    }
-    togglePlay(slide);
-  };
+  // Transparent full-video tap layer: toggles play/pause in-app so a tap
+  // never reaches TikTok's own controls underneath.
+  slide.querySelector('.tap-catcher').onclick = () => togglePlay(slide);
 
   slide.querySelector('.tag-btn2').onclick = (e) => { e.stopPropagation(); openCategorySheet(item); };
   slide.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
+  const muteBtn = slide.querySelector('.mute-btn');
+  syncMuteBtn(muteBtn);
+  muteBtn.onclick = (e) => {
+    e.stopPropagation();
+    desiredMuted = !desiredMuted;
+    applyMuteState();
+    document.querySelectorAll('.mute-btn').forEach(syncMuteBtn);
+  };
   return slide;
+}
+
+function syncMuteBtn(btn) {
+  // Speaker-with-slash when muted, speaker-with-waves when on.
+  btn.innerHTML = desiredMuted ? '&#128263;' : '&#128266;';
+  btn.classList.toggle('active', !desiredMuted);
 }
 
 // ---------- Share a video link via the native share sheet (SMS/iMessage/etc) ----------
