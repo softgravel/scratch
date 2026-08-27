@@ -128,6 +128,40 @@
     z-index: 2;
   }
   .slide-media.has-player .play-badge { display: none; }
+
+  /* Transparent layer over the whole video that intercepts taps for play/pause,
+     so taps never reach TikTok's own controls beneath it. */
+  .tap-catcher {
+    position: absolute; inset: 0;
+    z-index: 4;
+    background: transparent;
+  }
+  /* Opaque masks covering the screen regions where TikTok renders its own
+     clickable buttons (bottom caption/"Discover more" bar and the right-side
+     profile/like rail), so those outbound links can't be reached. */
+  .mask-bottom {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: 90px; z-index: 3;
+    background: #000;
+  }
+  .mask-rail {
+    position: absolute; right: 0; bottom: 90px;
+    width: 60px; height: 260px; z-index: 3;
+    background: #000;
+  }
+  .slide-media:not(.has-player) .mask-bottom,
+  .slide-media:not(.has-player) .mask-rail { display: none; }
+
+  .pause-icon {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    z-index: 5;
+    font-size: 30px; color: rgba(255,255,255,0.85);
+    opacity: 0; transition: opacity 0.15s ease;
+    pointer-events: none;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  }
+  .slide-media.paused .pause-icon { opacity: 1; }
   .play-badge {
     position: absolute; top: 50%; left: 50%;
     transform: translate(-50%,-50%);
@@ -151,7 +185,7 @@
   .slide-overlay {
     position: absolute; left: 0; right: 70px; bottom: max(28px, env(safe-area-inset-bottom));
     padding: 0 16px;
-    z-index: 3;
+    z-index: 6;
     pointer-events: none;
     text-shadow: 0 1px 4px rgba(0,0,0,0.6);
   }
@@ -161,16 +195,17 @@
   .rail {
     position: absolute; right: 10px; bottom: max(120px, calc(env(safe-area-inset-bottom) + 110px));
     display: flex; flex-direction: column; align-items: center; gap: 18px;
-    z-index: 3;
+    z-index: 6;
   }
-  .rail .tag-btn, .rail .tag-btn2 {
+  .rail .rail-btn {
     width: 46px; height: 46px;
     border-radius: 50%;
     border: none;
-    background: rgba(0,0,0,0.45);
+    background: rgba(0,0,0,0.55);
     color: var(--text);
     font-size: 18px;
   }
+  .rail .share-btn { transform: rotate(0deg); }
 
   .feed-top {
     position: absolute; top: max(16px, env(safe-area-inset-top)); left: 0; right: 0;
@@ -776,7 +811,7 @@ let currentPlayingSlide = null;
 function playerSrc(id) {
   const params = new URLSearchParams({
     rel: '0', autoplay: '1', loop: '1',
-    controls: '1', progress_bar: '1', play_button: '1', volume_control: '1',
+    controls: '0', progress_bar: '0', play_button: '0', volume_control: '0',
     fullscreen_button: '0', timestamp: '0', music_info: '0', description: '0',
     native_context_menu: '0', closed_caption: '0'
   });
@@ -789,7 +824,9 @@ function sendToPlayer(iframe, type, value) {
   }
 }
 
-// Swap a slide's thumbnail poster for the live TikTok player iframe.
+// Swap a slide's thumbnail poster for the live TikTok player iframe,
+// wrapped in our own tap-catcher + edge masks so TikTok's own buttons
+// can never be reached and taps toggle play/pause in-app.
 function activateSlide(slide) {
   if (slide.querySelector('iframe')) return; // already active
   const id = slide.dataset.id;
@@ -801,15 +838,39 @@ function activateSlide(slide) {
   iframe.setAttribute('scrolling', 'no');
   media.appendChild(iframe);
   media.classList.add('has-player');
+  slide.dataset.playing = 'true';
+
+  // Unmute shortly after load (autoplay starts muted on iOS by browser policy).
+  let readyTries = 0;
+  const unmuteTimer = setInterval(() => {
+    sendToPlayer(iframe, 'unMute');
+    if (++readyTries > 6) clearInterval(unmuteTimer);
+  }, 500);
+  slide._unmuteTimer = unmuteTimer;
 }
 
-// Tear the iframe back down so we never hold many live players at once.
 function deactivateSlide(slide) {
   const iframe = slide.querySelector('iframe');
   if (iframe) {
     sendToPlayer(iframe, 'pause');
     iframe.remove();
     slide.querySelector('.slide-media').classList.remove('has-player');
+  }
+  if (slide._unmuteTimer) { clearInterval(slide._unmuteTimer); slide._unmuteTimer = null; }
+  delete slide.dataset.playing;
+}
+
+function togglePlay(slide) {
+  const iframe = slide.querySelector('iframe');
+  if (!iframe) return;
+  if (slide.dataset.playing === 'true') {
+    sendToPlayer(iframe, 'pause');
+    slide.dataset.playing = 'false';
+    slide.querySelector('.slide-media').classList.add('paused');
+  } else {
+    sendToPlayer(iframe, 'play');
+    slide.dataset.playing = 'true';
+    slide.querySelector('.slide-media').classList.remove('paused');
   }
 }
 
@@ -835,6 +896,12 @@ function openFeed(list, label, startIndex = 0) {
         currentPlayingSlide = slide;
         activateSlide(slide);
         activeSlideItem = currentFeedList.find(i => i.id === slide.dataset.id);
+        // Warm the next slide's thumbnail poster so arrival feels instant.
+        const next = slide.nextElementSibling;
+        if (next && next.classList.contains('slide')) {
+          const nextImg = next.querySelector('img');
+          if (nextImg && !nextImg.src) { /* thumbnail request already queued at build */ }
+        }
       } else {
         // Fully scrolled away: tear its player down to free resources.
         if (entry.intersectionRatio === 0) deactivateSlide(slide);
@@ -877,13 +944,18 @@ function buildSlideEl(item) {
     <div class="slide-media" style="--a:${palette[0]};--b:${palette[1]}">
       <img alt="">
       <div class="play-badge">loading…</div>
+      <div class="mask-bottom"></div>
+      <div class="mask-rail"></div>
+      <div class="tap-catcher"></div>
+      <div class="pause-icon">&#10074;&#10074;</div>
     </div>
     <div class="slide-overlay">
       <div class="slide-title">${item.label}</div>
       <div class="slide-cat">${item.category}</div>
     </div>
     <div class="rail">
-      <button class="tag-btn2">&#127991;</button>
+      <button class="rail-btn share-btn" aria-label="Share">&#10148;</button>
+      <button class="rail-btn tag-btn2" aria-label="Categorize">&#127991;</button>
     </div>
   `;
   const img = slide.querySelector('img');
@@ -899,8 +971,32 @@ function buildSlideEl(item) {
     img.onerror = () => retryThumbnail(item.id, (freshUrl) => { img.src = freshUrl; }, markUnavailable);
     img.src = url;
   }, markUnavailable);
-  slide.querySelector('.tag-btn2').onclick = () => openCategorySheet(item);
+
+  // Transparent full-video tap layer: toggles play/pause in-app so a tap
+  // never reaches TikTok's own controls underneath.
+  slide.querySelector('.tap-catcher').onclick = () => togglePlay(slide);
+
+  slide.querySelector('.tag-btn2').onclick = (e) => { e.stopPropagation(); openCategorySheet(item); };
+  slide.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
   return slide;
+}
+
+// ---------- Share a video link via the native share sheet (SMS/iMessage/etc) ----------
+async function shareVideo(item) {
+  const shareUrl = 'https://www.tiktok.com/@i/video/' + item.id;
+  if (navigator.share) {
+    try {
+      await navigator.share({ url: shareUrl });
+    } catch (e) { /* user cancelled — nothing to do */ }
+  } else {
+    // Fallback for browsers without the Web Share API: copy to clipboard.
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showToast('Link copied');
+    } catch (e) {
+      showToast('Could not share on this device');
+    }
+  }
 }
 
 function appendSlides(count) {
