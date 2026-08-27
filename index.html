@@ -663,43 +663,57 @@ function actionSheet({ title, rows }) {
   sheet.querySelector('#sheetCancel').onclick = closeOverlays;
 }
 
-// ---------- Thumbnail fetching (cached, throttled) ----------
+// ---------- Thumbnail fetching (priority queue, viewport-first) ----------
 let thumbCache = JSON.parse(localStorage.getItem('thumb-cache') || '{}');
+let thumbCacheDirty = false;
 function saveThumbCache() {
-  try { localStorage.setItem('thumb-cache', JSON.stringify(thumbCache)); }
-  catch (e) { /* storage full or unavailable — thumbnails just won't persist across reloads */ }
+  // Debounced: writing this big object to localStorage on every fetch was itself a stall.
+  thumbCacheDirty = true;
 }
+setInterval(() => {
+  if (!thumbCacheDirty) return;
+  thumbCacheDirty = false;
+  try { localStorage.setItem('thumb-cache', JSON.stringify(thumbCache)); } catch (e) {}
+}, 2000);
 
-const MAX_CONCURRENT_FETCHES = 4;
+let MAX_CONCURRENT_FETCHES = 4;
 let activeFetches = 0;
-const fetchQueue = [];
+// Pending requests keyed by id, each carrying a live priority() function so we
+// can always pick whatever is closest to the viewport right now.
+const pending = new Map();
+let feedActive = false; // when the video feed is open, throttle thumbnails hard
 
-function requestThumbnail(id, onReady, onFail) {
-  if (thumbCache[id] === undefined) {
-    fetchQueue.push({ id, onReady, onFail });
-    pumpQueue();
-  } else if (thumbCache[id]) {
-    onReady(thumbCache[id]);
-  } else if (onFail) {
-    onFail();
+function requestThumbnail(id, onReady, onFail, priorityFn) {
+  if (thumbCache[id] !== undefined) {
+    if (thumbCache[id]) onReady(thumbCache[id]); else if (onFail) onFail();
+    return;
   }
+  pending.set(id, { id, onReady, onFail, priority: priorityFn || (() => 0) });
+  pumpQueue();
 }
 
-// Forces a fresh fetch, bypassing the cache — used when a cached thumbnail URL
-// turns out to be broken (e.g. an expired signed CDN link).
-function retryThumbnail(id, onReady, onFail) {
+function cancelThumbnail(id) {
+  pending.delete(id);
+}
+
+function retryThumbnail(id, onReady, onFail, priorityFn) {
   delete thumbCache[id];
-  requestThumbnail(id, onReady, onFail);
+  requestThumbnail(id, onReady, onFail, priorityFn);
 }
 
 function pumpQueue() {
-  while (activeFetches < MAX_CONCURRENT_FETCHES && fetchQueue.length) {
-    const { id, onReady, onFail } = fetchQueue.shift();
-    if (thumbCache[id] !== undefined) {
-      if (thumbCache[id]) onReady(thumbCache[id]); else if (onFail) onFail();
-      continue;
-    }
+  const limit = feedActive ? 1 : MAX_CONCURRENT_FETCHES;
+  while (activeFetches < limit && pending.size > 0) {
+    // Pick the highest-priority (smallest distance-to-viewport) pending item.
+    let best = null;
+    pending.forEach(item => {
+      if (!best || item.priority() < best.priority()) best = item;
+    });
+    if (!best) break;
+    pending.delete(best.id);
+
     activeFetches++;
+    const { id, onReady, onFail } = best;
     const oembedUrl = 'https://www.tiktok.com/oembed?url=' +
       encodeURIComponent('https://www.tiktok.com/@i/video/' + id);
     fetch(oembedUrl)
@@ -736,23 +750,32 @@ function openGrid(list, label) {
 
   gridThumbObserver = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
+      const id = entry.target.dataset.id;
       if (entry.isIntersecting) {
-        const id = entry.target.dataset.id;
-        const markUnavailable = () => entry.target.classList.add('unavailable');
+        const tile = entry.target;
+        const markUnavailable = () => tile.classList.add('unavailable');
+        // Priority = distance of this tile from the centre of the viewport now.
+        const priorityFn = () => {
+          const scroller = document.getElementById('gridScroll');
+          const r = tile.getBoundingClientRect();
+          const centre = scroller.clientHeight / 2 + scroller.getBoundingClientRect().top;
+          return Math.abs((r.top + r.height / 2) - centre);
+        };
         requestThumbnail(id, (url) => {
-          const img = entry.target.querySelector('img');
+          const img = tile.querySelector('img');
           if (img) {
             img.onload = () => img.classList.add('loaded');
-            img.onerror = () => retryThumbnail(id, (freshUrl) => {
-              img.src = freshUrl;
-            }, markUnavailable);
+            img.onerror = () => retryThumbnail(id, (freshUrl) => { img.src = freshUrl; }, markUnavailable, priorityFn);
             img.src = url;
           }
-        }, markUnavailable);
-        gridThumbObserver.unobserve(entry.target);
+        }, markUnavailable, priorityFn);
+      } else {
+        // Scrolled out of the prefetch margin before we fetched it — cancel to
+        // free the queue for what's actually on screen.
+        cancelThumbnail(id);
       }
     });
-  }, { rootMargin: '200px' });
+  }, { rootMargin: '300px' });
 
   const saved = gridScrollState[label];
   const initialCount = saved ? Math.max(GRID_PAGE_SIZE, saved.renderedCount) : GRID_PAGE_SIZE;
@@ -1026,6 +1049,7 @@ function openFeed(list, label, startIndex = 0) {
   topSentinelObserver.observe(topSentinel);
 
   document.getElementById('feed').classList.add('open');
+  feedActive = true;
 
   requestAnimationFrame(() => {
     const targetItem = list[startIndex];
@@ -1066,11 +1090,12 @@ function buildSlideEl(item) {
     slideMedia.querySelector('.play-badge').textContent = 'Video unavailable — likely removed or private';
   };
   // The thumbnail acts as a poster behind the iframe until the player loads.
+  // High priority (0) so the poster for the slide you're on loads promptly.
   requestThumbnail(item.id, (url) => {
     img.onload = () => img.classList.add('loaded');
-    img.onerror = () => retryThumbnail(item.id, (freshUrl) => { img.src = freshUrl; }, markUnavailable);
+    img.onerror = () => retryThumbnail(item.id, (freshUrl) => { img.src = freshUrl; }, markUnavailable, () => 0);
     img.src = url;
-  }, markUnavailable);
+  }, markUnavailable, () => 0);
 
   // Transparent full-video tap layer: toggles play/pause in-app so a tap
   // never reaches TikTok's own controls underneath.
@@ -1170,6 +1195,7 @@ function prependSlides(count) {
 document.getElementById('feedBack').onclick = () => {
   if (currentPlayingSlide) deactivateSlide(currentPlayingSlide);
   currentPlayingSlide = null;
+  feedActive = false;
   document.getElementById('feed').classList.remove('open');
   if (playObserver) playObserver.disconnect();
   if (sentinelObserver) sentinelObserver.disconnect();
