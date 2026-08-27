@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Favorites">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="robots" content="noindex, nofollow">
+<!-- Warm the TikTok connections early so player iframes and thumbnail fetches start faster. -->
+<link rel="preconnect" href="https://www.tiktok.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.tiktok.com">
+<link rel="dns-prefetch" href="https://p16-sign-va.tiktokcdn.com">
+<link rel="dns-prefetch" href="https://lf16-tiktok-web.tiktokcdn-us.com">
+<title>Favorites</title>
+<style>
+  :root {
+    --bg: #000;
+    --panel: #151515;
+    --panel2: #1e1e1e;
+    --line: #2a2a2a;
+    --text: #F5F5F5;
+    --dim: #8f8f8f;
+    --accent: #4C8DFF;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+    height: 100%;
+    overscroll-behavior: none;
+  }
+  button { font-family: inherit; }
+
+  /* ================= HOME (category menu) ================= */
+  #home {
+    height: 100%;
+    overflow-y: auto;
+    padding: max(20px, env(safe-area-inset-top)) 16px 40px;
+  }
+  #home h1 {
+    display: none;
+  }
+  .tile-all {
+    display: flex; align-items: center; justify-content: space-between;
+    background: linear-gradient(135deg, #1a1a1a, #101010);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 18px;
+    margin-bottom: 22px;
+  }
+  .tile-all .name { font-size: 17px; font-weight: 600; }
+  .tile-all .sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
+  .tile-all .chev { color: var(--dim); font-size: 20px; }
+
+  .section-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+    margin: 0 0 10px;
+  }
+  .cat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .cat-tile {
+    position: relative;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 14px;
+    min-height: 78px;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .cat-tile .name { font-size: 15px; font-weight: 600; padding-right: 20px; }
+  .cat-tile .count { font-size: 12px; color: var(--dim); }
+  .cat-manage {
+    position: absolute; top: 8px; right: 8px;
+    background: none; border: none;
+    color: var(--dim);
+    font-size: 16px;
+    line-height: 1;
+    padding: 4px 6px;
+  }
+  .cat-tile.add {
+    align-items: center; justify-content: center;
+    border: 1px dashed #3a3a3a;
+    background: transparent;
+    color: var(--accent);
+    font-size: 14px; font-weight: 600;
+  }
+
+  /* ================= FEED (fullscreen vertical) ================= */
+  #feed {
+    position: fixed; inset: 0;
+    background: #000;
+    display: none;
+    flex-direction: column;
+    z-index: 20;
+  }
+  #feed.open { display: flex; }
+  .reel {
+    flex: 1;
+    overflow-y: scroll;
+    scroll-snap-type: y mandatory;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  .slide {
+    height: 100%;
+    scroll-snap-align: start;
+    position: relative;
+    overflow: hidden;
+    /* NOTE: content-visibility:auto was removed here — it suspended off-screen
+       player iframes and disrupted IntersectionObserver playback detection,
+       causing autoplay to stop after a couple of videos. DOM windowing
+       (MAX_LIVE_SLIDES) handles the performance side instead. */
+  }
+  .slide-media {
+    position: absolute; inset: 0;
+    background: linear-gradient(160deg, var(--a,#2a2a2a), var(--b,#101010));
+  }
+  .slide-media img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  .slide-media img.loaded { opacity: 1; }
+  .slide-media iframe {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    border: 0;
+    z-index: 2;
+  }
+  .slide-media.has-player .play-badge { display: none; }
+
+  /* Transparent layer over the whole video that intercepts taps for play/pause,
+     so taps never reach TikTok's own controls beneath it. */
+  .tap-catcher {
+    position: absolute; inset: 0;
+    z-index: 4;
+    background: transparent;
+  }
+  /* Opaque masks covering the screen regions where TikTok renders its own
+     clickable buttons (bottom caption/"Discover more" bar and the right-side
+     profile/like rail), so those outbound links can't be reached. */
+  .mask-bottom {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    height: 90px; z-index: 3;
+    background: #000;
+  }
+  .mask-rail {
+    position: absolute; right: 0; bottom: 90px;
+    width: 60px; height: 260px; z-index: 3;
+    background: #000;
+  }
+  .slide-media:not(.has-player) .mask-bottom,
+  .slide-media:not(.has-player) .mask-rail { display: none; }
+
+  .pause-icon {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    z-index: 5;
+    font-size: 30px; color: rgba(255,255,255,0.85);
+    opacity: 0; transition: opacity 0.15s ease;
+    pointer-events: none;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+  }
+  .slide-media.paused .pause-icon { opacity: 1; }
+  .play-badge {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    font-size: 13px;
+    color: rgba(255,255,255,0.35);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 600;
+    pointer-events: none;
+  }
+  .slide-media.unavailable .play-badge {
+    display: block !important;
+    color: rgba(255,255,255,0.45);
+    font-size: 12px;
+    text-transform: none;
+    letter-spacing: normal;
+    max-width: 220px;
+    text-align: center;
+  }
+
+  .slide-overlay {
+    position: absolute; left: 0; right: 70px; bottom: max(28px, env(safe-area-inset-bottom));
+    padding: 0 16px;
+    z-index: 6;
+    pointer-events: none;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  }
+  .slide-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .slide-cat { font-size: 12px; color: rgba(255,255,255,0.85); }
+
+  .rail {
+    position: absolute; right: 10px; bottom: max(120px, calc(env(safe-area-inset-bottom) + 110px));
+    display: flex; flex-direction: column; align-items: center; gap: 18px;
+    z-index: 6;
+  }
+  .rail .rail-btn {
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(0,0,0,0.55);
+    color: var(--text);
+    font-size: 18px;
+  }
+  .rail .share-btn { transform: rotate(0deg); }
+  .rail .mute-btn.active { background: var(--accent); }
+
+  .feed-top {
+    position: absolute; top: max(16px, env(safe-area-inset-top)); left: 0; right: 0;
+    z-index: 21;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0 14px;
+  }
+  .back-btn {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: none; background: rgba(0,0,0,0.4); color: var(--text);
+    font-size: 18px;
+  }
+  .feed-label {
+    font-size: 13px; font-weight: 600;
+    background: rgba(0,0,0,0.4);
+    padding: 6px 12px; border-radius: 20px;
+  }
+  #debugLog {
+    display: none;
+    position: absolute; left: 0; right: 0; bottom: 0;
+    max-height: 40vh; overflow-y: auto;
+    margin: 0; padding: 8px 10px;
+    background: rgba(0,0,0,0.82); color: #5f5;
+    font-family: ui-monospace, monospace; font-size: 10px; line-height: 1.35;
+    z-index: 40; white-space: pre-wrap;
+    pointer-events: none;
+  }
+  #debugLog.show { display: block; }
+  .subtle-back {
+    width: 30px; height: 30px; border-radius: 50%;
+    border: none; background: rgba(0,0,0,0.3); color: rgba(255,255,255,0.75);
+    font-size: 15px;
+  }
+
+  /* ================= GRID (thumbnail library per category) ================= */
+  #gridView {
+    position: fixed; inset: 0;
+    background: #000;
+    display: none;
+    flex-direction: column;
+    z-index: 15;
+  }
+  #gridView.open { display: flex; }
+  .grid-top {
+    display: flex; align-items: center; gap: 10px;
+    padding: max(16px, env(safe-area-inset-top)) 14px 10px;
+  }
+  .grid-title { font-size: 15px; font-weight: 600; }
+  #datePanel {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: #161616; border-top: 1px solid var(--line);
+    max-height: 55vh; overflow-y: auto;
+    transform: translateY(100%); transition: transform 0.25s ease;
+    z-index: 16; padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  #datePanel.open { transform: translateY(0); }
+  .date-panel-inner { padding: 8px 12px; }
+  .date-year-hdr {
+    font-size: 13px; font-weight: 700; color: var(--accent);
+    padding: 12px 4px 6px; position: sticky; top: 0; background: #161616;
+  }
+  .date-month-row {
+    display: inline-flex; margin: 3px; padding: 7px 12px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    font-size: 13px; color: var(--text);
+  }
+  .grid-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 3px 30px;
+  }
+  .thumb-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 3px;
+  }
+  .thumb-tile {
+    position: relative;
+    aspect-ratio: 9 / 14;
+    background: linear-gradient(160deg, var(--a,#2a2a2a), var(--b,#101010));
+    overflow: hidden;
+  }
+  .thumb-tile img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  .thumb-tile img.loaded { opacity: 1; }
+  .thumb-date {
+    position: absolute; bottom: 4px; left: 5px;
+    font-size: 9px; color: rgba(255,255,255,0.7);
+    background: rgba(0,0,0,0.4); padding: 1px 4px; border-radius: 3px;
+  }
+  .thumb-tile.unavailable::after {
+    content: 'Unavailable';
+    position: absolute; top: 6px; left: 6px;
+    font-size: 9px; color: rgba(255,255,255,0.55);
+    background: rgba(0,0,0,0.5); padding: 2px 5px; border-radius: 3px;
+  }
+
+  /* ================= Category picker sheet ================= */
+  .sheet-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    z-index: 30; display: none;
+  }
+  .sheet-backdrop.open { display: block; }
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: #191919;
+    border-radius: 16px 16px 0 0;
+    padding: 18px 16px max(18px, env(safe-area-inset-bottom));
+    z-index: 31;
+    transform: translateY(100%);
+    transition: transform 0.25s ease;
+  }
+  .sheet.open { transform: translateY(0); }
+  .sheet h3 { margin: 0 0 12px; font-size: 15px; }
+  .sheet-cat {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 4px;
+    border-bottom: 1px solid #262626;
+    font-size: 15px;
+  }
+  .sheet-cat.selected { color: var(--accent); }
+  .sheet-new {
+    display: flex; gap: 8px; margin-top: 14px;
+  }
+  .sheet-new input {
+    flex: 1;
+    background: #101010; border: 1px solid #2a2a2a; border-radius: 8px;
+    color: var(--text); padding: 10px 12px; font-size: 14px;
+  }
+  .sheet-new button {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; padding: 0 16px; font-size: 14px; font-weight: 600;
+  }
+
+  /* ================= Custom modal / action sheet (replaces native dialogs) ================= */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    z-index: 40; display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .modal-card {
+    background: #1c1c1c;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    width: 100%; max-width: 320px;
+    padding: 18px;
+  }
+  .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .modal-message { font-size: 13px; color: var(--dim); margin-bottom: 14px; line-height: 1.4; }
+  .modal-input {
+    width: 100%;
+    background: #101010; border: 1px solid #2a2a2a; border-radius: 8px;
+    color: var(--text); padding: 10px 12px; font-size: 15px;
+    margin-bottom: 8px;
+  }
+  .modal-error {
+    font-size: 12px; color: #ff6b6b; min-height: 16px; margin-bottom: 6px;
+  }
+  .modal-actions {
+    display: flex; gap: 8px; margin-top: 10px;
+  }
+  .modal-btn {
+    flex: 1;
+    border: none; border-radius: 8px;
+    padding: 11px 0; font-size: 14px; font-weight: 600;
+    background: #2a2a2a; color: var(--text);
+  }
+  .modal-btn.primary { background: var(--accent); color: #fff; }
+  .modal-btn.destructive { background: #4a2020; color: #ff8080; }
+
+  .action-sheet {
+    position: fixed; left: 16px; right: 16px; bottom: max(20px, env(safe-area-inset-bottom));
+    z-index: 41;
+    background: #1c1c1c;
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .action-sheet-title {
+    font-size: 12px; color: var(--dim); text-align: center;
+    padding: 12px 16px; border-bottom: 1px solid #262626;
+  }
+  .action-row {
+    padding: 14px 16px; text-align: center; font-size: 16px;
+    border-bottom: 1px solid #262626;
+  }
+  .action-row.destructive { color: #ff6b6b; }
+  .action-row.cancel { font-weight: 600; border-bottom: none; margin-top: 8px; border-radius: 14px; background: #1c1c1c; }
+</style>
+</head>
+<body>
+
+<!-- ============ HOME ============ -->
+<div id="home">
+  <h1>Favorites</h1>
+  <div class="tile-all" id="allTile">
+    <div>
+      <div class="name">All Videos</div>
+      <div class="sub" id="allCount">0 saved</div>
+    </div>
+    <div class="chev">&rsaquo;</div>
+  </div>
+  <div class="section-label">Categories</div>
+  <div class="cat-grid" id="catGrid"></div>
+</div>
+
+<!-- ============ GRID (thumbnail library) ============ -->
+<div id="gridView">
+  <div class="grid-top">
+    <button class="subtle-back" id="gridBack">&lsaquo;</button>
+    <div class="grid-title" id="gridTitle">All Videos</div>
+    <button class="subtle-back" id="dateJumpBtn" style="font-size:15px; display:none;">&#128197;</button>
+  </div>
+  <div class="grid-scroll" id="gridScroll">
+    <div class="thumb-grid" id="thumbGrid"></div>
+  </div>
+  <div id="datePanel">
+    <div class="date-panel-inner" id="datePanelInner"></div>
+  </div>
+</div>
+
+<!-- ============ FEED ============ -->
+<div id="feed">
+  <div class="feed-top">
+    <button class="subtle-back" id="feedBack">&lsaquo;</button>
+    <div class="feed-label" id="feedLabel">All Videos</div>
+    <button class="subtle-back" id="debugToggle" style="font-size:14px;">&#128027;</button>
+  </div>
+  <div class="reel" id="reel"></div>
+  <pre id="debugLog"></pre>
+</div>
+
+<!-- ============ Category picker sheet ============ -->
+<div class="sheet-backdrop" id="sheetBackdrop"></div>
+<div class="sheet" id="sheet">
+  <h3>Move to category</h3>
+  <div id="sheetCats"></div>
+  <div class="sheet-new">
+    <input id="newCatInput" placeholder="New category name">
+    <button id="newCatBtn">Add</button>
+  </div>
+</div>
+
+<script>
+// ---------- Real data loading ----------
+const PALETTE = [
+  ["#2a2f3a","#101216"], ["#3a2f28","#161210"], ["#26332e","#0f1613"],
+  ["#332a3a","#141017"], ["#3a3128","#161310"], ["#28323a","#0f1417"]
+];
+
+function hashPalette(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return PALETTE[h % PALETTE.length];
+}
+
+function formatDate(iso) {
+  const d = new Date(iso.replace(' ', 'T'));
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+let state = JSON.parse(localStorage.getItem('gallery-state') || 'null');
+const DATA_VERSION = 3; // bump to force a clean re-hydration when the model changes
+
+async function ensureRealData() {
+  // If saved state is missing, stale (old version), or still on mock data, re-hydrate.
+  const stale = !state || state.version !== DATA_VERSION;
+  if (state && state.hydrated && !stale) { handleIncomingAdd(); renderHome(); return; }
+  showLoadingState();
+  try {
+    const res = await fetch('favorites.json');
+    const raw = await res.json();
+    const existingById = {};
+    // Preserve prior category assignments only from real (non-mock) items.
+    if (state && state.items) state.items.forEach(i => {
+      if (i.id && !String(i.id).startsWith('mock-')) existingById[i.id] = i;
+    });
+
+    // Carry over user-created categories, but drop the old mock defaults.
+    const MOCK_DEFAULTS = ['Recipes', 'Comedy', 'DIY', 'Music'];
+    let categories = ((state && state.categories) || []).filter(c => {
+      // keep a mock-named category only if it actually has real items assigned
+      if (!MOCK_DEFAULTS.includes(c)) return true;
+      return Object.values(existingById).some(i => i.category === c);
+    });
+
+    const items = raw.map(entry => {
+      const prev = existingById[entry.id];
+      return {
+        id: entry.id,
+        url: entry.url,
+        date: entry.date,
+        label: formatDate(entry.date),
+        category: (prev && prev.category) || 'Uncategorized'
+      };
+    });
+    if (!categories.includes('Uncategorized')) categories.unshift('Uncategorized');
+
+    state = { categories, items, hydrated: true, version: DATA_VERSION };
+    save();
+  } catch (e) {
+    console.error('Failed to load favorites.json, falling back to empty state', e);
+    state = state || { categories: ['Uncategorized'], items: [], hydrated: false, version: DATA_VERSION };
+  }
+  handleIncomingAdd();
+  renderHome();
+}
+
+function showLoadingState() {
+  document.getElementById('catGrid').innerHTML = '';
+  document.getElementById('allCount').textContent = 'Loading…';
+}
+
+function save() {
+  try {
+    localStorage.setItem('gallery-state', JSON.stringify(state));
+  } catch (e) {
+    console.error('Failed to save state — storage may be full', e);
+    showToast('Storage full — this change may not be saved');
+  }
+}
+
+let currentFeedList = [];
+let activeSlideItem = null;
+
+// ---------- Home rendering ----------
+function renderHome() {
+  document.getElementById('allCount').textContent = state.items.length + ' saved';
+  const grid = document.getElementById('catGrid');
+  grid.innerHTML = '';
+  state.categories.forEach(cat => {
+    const count = state.items.filter(i => i.category === cat).length;
+    const tile = document.createElement('div');
+    tile.className = 'cat-tile';
+    tile.innerHTML = `<button class="cat-manage">&#8942;</button><div class="name">${cat}</div><div class="count">${count} saved</div>`;
+    tile.onclick = () => openGrid(state.items.filter(i => i.category === cat), cat);
+    tile.querySelector('.cat-manage').onclick = (e) => {
+      e.stopPropagation();
+      manageCategory(cat);
+    };
+    grid.appendChild(tile);
+  });
+  const addTile = document.createElement('div');
+  addTile.className = 'cat-tile add';
+  addTile.textContent = '+ New Category';
+  addTile.onclick = () => promptNewCategory();
+  grid.appendChild(addTile);
+}
+
+document.getElementById('allTile').onclick = () => openGrid(state.items, 'All Videos');
+
+function promptNewCategory() {
+  inputModal({
+    title: 'New category',
+    placeholder: 'Category name',
+    confirmLabel: 'Add',
+    onSubmit: (name) => {
+      if (state.categories.includes(name)) return 'A category named "' + name + '" already exists.';
+      state.categories.push(name);
+      save();
+      renderHome();
+    }
+  });
+}
+
+function manageCategory(cat) {
+  actionSheet({
+    title: cat,
+    rows: [
+      { label: 'Rename', onClick: () => renameCategory(cat) },
+      { label: 'Delete', destructive: true, onClick: () => confirmDeleteCategory(cat) }
+    ]
+  });
+}
+
+function renameCategory(cat) {
+  inputModal({
+    title: 'Rename "' + cat + '"',
+    placeholder: 'New name',
+    initialValue: cat,
+    confirmLabel: 'Save',
+    onSubmit: (name) => {
+      if (name !== cat && state.categories.includes(name)) return 'A category named "' + name + '" already exists.';
+      state.categories = state.categories.map(c => c === cat ? name : c);
+      state.items.forEach(i => { if (i.category === cat) i.category = name; });
+      save();
+      renderHome();
+    }
+  });
+}
+
+function confirmDeleteCategory(cat) {
+  const count = state.items.filter(i => i.category === cat).length;
+  confirmModal({
+    title: 'Delete "' + cat + '"?',
+    message: count > 0 ? (count + ' video(s) will move to Uncategorized.') : 'This category is empty.',
+    confirmLabel: 'Delete',
+    destructive: true,
+    onConfirm: () => {
+      state.categories = state.categories.filter(c => c !== cat);
+      state.items.forEach(i => { if (i.category === cat) i.category = 'Uncategorized'; });
+      if (count > 0 && !state.categories.includes('Uncategorized')) {
+        state.categories.unshift('Uncategorized');
+      }
+      save();
+      renderHome();
+    }
+  });
+}
+
+// ---------- Generic modal builders (dark-themed, no native browser dialogs) ----------
+function closeOverlays() {
+  document.querySelectorAll('.modal-backdrop, .action-sheet').forEach(el => el.remove());
+}
+
+function inputModal({ title, placeholder, initialValue, confirmLabel, onSubmit }) {
+  closeOverlays();
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-title">${title}</div>
+      <input class="modal-input" id="modalInput" placeholder="${placeholder}" value="${initialValue || ''}">
+      <div class="modal-error" id="modalError"></div>
+      <div class="modal-actions">
+        <button class="modal-btn" id="modalCancel">Cancel</button>
+        <button class="modal-btn primary" id="modalConfirm">${confirmLabel}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const input = backdrop.querySelector('#modalInput');
+  input.focus();
+  backdrop.querySelector('#modalCancel').onclick = closeOverlays;
+  backdrop.onclick = (e) => { if (e.target === backdrop) closeOverlays(); };
+  backdrop.querySelector('#modalConfirm').onclick = () => {
+    const val = input.value.trim();
+    if (!val) { backdrop.querySelector('#modalError').textContent = 'Enter a name.'; return; }
+    const error = onSubmit(val);
+    if (error) { backdrop.querySelector('#modalError').textContent = error; return; }
+    closeOverlays();
+  };
+}
+
+function confirmModal({ title, message, confirmLabel, destructive, onConfirm }) {
+  closeOverlays();
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-title">${title}</div>
+      <div class="modal-message">${message}</div>
+      <div class="modal-actions">
+        <button class="modal-btn" id="modalCancel">Cancel</button>
+        <button class="modal-btn ${destructive ? 'destructive' : 'primary'}" id="modalConfirm">${confirmLabel}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  backdrop.querySelector('#modalCancel').onclick = closeOverlays;
+  backdrop.onclick = (e) => { if (e.target === backdrop) closeOverlays(); };
+  backdrop.querySelector('#modalConfirm').onclick = () => {
+    onConfirm();
+    closeOverlays();
+  };
+}
+
+function actionSheet({ title, rows }) {
+  closeOverlays();
+  const sheet = document.createElement('div');
+  sheet.className = 'action-sheet';
+  sheet.innerHTML =
+    (title ? `<div class="action-sheet-title">${title}</div>` : '') +
+    rows.map((r, idx) =>
+      `<div class="action-row${r.destructive ? ' destructive' : ''}" data-idx="${idx}">${r.label}</div>`
+    ).join('') +
+    `<div class="action-row cancel" id="sheetCancel">Cancel</div>`;
+  document.body.appendChild(sheet);
+  rows.forEach((r, idx) => {
+    sheet.querySelector('[data-idx="' + idx + '"]').onclick = () => {
+      closeOverlays();
+      r.onClick();
+    };
+  });
+  sheet.querySelector('#sheetCancel').onclick = closeOverlays;
+}
+
+// ---------- Thumbnail fetching (priority queue, viewport-first) ----------
+let thumbCache = JSON.parse(localStorage.getItem('thumb-cache') || '{}');
+let thumbCacheDirty = false;
+function saveThumbCache() {
+  // Debounced: writing this big object to localStorage on every fetch was itself a stall.
+  thumbCacheDirty = true;
+}
+setInterval(() => {
+  if (!thumbCacheDirty) return;
+  thumbCacheDirty = false;
+  try { localStorage.setItem('thumb-cache', JSON.stringify(thumbCache)); } catch (e) {}
+}, 2000);
+
+let MAX_CONCURRENT_FETCHES = 6;
+let activeFetches = 0;
+// Pending requests keyed by id, each carrying a live priority() function so we
+// can always pick whatever is closest to the viewport right now.
+const pending = new Map();
+const inFlight = new Map(); // id -> AbortController, so we can cancel on scroll-away
+let feedActive = false; // when the video feed is open, throttle thumbnails hard
+
+function requestThumbnail(id, onReady, onFail, priorityFn) {
+  if (thumbCache[id] !== undefined) {
+    if (thumbCache[id]) onReady(thumbCache[id]); else if (onFail) onFail();
+    return;
+  }
+  pending.set(id, { id, onReady, onFail, priority: priorityFn || (() => 0) });
+  pumpQueue();
+}
+
+function cancelThumbnail(id) {
+  pending.delete(id);
+  // Also abort an in-flight fetch for something we've scrolled well past,
+  // freeing a slot for what's actually on screen now.
+  const ctrl = inFlight.get(id);
+  if (ctrl) { ctrl.abort(); inFlight.delete(id); }
+}
+
+function retryThumbnail(id, onReady, onFail, priorityFn) {
+  delete thumbCache[id];
+  requestThumbnail(id, onReady, onFail, priorityFn);
+}
+
+function pumpQueue() {
+  const limit = feedActive ? 1 : MAX_CONCURRENT_FETCHES;
+  while (activeFetches < limit && pending.size > 0) {
+    // Compute each pending item's priority ONCE this cycle (priority() can be
+    // expensive, e.g. getBoundingClientRect), then pick the smallest.
+    let best = null, bestP = Infinity;
+    pending.forEach(item => {
+      const p = item.priority();
+      if (p < bestP) { bestP = p; best = item; }
+    });
+    if (!best) break;
+    pending.delete(best.id);
+
+    activeFetches++;
+    const { id, onReady, onFail } = best;
+    const ctrl = new AbortController();
+    inFlight.set(id, ctrl);
+    const oembedUrl = 'https://www.tiktok.com/oembed?url=' +
+      encodeURIComponent('https://www.tiktok.com/@i/video/' + id);
+    fetch(oembedUrl, { signal: ctrl.signal })
+      .then(res => res.json())
+      .then(data => {
+        thumbCache[id] = data.thumbnail_url || null;
+        saveThumbCache();
+        if (data.thumbnail_url) onReady(data.thumbnail_url); else if (onFail) onFail();
+      })
+      .catch((err) => {
+        // Aborted (scrolled away) — leave uncached so it can retry later. Real
+        // failures cache null so we don't hammer a dead video.
+        if (err && err.name === 'AbortError') return;
+        thumbCache[id] = null; saveThumbCache(); if (onFail) onFail();
+      })
+      .finally(() => {
+        inFlight.delete(id);
+        activeFetches--;
+        pumpQueue();
+      });
+  }
+}
+
+// ---------- Date jump navigation (for chronological views) ----------
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function setupDateJump(list, label) {
+  const btn = document.getElementById('dateJumpBtn');
+  // Only offer date jump for the chronological libraries (All Videos, Uncategorized).
+  const chronological = (label === 'All Videos' || label === 'Uncategorized');
+  btn.style.display = chronological ? '' : 'none';
+  document.getElementById('datePanel').classList.remove('open');
+  if (!chronological) return;
+
+  // Build an index: first list-position where each year/month appears.
+  // List is newest-first (as exported), so scanning gives descending periods.
+  const index = []; // { year, month, idx }
+  let lastKey = '';
+  list.forEach((item, i) => {
+    if (!item.date) return;
+    const d = new Date(item.date.replace(' ', 'T'));
+    if (isNaN(d)) return;
+    const key = d.getFullYear() + '-' + d.getMonth();
+    if (key !== lastKey) {
+      index.push({ year: d.getFullYear(), month: d.getMonth(), idx: i });
+      lastKey = key;
+    }
+  });
+  buildDatePanel(index);
+}
+
+function buildDatePanel(index) {
+  const inner = document.getElementById('datePanelInner');
+  inner.innerHTML = '';
+  let currentYear = null;
+  index.forEach(entry => {
+    if (entry.year !== currentYear) {
+      currentYear = entry.year;
+      const h = document.createElement('div');
+      h.className = 'date-year-hdr';
+      h.textContent = currentYear;
+      inner.appendChild(h);
+    }
+    const chip = document.createElement('span');
+    chip.className = 'date-month-row';
+    chip.textContent = MONTH_NAMES[entry.month];
+    chip.onclick = () => jumpToIndex(entry.idx);
+    inner.appendChild(chip);
+  });
+}
+
+// Ensure tiles are rendered up to targetIdx, then scroll it into view.
+function jumpToIndex(targetIdx) {
+  document.getElementById('datePanel').classList.remove('open');
+  // Render enough tiles to include the target.
+  while (gridRenderedCount <= targetIdx && gridRenderedCount < currentGridList.length) {
+    appendGridTiles(GRID_PAGE_SIZE);
+  }
+  const grid = document.getElementById('thumbGrid');
+  const tiles = grid.querySelectorAll('.thumb-tile');
+  const target = tiles[targetIdx];
+  if (target) {
+    target.scrollIntoView({ behavior: 'instant', block: 'start' });
+  }
+}
+
+document.getElementById('dateJumpBtn').onclick = () => {
+  document.getElementById('datePanel').classList.toggle('open');
+};
+
+// ---------- Grid view (thumbnail library per category) ----------
+const GRID_PAGE_SIZE = 30;
+let gridRenderedCount = 0;
+let gridSentinelObserver = null;
+let gridThumbObserver = null;
+let currentGridList = [];
+let currentGridLabel = '';
+let gridScrollState = {}; // label -> { renderedCount, scrollTop }
+
+function openGrid(list, label) {
+  currentGridList = list;
+  currentGridLabel = label;
+  feedActive = false; // ensure thumbnails aren't throttled while browsing the grid
+  document.getElementById('gridTitle').textContent = label;
+  const grid = document.getElementById('thumbGrid');
+  grid.innerHTML = '';
+  gridRenderedCount = 0;
+  setupDateJump(list, label);
+
+  if (gridSentinelObserver) gridSentinelObserver.disconnect();
+  if (gridThumbObserver) gridThumbObserver.disconnect();
+
+  gridThumbObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      const id = entry.target.dataset.id;
+      if (entry.isIntersecting) {
+        const tile = entry.target;
+        const img = tile.querySelector('img');
+        if (img && img.src) return; // already has its thumbnail — nothing to do
+        const markUnavailable = () => tile.classList.add('unavailable');
+        // Priority = distance of this tile from the centre of the viewport now.
+        const priorityFn = () => {
+          const scroller = document.getElementById('gridScroll');
+          const r = tile.getBoundingClientRect();
+          const centre = scroller.clientHeight / 2 + scroller.getBoundingClientRect().top;
+          return Math.abs((r.top + r.height / 2) - centre);
+        };
+        requestThumbnail(id, (url) => {
+          const im = tile.querySelector('img');
+          if (im) {
+            im.onload = () => im.classList.add('loaded');
+            im.onerror = () => retryThumbnail(id, (freshUrl) => { im.src = freshUrl; }, markUnavailable, priorityFn);
+            im.src = url;
+          }
+        }, markUnavailable, priorityFn);
+      } else {
+        // Scrolled out of the prefetch margin before we fetched it — cancel to
+        // free the queue for what's actually on screen.
+        cancelThumbnail(id);
+      }
+    });
+  }, { root: document.getElementById('gridScroll'), rootMargin: '300px' });
+
+  const saved = gridScrollState[label];
+  const initialCount = saved ? Math.max(GRID_PAGE_SIZE, saved.renderedCount) : GRID_PAGE_SIZE;
+  appendGridTiles(initialCount);
+  document.getElementById('gridView').classList.add('open');
+  document.getElementById('gridScroll').scrollTop = saved ? saved.scrollTop : 0;
+}
+
+function appendGridTiles(count) {
+  const grid = document.getElementById('thumbGrid');
+  const scroller = document.getElementById('gridScroll');
+  const oldSentinel = grid.querySelector('.grid-sentinel');
+  if (oldSentinel) { if (gridSentinelObserver) gridSentinelObserver.unobserve(oldSentinel); oldSentinel.remove(); }
+
+  const slice = currentGridList.slice(gridRenderedCount, gridRenderedCount + count);
+  slice.forEach((item, offset) => {
+    const idx = gridRenderedCount + offset;
+    const palette = hashPalette(item.id);
+    const tile = document.createElement('div');
+    tile.className = 'thumb-tile';
+    tile.dataset.id = item.id;
+    tile.style.setProperty('--a', palette[0]);
+    tile.style.setProperty('--b', palette[1]);
+    tile.innerHTML = `<img alt="" decoding="async"><div class="thumb-date">${item.label}</div>`;
+    tile.onclick = () => {
+      openFeed(currentGridList, currentGridLabel, idx);
+    };
+    grid.appendChild(tile);
+    gridThumbObserver.observe(tile);
+  });
+  gridRenderedCount += slice.length;
+
+  if (gridRenderedCount < currentGridList.length) {
+    const sentinel = document.createElement('div');
+    sentinel.className = 'grid-sentinel';
+    sentinel.style.cssText = 'grid-column: 1 / -1; height: 1px;';
+    grid.appendChild(sentinel);
+    if (!gridSentinelObserver) {
+      gridSentinelObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => { if (entry.isIntersecting) appendGridTiles(GRID_PAGE_SIZE); });
+      }, { root: scroller });
+    }
+    gridSentinelObserver.observe(sentinel);
+  }
+}
+
+document.getElementById('gridScroll').addEventListener('scroll', () => {
+  if (!currentGridLabel) return;
+  gridScrollState[currentGridLabel] = {
+    renderedCount: gridRenderedCount,
+    scrollTop: document.getElementById('gridScroll').scrollTop
+  };
+});
+
+document.getElementById('gridBack').onclick = () => {
+  document.getElementById('gridView').classList.remove('open');
+  if (gridSentinelObserver) gridSentinelObserver.disconnect();
+  if (gridThumbObserver) gridThumbObserver.disconnect();
+  renderHome();
+};
+const PAGE_SIZE = 20;
+let renderedStart = 0;
+let renderedEnd = 0;
+let playObserver = null;
+let sentinelObserver = null;
+let topSentinelObserver = null;
+let currentPlayingSlide = null;
+
+// Global mute state for the whole session — driven by the rail toggle button.
+// Starts muted (off), which also guarantees reliable autoplay on iOS.
+let desiredMuted = true;
+
+function playerSrc(id) {
+  const params = new URLSearchParams({
+    rel: '0', autoplay: '1', loop: '1',
+    controls: '0', progress_bar: '0', play_button: '0', volume_control: '0',
+    fullscreen_button: '0', timestamp: '0', music_info: '0', description: '0',
+    native_context_menu: '0', closed_caption: '0',
+    muted: desiredMuted ? '1' : '0'
+  });
+  return 'https://www.tiktok.com/player/v1/' + id + '?' + params.toString();
+}
+
+// ---------- Debug overlay (toggle with the 🐞 button; helps trace playback) ----------
+let DEBUG = false;
+const debugLines = [];
+function dlog(msg) {
+  if (!DEBUG) return;
+  const el = document.getElementById('debugLog');
+  debugLines.unshift(new Date().toLocaleTimeString().slice(3) + ' ' + msg);
+  if (debugLines.length > 40) debugLines.pop();
+  if (el) el.textContent = debugLines.join('\n');
+}
+
+function sendToPlayer(iframe, type, value) {
+  if (iframe && iframe.contentWindow) {
+    iframe.contentWindow.postMessage({ 'x-tiktok-player': true, type, value }, '*');
+  }
+}
+
+// Central listener for messages coming FROM any TikTok player iframe.
+let playerMessageBound = false;
+function bindPlayerMessages() {
+  if (playerMessageBound) return;
+  playerMessageBound = true;
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || !d['x-tiktok-player']) return;
+    // Identify which slide's iframe sent this message.
+    let sourceSlide = null;
+    document.querySelectorAll('#reel .slide').forEach(s => {
+      const f = s.querySelector('iframe');
+      if (f && f.contentWindow === e.source) sourceSlide = s;
+    });
+    if (!sourceSlide) { dlog('msg ' + d.type + ' from UNMATCHED iframe'); return; }
+    const iframe = sourceSlide.querySelector('iframe');
+    const isActive = sourceSlide === currentPlayingSlide;
+    const short = (sourceSlide.dataset.id || '').slice(-4);
+    if (d.type !== 'onCurrentTime') dlog('msg ' + d.type + (d.value !== undefined ? ':' + JSON.stringify(d.value) : '') + ' ' + short + (isActive ? ' [active]' : ''));
+
+    switch (d.type) {
+      case 'onPlayerReady':
+        if (isActive) {
+          sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
+          sendToPlayer(iframe, 'play');
+        } else {
+          sendToPlayer(iframe, 'pause');
+        }
+        break;
+      case 'onStateChange':
+        // value: 0 ended, 1 playing, 2 paused, 3 buffering, -1 init.
+        if (isActive) {
+          if ((d.value === 2 || d.value === 0) && sourceSlide.dataset.userPaused !== 'true') {
+            // Active video stopped without a user pause — restart it.
+            sendToPlayer(iframe, 'play');
+          }
+          if (d.value === 1) {
+            // Video is now actually playing: retry loop can stop, re-assert mute, clear overlay.
+            if (sourceSlide._playTimer) { clearInterval(sourceSlide._playTimer); sourceSlide._playTimer = null; }
+            sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
+            sourceSlide.querySelector('.slide-media').classList.remove('paused');
+          }
+        } else {
+          // A non-active player that somehow started: keep it paused.
+          if (d.value === 1) sendToPlayer(iframe, 'pause');
+        }
+        break;
+      case 'onPlayerError':
+        // 3002 = AUTOPLAY_ERROR (browser blocked autoplay). Retry muted, which is allowed.
+        if (d.value && d.value.errorCode === 3002 && isActive) {
+          sendToPlayer(iframe, 'mute');
+          sendToPlayer(iframe, 'play');
+        }
+        break;
+    }
+  });
+}
+
+// Swap a slide's thumbnail poster for the live TikTok player iframe,
+// wrapped in our own tap-catcher + edge masks so TikTok's own buttons
+// can never be reached and taps toggle play/pause in-app.
+function activateSlide(slide) {
+  if (slide.querySelector('iframe')) return; // already active
+  const id = slide.dataset.id;
+  if (slide.classList.contains('unavailable-slide')) return;
+  bindPlayerMessages();
+  const media = slide.querySelector('.slide-media');
+  const iframe = document.createElement('iframe');
+  iframe.src = playerSrc(id);
+  iframe.allow = 'autoplay; fullscreen';
+  iframe.setAttribute('scrolling', 'no');
+  media.appendChild(iframe);
+  media.classList.add('has-player');
+}
+
+function deactivateSlide(slide) {
+  // Pause but KEEP the iframe only if it's the NEXT slide after the active one
+  // (warm buffer in scroll direction); tear everything else down to stay light.
+  if (slide._playTimer) { clearInterval(slide._playTimer); slide._playTimer = null; }
+  const iframe = slide.querySelector('iframe');
+  if (!iframe) return;
+  const keepWarm = slide === currentPlayingSlide?.nextElementSibling;
+  sendToPlayer(iframe, 'pause');
+  if (!keepWarm) {
+    iframe.remove();
+    slide.querySelector('.slide-media').classList.remove('has-player');
+  }
+  delete slide.dataset.userPaused;
+  slide.querySelector('.slide-media')?.classList.remove('paused');
+}
+
+// Pre-create only the NEXT slide's iframe (paused), deferred so it doesn't
+// compete with the active video's load. Warming both neighbours was too heavy.
+function warmNeighbours(slide) {
+  const n = slide.nextElementSibling;
+  if (n && n.classList.contains('slide') && !n.querySelector('iframe') &&
+      !n.classList.contains('unavailable-slide')) {
+    setTimeout(() => {
+      // Only warm if it's still the neighbour of the active slide.
+      if (currentPlayingSlide && n === currentPlayingSlide.nextElementSibling) {
+        activateSlide(n);
+        const f = n.querySelector('iframe');
+        setTimeout(() => sendToPlayer(f, 'pause'), 400);
+      }
+    }, 900);
+  }
+}
+
+// Make the active slide play with the session's current mute state.
+// Retries a few times because a warmed/just-created player may not be ready
+// to accept 'play' immediately, and a single lost command = a stuck video.
+function ensurePlaying(slide) {
+  const iframe = slide.querySelector('iframe');
+  if (!iframe) return;
+  delete slide.dataset.userPaused;
+  slide.querySelector('.slide-media').classList.remove('paused');
+
+  if (slide._playTimer) clearInterval(slide._playTimer);
+  let tries = 0;
+  const attempt = () => {
+    // Stop retrying if this slide is no longer the active one, or the user paused it.
+    if (slide !== currentPlayingSlide || slide.dataset.userPaused === 'true') {
+      clearInterval(slide._playTimer); slide._playTimer = null; return;
+    }
+    const f = slide.querySelector('iframe');
+    if (f) {
+      sendToPlayer(f, desiredMuted ? 'mute' : 'unMute');
+      sendToPlayer(f, 'play');
+      dlog('ensurePlaying try ' + (tries+1) + ' ' + (slide.dataset.id||'').slice(-4));
+    }
+    if (++tries >= 6) { clearInterval(slide._playTimer); slide._playTimer = null; }
+  };
+  attempt();
+  slide._playTimer = setInterval(attempt, 500);
+}
+
+function togglePlay(slide) {
+  const iframe = slide.querySelector('iframe');
+  if (!iframe) return;
+  const media = slide.querySelector('.slide-media');
+  if (slide.dataset.userPaused === 'true') {
+    delete slide.dataset.userPaused;
+    sendToPlayer(iframe, 'play');
+    media.classList.remove('paused');
+  } else {
+    slide.dataset.userPaused = 'true';
+    sendToPlayer(iframe, 'pause');
+    media.classList.add('paused');
+  }
+}
+
+// Apply the session mute state to whatever's currently playing.
+function applyMuteState() {
+  document.querySelectorAll('#reel .slide iframe').forEach(f => {
+    sendToPlayer(f, desiredMuted ? 'mute' : 'unMute');
+  });
+}
+
+function openFeed(list, label, startIndex = 0) {
+  currentFeedList = list;
+  document.getElementById('feedLabel').textContent = label;
+  const reel = document.getElementById('reel');
+  reel.innerHTML = '';
+  currentPlayingSlide = null;
+
+  if (playObserver) playObserver.disconnect();
+  if (sentinelObserver) sentinelObserver.disconnect();
+  if (topSentinelObserver) topSentinelObserver.disconnect();
+
+  playObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      const slide = entry.target;
+      const short = (slide.dataset.id || '').slice(-4);
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+        dlog('▶ active ' + short + ' (ratio ' + entry.intersectionRatio.toFixed(2) + ')');
+        if (currentPlayingSlide && currentPlayingSlide !== slide) {
+          deactivateSlide(currentPlayingSlide);
+        }
+        currentPlayingSlide = slide;
+        activateSlide(slide);
+        ensurePlaying(slide);
+        warmNeighbours(slide);
+        activeSlideItem = currentFeedList.find(i => i.id === slide.dataset.id);
+      } else if (!entry.isIntersecting) {
+        dlog('✕ leave ' + short);
+        deactivateSlide(slide);
+      }
+    });
+  }, { threshold: 0.6 });
+
+  const topSentinel = document.createElement('div');
+  topSentinel.className = 'top-sentinel';
+  topSentinel.style.cssText = 'height:1px;';
+  reel.appendChild(topSentinel);
+
+  const windowStart = Math.max(0, startIndex - 5);
+  renderedStart = windowStart;
+  renderedEnd = windowStart;
+  appendSlides(PAGE_SIZE + (startIndex - windowStart));
+
+  topSentinelObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting && renderedStart > 0) prependSlides(PAGE_SIZE);
+    });
+  }, { root: reel });
+  topSentinelObserver.observe(topSentinel);
+
+  // Trim the DOM only once scrolling has settled, so scrollTop compensation
+  // never fights an in-progress momentum scroll.
+  let scrollIdleTimer = null;
+  reel.onscroll = () => {
+    if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
+    scrollIdleTimer = setTimeout(() => { trimTop(); trimBottom(); }, 250);
+  };
+
+  document.getElementById('feed').classList.add('open');
+  feedActive = true;
+
+  requestAnimationFrame(() => {
+    const targetItem = list[startIndex];
+    const targetSlide = targetItem && reel.querySelector('.slide[data-id="' + targetItem.id + '"]');
+    if (targetSlide) targetSlide.scrollIntoView({ behavior: 'instant' });
+  });
+}
+
+function buildSlideEl(item) {
+  const palette = hashPalette(item.id);
+  const slide = document.createElement('div');
+  slide.className = 'slide';
+  slide.dataset.id = item.id;
+  slide.innerHTML = `
+    <div class="slide-media" style="--a:${palette[0]};--b:${palette[1]}">
+      <img alt="" decoding="async">
+      <div class="play-badge">loading…</div>
+      <div class="mask-bottom"></div>
+      <div class="mask-rail"></div>
+      <div class="tap-catcher"></div>
+      <div class="pause-icon">&#10074;&#10074;</div>
+    </div>
+    <div class="slide-overlay">
+      <div class="slide-title">${item.label}</div>
+      <div class="slide-cat">${item.category}</div>
+    </div>
+    <div class="rail">
+      <button class="rail-btn mute-btn" aria-label="Mute or unmute">&#128263;</button>
+      <button class="rail-btn share-btn" aria-label="Share">&#10148;</button>
+      <button class="rail-btn tag-btn2" aria-label="Categorize">&#127991;</button>
+    </div>
+  `;
+  const img = slide.querySelector('img');
+  const slideMedia = slide.querySelector('.slide-media');
+  const markUnavailable = () => {
+    slide.classList.add('unavailable-slide');
+    slideMedia.classList.add('unavailable');
+    slideMedia.querySelector('.play-badge').textContent = 'Video unavailable — likely removed or private';
+  };
+  // The thumbnail acts as a poster behind the iframe until the player loads.
+  // Priority = distance (in slides) from the active slide, so the visible
+  // poster loads first when scrolling fast.
+  const posterPriority = () => {
+    const reel = document.getElementById('reel');
+    if (!reel || !currentPlayingSlide) return 0;
+    const slides = reel.querySelectorAll('.slide');
+    const myIdx = Array.prototype.indexOf.call(slides, slide);
+    const activeIdx = Array.prototype.indexOf.call(slides, currentPlayingSlide);
+    if (myIdx < 0 || activeIdx < 0) return 0;
+    return Math.abs(myIdx - activeIdx);
+  };
+  requestThumbnail(item.id, (url) => {
+    img.onload = () => img.classList.add('loaded');
+    img.onerror = () => retryThumbnail(item.id, (freshUrl) => { img.src = freshUrl; }, markUnavailable, posterPriority);
+    img.src = url;
+  }, markUnavailable, posterPriority);
+
+  // Transparent full-video tap layer: toggles play/pause in-app so a tap
+  // never reaches TikTok's own controls underneath.
+  slide.querySelector('.tap-catcher').onclick = () => togglePlay(slide);
+
+  slide.querySelector('.tag-btn2').onclick = (e) => { e.stopPropagation(); openCategorySheet(item); };
+  slide.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
+  const muteBtn = slide.querySelector('.mute-btn');
+  syncMuteBtn(muteBtn);
+  muteBtn.onclick = (e) => {
+    e.stopPropagation();
+    desiredMuted = !desiredMuted;
+    applyMuteState();
+    document.querySelectorAll('.mute-btn').forEach(syncMuteBtn);
+  };
+  return slide;
+}
+
+function syncMuteBtn(btn) {
+  // Speaker-with-slash when muted, speaker-with-waves when on.
+  btn.innerHTML = desiredMuted ? '&#128263;' : '&#128266;';
+  btn.classList.toggle('active', !desiredMuted);
+}
+
+// ---------- Share a video link via the native share sheet (SMS/iMessage/etc) ----------
+async function shareVideo(item) {
+  const shareUrl = 'https://www.tiktok.com/@i/video/' + item.id;
+  if (navigator.share) {
+    try {
+      await navigator.share({ url: shareUrl });
+    } catch (e) { /* user cancelled — nothing to do */ }
+  } else {
+    // Fallback for browsers without the Web Share API: copy to clipboard.
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showToast('Link copied');
+    } catch (e) {
+      showToast('Could not share on this device');
+    }
+  }
+}
+
+const MAX_LIVE_SLIDES = 12; // keep at most this many slide elements in the DOM
+
+function appendSlides(count) {
+  const reel = document.getElementById('reel');
+  const oldSentinel = reel.querySelector('.bottom-sentinel');
+  if (oldSentinel) {
+    if (sentinelObserver) sentinelObserver.unobserve(oldSentinel);
+    oldSentinel.remove();
+  }
+
+  const slice = currentFeedList.slice(renderedEnd, renderedEnd + count);
+  slice.forEach(item => {
+    const slide = buildSlideEl(item);
+    reel.appendChild(slide);
+    playObserver.observe(slide);
+  });
+  renderedEnd += slice.length;
+
+  if (renderedEnd < currentFeedList.length) {
+    const sentinel = document.createElement('div');
+    sentinel.className = 'bottom-sentinel';
+    sentinel.style.cssText = 'height:1px;';
+    reel.appendChild(sentinel);
+    if (!sentinelObserver) {
+      sentinelObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => { if (entry.isIntersecting) appendSlides(PAGE_SIZE); });
+      }, { root: reel });
+    }
+    sentinelObserver.observe(sentinel);
+  }
+}
+
+// Remove slides that have scrolled far above the viewport so the DOM stays small.
+function trimTop() {
+  const reel = document.getElementById('reel');
+  const slides = reel.querySelectorAll('.slide');
+  const excess = slides.length - MAX_LIVE_SLIDES;
+  if (excess <= 0) return;
+  // Never trim the active slide or its immediate neighbours.
+  const activeIdx = currentPlayingSlide ?
+    Array.prototype.indexOf.call(slides, currentPlayingSlide) : slides.length;
+  let removed = 0;
+  for (let i = 0; i < excess && i < activeIdx - 2; i++) {
+    const s = slides[i];
+    if (s.querySelector('iframe')) deactivateSlide(s);
+    if (playObserver) playObserver.unobserve(s);
+    cancelThumbnail(s.dataset.id);
+    s.remove();
+    removed++;
+  }
+  if (removed > 0) {
+    renderedStart += removed;
+    // Compensate scroll so the visible content doesn't jump upward.
+    reel.scrollTop -= removed * reel.clientHeight;
+  }
+}
+
+function prependSlides(count) {
+  const reel = document.getElementById('reel');
+  const newStart = Math.max(0, renderedStart - count);
+  const actualCount = renderedStart - newStart;
+  if (actualCount <= 0) return;
+
+  const slice = currentFeedList.slice(newStart, renderedStart);
+  const topSentinel = reel.querySelector('.top-sentinel');
+  const anchorEl = topSentinel.nextSibling;
+  const frag = document.createDocumentFragment();
+  const newEls = [];
+  slice.forEach(item => {
+    const el = buildSlideEl(item);
+    frag.appendChild(el);
+    newEls.push(el);
+  });
+  reel.insertBefore(frag, anchorEl);
+  renderedStart = newStart;
+  newEls.forEach(el => playObserver.observe(el));
+
+  // Compensate scroll so the newly-inserted content above doesn't shove the view down visually.
+  reel.scrollTop += actualCount * reel.clientHeight;
+}
+
+// Remove slides far below the viewport (mirror of trimTop for upward scrolling).
+function trimBottom() {
+  const reel = document.getElementById('reel');
+  const slides = reel.querySelectorAll('.slide');
+  const excess = slides.length - MAX_LIVE_SLIDES;
+  if (excess <= 0) return;
+  const activeIdx = currentPlayingSlide ?
+    Array.prototype.indexOf.call(slides, currentPlayingSlide) : 0;
+  let removed = 0;
+  for (let i = slides.length - 1; i >= 0 && removed < excess && i > activeIdx + 2; i--) {
+    const s = slides[i];
+    if (s.querySelector('iframe')) deactivateSlide(s);
+    if (playObserver) playObserver.unobserve(s);
+    cancelThumbnail(s.dataset.id);
+    s.remove();
+    removed++;
+  }
+  if (removed > 0) renderedEnd -= removed;
+}
+
+document.getElementById('debugToggle').onclick = () => {
+  DEBUG = !DEBUG;
+  document.getElementById('debugLog').classList.toggle('show', DEBUG);
+  dlog(DEBUG ? 'debug on' : '');
+};
+
+document.getElementById('feedBack').onclick = () => {
+  if (currentPlayingSlide) deactivateSlide(currentPlayingSlide);
+  currentPlayingSlide = null;
+  feedActive = false;
+  document.getElementById('feed').classList.remove('open');
+  if (playObserver) playObserver.disconnect();
+  if (sentinelObserver) sentinelObserver.disconnect();
+  if (topSentinelObserver) topSentinelObserver.disconnect();
+  openGrid(currentGridList, currentGridLabel);
+};
+
+// ---------- Category assignment sheet ----------
+function openCategorySheet(item) {
+  activeSlideItem = item;
+  const list = document.getElementById('sheetCats');
+  list.innerHTML = '';
+  state.categories.forEach(cat => {
+    const row = document.createElement('div');
+    row.className = 'sheet-cat' + (cat === item.category ? ' selected' : '');
+    row.textContent = cat + (cat === item.category ? '  \u2713' : '');
+    row.onclick = () => {
+      item.category = cat;
+      save();
+      updateActiveOverlay(item);
+      closeSheet();
+    };
+    list.appendChild(row);
+  });
+  document.getElementById('sheetBackdrop').classList.add('open');
+  document.getElementById('sheet').classList.add('open');
+}
+
+function updateActiveOverlay(item) {
+  const slide = document.querySelector('.slide[data-id="' + item.id + '"]');
+  if (slide) slide.querySelector('.slide-cat').textContent = item.category;
+}
+
+function closeSheet() {
+  document.getElementById('sheetBackdrop').classList.remove('open');
+  document.getElementById('sheet').classList.remove('open');
+}
+document.getElementById('sheetBackdrop').onclick = closeSheet;
+document.getElementById('newCatBtn').onclick = () => {
+  const input = document.getElementById('newCatInput');
+  const name = input.value.trim();
+  if (!name) return;
+  if (!state.categories.includes(name)) state.categories.push(name);
+  if (activeSlideItem) {
+    activeSlideItem.category = name;
+    updateActiveOverlay(activeSlideItem);
+  }
+  save();
+  input.value = '';
+  closeSheet();
+};
+
+// ---------- Handle ?add=<url> from the Shortcuts share flow ----------
+function handleIncomingAdd() {
+  const params = new URLSearchParams(window.location.search);
+  const incoming = params.get('add');
+  if (!incoming) return;
+
+  const exists = state.items.some(i => i.url === incoming);
+  if (!exists) {
+    const now = new Date();
+    state.items.unshift({
+      id: 'added-' + Date.now(),
+      url: incoming,
+      date: now.toISOString(),
+      label: formatDate(now.toISOString()),
+      category: 'Uncategorized'
+    });
+    if (!state.categories.includes('Uncategorized')) {
+      state.categories.unshift('Uncategorized');
+    }
+    save();
+  }
+
+  // Clean the URL so refreshing doesn't re-add, then show a confirmation.
+  window.history.replaceState({}, '', window.location.pathname);
+  showToast(exists ? 'Already saved' : 'Added to Uncategorized');
+}
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;top:max(16px,env(safe-area-inset-top));left:50%;' +
+    'transform:translateX(-50%);background:#222;color:#fff;padding:8px 16px;' +
+    'border-radius:20px;font-size:13px;z-index:50;box-shadow:0 2px 10px rgba(0,0,0,0.4);';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2200);
+}
+
+ensureRealData();
+</script>
+</body>
+</html>
