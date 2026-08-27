@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Favorites">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="robots" content="noindex, nofollow">
+<title>Favorites</title>
+<style>
+  :root {
+    --bg: #000;
+    --panel: #151515;
+    --panel2: #1e1e1e;
+    --line: #2a2a2a;
+    --text: #F5F5F5;
+    --dim: #8f8f8f;
+    --accent: #4C8DFF;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+    height: 100%;
+    overscroll-behavior: none;
+  }
+  button { font-family: inherit; }
+
+  /* ================= HOME (category menu) ================= */
+  #home {
+    height: 100%;
+    overflow-y: auto;
+    padding: max(20px, env(safe-area-inset-top)) 16px 40px;
+  }
+  #home h1 {
+    display: none;
+  }
+  .tile-all {
+    display: flex; align-items: center; justify-content: space-between;
+    background: linear-gradient(135deg, #1a1a1a, #101010);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 18px;
+    margin-bottom: 22px;
+  }
+  .tile-all .name { font-size: 17px; font-weight: 600; }
+  .tile-all .sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
+  .tile-all .chev { color: var(--dim); font-size: 20px; }
+
+  .section-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+    margin: 0 0 10px;
+  }
+  .cat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .cat-tile {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 14px;
+    min-height: 78px;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .cat-tile .name { font-size: 15px; font-weight: 600; }
+  .cat-tile .count { font-size: 12px; color: var(--dim); }
+  .cat-tile.add {
+    align-items: center; justify-content: center;
+    border: 1px dashed #3a3a3a;
+    background: transparent;
+    color: var(--accent);
+    font-size: 14px; font-weight: 600;
+  }
+
+  /* ================= FEED (fullscreen vertical) ================= */
+  #feed {
+    position: fixed; inset: 0;
+    background: #000;
+    display: none;
+    flex-direction: column;
+    z-index: 20;
+  }
+  #feed.open { display: flex; }
+  .reel {
+    flex: 1;
+    overflow-y: scroll;
+    scroll-snap-type: y mandatory;
+  }
+  .slide {
+    height: 100%;
+    scroll-snap-align: start;
+    position: relative;
+    overflow: hidden;
+  }
+  .slide-media {
+    position: absolute; inset: 0;
+    background: linear-gradient(160deg, var(--a,#2a2a2a), var(--b,#101010));
+    transform: scale(1.0);
+    transition: transform 6s linear;
+  }
+  .slide.playing .slide-media {
+    transform: scale(1.08);
+  }
+  .play-badge {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    font-size: 13px;
+    color: rgba(255,255,255,0.25);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 600;
+    pointer-events: none;
+  }
+  .slide.playing .play-badge { display: none; }
+
+  .slide-overlay {
+    position: absolute; left: 0; right: 70px; bottom: max(28px, env(safe-area-inset-bottom));
+    padding: 0 16px;
+  }
+  .slide-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .slide-cat { font-size: 12px; color: rgba(255,255,255,0.65); }
+
+  .rail {
+    position: absolute; right: 10px; bottom: max(40px, env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; align-items: center; gap: 18px;
+  }
+  .rail button {
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.12);
+    color: var(--text);
+    font-size: 20px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .feed-top {
+    position: absolute; top: max(16px, env(safe-area-inset-top)); left: 0; right: 0;
+    z-index: 21;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0 14px;
+  }
+  .back-btn {
+    width: 34px; height: 34px; border-radius: 50%;
+    border: none; background: rgba(0,0,0,0.4); color: var(--text);
+    font-size: 18px;
+  }
+  .feed-label {
+    font-size: 13px; font-weight: 600;
+    background: rgba(0,0,0,0.4);
+    padding: 6px 12px; border-radius: 20px;
+  }
+
+  /* ================= Category picker sheet ================= */
+  .sheet-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    z-index: 30; display: none;
+  }
+  .sheet-backdrop.open { display: block; }
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: #191919;
+    border-radius: 16px 16px 0 0;
+    padding: 18px 16px max(18px, env(safe-area-inset-bottom));
+    z-index: 31;
+    transform: translateY(100%);
+    transition: transform 0.25s ease;
+  }
+  .sheet.open { transform: translateY(0); }
+  .sheet h3 { margin: 0 0 12px; font-size: 15px; }
+  .sheet-cat {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 4px;
+    border-bottom: 1px solid #262626;
+    font-size: 15px;
+  }
+  .sheet-cat.selected { color: var(--accent); }
+  .sheet-new {
+    display: flex; gap: 8px; margin-top: 14px;
+  }
+  .sheet-new input {
+    flex: 1;
+    background: #101010; border: 1px solid #2a2a2a; border-radius: 8px;
+    color: var(--text); padding: 10px 12px; font-size: 14px;
+  }
+  .sheet-new button {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; padding: 0 16px; font-size: 14px; font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ HOME ============ -->
+<div id="home">
+  <h1>Favorites</h1>
+  <div class="tile-all" id="allTile">
+    <div>
+      <div class="name">All Videos</div>
+      <div class="sub" id="allCount">0 saved</div>
+    </div>
+    <div class="chev">&rsaquo;</div>
+  </div>
+  <div class="section-label">Categories</div>
+  <div class="cat-grid" id="catGrid"></div>
+</div>
+
+<!-- ============ FEED ============ -->
+<div id="feed">
+  <div class="feed-top">
+    <button class="back-btn" id="feedBack">&lsaquo;</button>
+    <div class="feed-label" id="feedLabel">All Videos</div>
+    <div style="width:34px"></div>
+  </div>
+  <div class="reel" id="reel"></div>
+</div>
+
+<!-- ============ Category picker sheet ============ -->
+<div class="sheet-backdrop" id="sheetBackdrop"></div>
+<div class="sheet" id="sheet">
+  <h3>Move to category</h3>
+  <div id="sheetCats"></div>
+  <div class="sheet-new">
+    <input id="newCatInput" placeholder="New category name">
+    <button id="newCatBtn">Add</button>
+  </div>
+</div>
+
+<script>
+// ---------- Mock data ----------
+const PALETTE = [
+  ["#2a2f3a","#101216"], ["#3a2f28","#161210"], ["#26332e","#0f1613"],
+  ["#332a3a","#141017"], ["#3a3128","#161310"], ["#28323a","#0f1417"]
+];
+
+let state = JSON.parse(localStorage.getItem('gallery-state') || 'null');
+if (!state) {
+  const categories = ["Recipes", "Comedy", "DIY", "Music"];
+  const items = Array.from({length: 24}, (_, i) => ({
+    id: 'mock-' + i,
+    label: 'video ' + String(i + 1).padStart(4, '0'),
+    palette: PALETTE[i % PALETTE.length],
+    category: categories[i % categories.length]
+  }));
+  state = { categories, items };
+  localStorage.setItem('gallery-state', JSON.stringify(state));
+}
+
+function save() { localStorage.setItem('gallery-state', JSON.stringify(state)); }
+
+let currentFeedList = [];
+let activeSlideItem = null;
+
+// ---------- Home rendering ----------
+function renderHome() {
+  document.getElementById('allCount').textContent = state.items.length + ' saved';
+  const grid = document.getElementById('catGrid');
+  grid.innerHTML = '';
+  state.categories.forEach(cat => {
+    const count = state.items.filter(i => i.category === cat).length;
+    const tile = document.createElement('div');
+    tile.className = 'cat-tile';
+    tile.innerHTML = `<div class="name">${cat}</div><div class="count">${count} saved</div>`;
+    tile.onclick = () => openFeed(state.items.filter(i => i.category === cat), cat);
+    grid.appendChild(tile);
+  });
+  const addTile = document.createElement('div');
+  addTile.className = 'cat-tile add';
+  addTile.textContent = '+ New Category';
+  addTile.onclick = () => promptNewCategory();
+  grid.appendChild(addTile);
+}
+
+document.getElementById('allTile').onclick = () => openFeed(state.items, 'All Videos');
+
+function promptNewCategory() {
+  const name = prompt('New category name');
+  if (!name) return;
+  if (!state.categories.includes(name)) state.categories.push(name);
+  save();
+  renderHome();
+}
+
+// ---------- Feed (fullscreen vertical, autoplay-style) ----------
+function openFeed(list, label) {
+  currentFeedList = list;
+  document.getElementById('feedLabel').textContent = label;
+  const reel = document.getElementById('reel');
+  reel.innerHTML = '';
+  list.forEach(item => {
+    const slide = document.createElement('div');
+    slide.className = 'slide';
+    slide.dataset.id = item.id;
+    slide.innerHTML = `
+      <div class="slide-media" style="--a:${item.palette[0]};--b:${item.palette[1]}">
+        <div class="play-badge">tap to resume</div>
+      </div>
+      <div class="slide-overlay">
+        <div class="slide-title">${item.label}</div>
+        <div class="slide-cat">${item.category}</div>
+      </div>
+      <div class="rail">
+        <button class="tag-btn">&#127991;</button>
+      </div>
+    `;
+    slide.querySelector('.tag-btn').onclick = () => openCategorySheet(item);
+    reel.appendChild(slide);
+  });
+  document.getElementById('feed').classList.add('open');
+  setupAutoplayObserver();
+}
+
+function setupAutoplayObserver() {
+  const slides = document.querySelectorAll('.slide');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.intersectionRatio > 0.6) {
+        entry.target.classList.add('playing');
+        activeSlideItem = currentFeedList.find(i => i.id === entry.target.dataset.id);
+      } else {
+        entry.target.classList.remove('playing');
+      }
+    });
+  }, { threshold: [0, 0.6, 1] });
+  slides.forEach(s => observer.observe(s));
+}
+
+document.getElementById('feedBack').onclick = () => {
+  document.getElementById('feed').classList.remove('open');
+  renderHome();
+};
+
+// ---------- Category assignment sheet ----------
+function openCategorySheet(item) {
+  activeSlideItem = item;
+  const list = document.getElementById('sheetCats');
+  list.innerHTML = '';
+  state.categories.forEach(cat => {
+    const row = document.createElement('div');
+    row.className = 'sheet-cat' + (cat === item.category ? ' selected' : '');
+    row.textContent = cat + (cat === item.category ? '  \u2713' : '');
+    row.onclick = () => {
+      item.category = cat;
+      save();
+      updateActiveOverlay(item);
+      closeSheet();
+    };
+    list.appendChild(row);
+  });
+  document.getElementById('sheetBackdrop').classList.add('open');
+  document.getElementById('sheet').classList.add('open');
+}
+
+function updateActiveOverlay(item) {
+  const slide = document.querySelector('.slide[data-id="' + item.id + '"]');
+  if (slide) slide.querySelector('.slide-cat').textContent = item.category;
+}
+
+function closeSheet() {
+  document.getElementById('sheetBackdrop').classList.remove('open');
+  document.getElementById('sheet').classList.remove('open');
+}
+document.getElementById('sheetBackdrop').onclick = closeSheet;
+document.getElementById('newCatBtn').onclick = () => {
+  const input = document.getElementById('newCatInput');
+  const name = input.value.trim();
+  if (!name) return;
+  if (!state.categories.includes(name)) state.categories.push(name);
+  if (activeSlideItem) {
+    activeSlideItem.category = name;
+    updateActiveOverlay(activeSlideItem);
+  }
+  save();
+  input.value = '';
+  closeSheet();
+};
+
+// ---------- Handle ?add=<url> from the Shortcuts share flow ----------
+function handleIncomingAdd() {
+  const params = new URLSearchParams(window.location.search);
+  const incoming = params.get('add');
+  if (!incoming) return;
+
+  const exists = state.items.some(i => i.sourceUrl === incoming);
+  if (!exists) {
+    state.items.unshift({
+      id: 'added-' + Date.now(),
+      label: 'new video',
+      palette: PALETTE[Math.floor(Math.random() * PALETTE.length)],
+      category: 'Uncategorized',
+      sourceUrl: incoming
+    });
+    if (!state.categories.includes('Uncategorized')) {
+      state.categories.unshift('Uncategorized');
+    }
+    save();
+  }
+
+  // Clean the URL so refreshing doesn't re-add, then show a confirmation.
+  window.history.replaceState({}, '', window.location.pathname);
+  showToast(exists ? 'Already saved' : 'Added to Uncategorized');
+}
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;top:max(16px,env(safe-area-inset-top));left:50%;' +
+    'transform:translateX(-50%);background:#222;color:#fff;padding:8px 16px;' +
+    'border-radius:20px;font-size:13px;z-index:50;box-shadow:0 2px 10px rgba(0,0,0,0.4);';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2200);
+}
+
+handleIncomingAdd();
+renderHome();
+</script>
+</body>
+</html>
