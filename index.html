@@ -1011,7 +1011,9 @@ function playerSrc(id) {
     controls: '0', progress_bar: '0', play_button: '0', volume_control: '0',
     fullscreen_button: '0', timestamp: '0', music_info: '0', description: '0',
     native_context_menu: '0', closed_caption: '0',
-    muted: desiredMuted ? '1' : '0'
+    // ALWAYS start muted — iOS reliably allows muted autoplay but blocks unmuted
+    // autoplay of a fresh cross-origin iframe. Sound is unlocked later via a gesture.
+    muted: '1'
   });
   return 'https://www.tiktok.com/player/v1/' + id + '?' + params.toString();
 }
@@ -1074,7 +1076,10 @@ function bindPlayerMessages() {
         if (isActive) {
           if (d.value === 1) {
             if (sourceSlide._playTimer) { clearInterval(sourceSlide._playTimer); sourceSlide._playTimer = null; }
-            sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
+            // Only ENFORCE mute here (muting never needs a gesture). Unmute is
+            // handled in gesture handlers (tap / mute button / swipe-end) because
+            // iOS won't honour an unmute that isn't tied to a user gesture.
+            if (desiredMuted) sendToPlayer(iframe, 'mute');
             sourceSlide.querySelector('.slide-media').classList.remove('paused', 'needs-tap');
           }
           if (d.value === 2) {
@@ -1255,14 +1260,22 @@ function openFeed(list, label, startIndex = 0) {
     scrollIdleTimer = setTimeout(() => { trimTop(); trimBottom(); }, 250);
   };
 
-  // CREATIVE AUTOPLAY ATTEMPT: iOS autoplay is not "sticky" — each video needs a
-  // *transient* user gesture at play time. A scroll/IntersectionObserver isn't one,
-  // but the finger-lift ending a swipe IS a real gesture. So when the user lifts
-  // their finger after swiping, we call play() on the centred slide from *inside*
-  // that touchend handler, which is the best shot at satisfying iOS per-video.
+  // iOS autoplay is not "sticky": muted playback is always allowed, but AUDIO
+  // needs a transient user gesture per video. The finger-lift ending a swipe IS
+  // a gesture — so if the session wants sound, we unMute SYNCHRONOUSLY here,
+  // inside the touch handler (deferring it would break the gesture chain).
   reel.addEventListener('touchend', () => {
-    // Let the snap settle, then play whatever is now centred — still within the
-    // gesture's grace window.
+    // Synchronous part: unmute the currently-active slide within the gesture.
+    if (!desiredMuted && currentPlayingSlide) {
+      const cf = currentPlayingSlide.querySelector('iframe');
+      if (cf && currentPlayingSlide.dataset.userPaused !== 'true') {
+        sendToPlayer(cf, 'unMute');
+        sendToPlayer(cf, 'play');
+      }
+    }
+    // Deferred part: after the snap settles, ensure the now-centred slide is
+    // playing (muted autoplay is reliable; this just re-asserts it) and, if the
+    // session wants sound, unmute it too (still close to the gesture).
     requestAnimationFrame(() => {
       const centre = reel.scrollTop + reel.clientHeight / 2;
       const slides = reel.querySelectorAll('.slide');
@@ -1274,9 +1287,9 @@ function openFeed(list, label, startIndex = 0) {
       });
       if (best && best.querySelector('iframe') && best.dataset.userPaused !== 'true') {
         const f = best.querySelector('iframe');
-        sendToPlayer(f, desiredMuted ? 'mute' : 'unMute');
         sendToPlayer(f, 'play');
-        dlog('swipe-end play ' + (best.dataset.id||'').slice(-4));
+        if (!desiredMuted) sendToPlayer(f, 'unMute');
+        dlog('swipe-end ' + (desiredMuted ? 'play' : 'play+unmute') + ' ' + (best.dataset.id||'').slice(-4));
       }
     });
   }, { passive: true });
