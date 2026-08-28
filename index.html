@@ -1091,10 +1091,11 @@ function bindPlayerMessages() {
         if (isActive) {
           if (d.value === 1) {
             if (sourceSlide._playTimer) { clearInterval(sourceSlide._playTimer); sourceSlide._playTimer = null; }
-            // Only ENFORCE mute here (muting never needs a gesture). Unmute is
-            // handled in gesture handlers (tap / mute button / swipe-end) because
-            // iOS won't honour an unmute that isn't tied to a user gesture.
-            if (desiredMuted) sendToPlayer(iframe, 'mute');
+            // Sound is applied HERE, once the video is actually playing. iOS is
+            // permissive about unmuting a video that's already playing, but will
+            // not start audio on a paused one — and a tap on this page grants no
+            // gesture to TikTok's cross-origin frame anyway.
+            applySoundTo(sourceSlide);
             sourceSlide.querySelector('.slide-media').classList.remove('paused', 'needs-tap');
           }
           if (d.value === 2) {
@@ -1103,6 +1104,13 @@ function bindPlayerMessages() {
         } else {
           if (d.value === 1) sendToPlayer(iframe, 'pause');
         }
+        break;
+      case 'onMute':
+        // The player reports its real mute state, so we can tell whether an
+        // unmute actually took effect instead of assuming it did.
+        sourceSlide._muted = (d.value === true || d.value === 1 ||
+                              !!(d.value && d.value.muted === true));
+        if (isActive && !desiredMuted && sourceSlide._muted) dlog('unmute rejected');
         break;
       case 'onPlayerError':
         dlog('ERR ' + JSON.stringify(d.value) + ' ' + short);
@@ -1135,8 +1143,30 @@ function bindPlayerMessages() {
 // (b) it EXISTS while the user's finger is still down, which is the only moment
 // iOS will accept an unmute for it. Creating players on arrival (the old model)
 // broke both: slow load, and nothing to unmute during the gesture.
-const WARM_AHEAD = 2;
+const WARM_AHEAD = 1;
 const WARM_BEHIND = 1;
+const COMMIT_IDLE_MS = 130;   // how long the feed must be still before we touch players
+
+let pendingActiveSlide = null;
+let commitTimer = null;
+
+// Player creation/teardown is expensive. Never do it while the user is scrolling —
+// schedule it for the moment the feed goes still.
+function scheduleCommit(delay) {
+  if (commitTimer) clearTimeout(commitTimer);
+  commitTimer = setTimeout(commitActiveSlide, delay);
+}
+
+function commitActiveSlide() {
+  commitTimer = null;
+  const slide = pendingActiveSlide;
+  if (!slide || !slide.parentNode) return;
+  const changed = slide !== currentPlayingSlide;
+  currentPlayingSlide = slide;
+  syncPlayerWindow(slide);
+  ensurePlaying(slide);
+  if (changed) dlog('commit ' + (slide.dataset.id || '').slice(-4));
+}
 
 function createPlayer(slide) {
   if (!slide || slide.querySelector('iframe')) return null;
@@ -1281,6 +1311,20 @@ function togglePlay(slide) {
 // live player (active + warm neighbours) whenever a gesture happens. The warm
 // next-slide is therefore already authorised by the time you land on it.
 // Muting needs no gesture, so it can happen anywhere.
+// Apply the session's sound setting to a slide that is actually playing.
+// Nudged a few times because TikTok's player can re-assert its own muted state
+// shortly after playback begins.
+function applySoundTo(slide) {
+  const send = () => {
+    const f = slide.querySelector('iframe');
+    if (!f || slide !== currentPlayingSlide) return;
+    sendToPlayer(f, desiredMuted ? 'mute' : 'unMute');
+  };
+  send();
+  if (slide._soundTimers) slide._soundTimers.forEach(clearTimeout);
+  slide._soundTimers = [setTimeout(send, 250), setTimeout(send, 800)];
+}
+
 function unlockAudioIfWanted() {
   if (desiredMuted) return;
   const reel = document.getElementById('reel');
@@ -1318,20 +1362,27 @@ function openFeed(list, label, startIndex = 0) {
   const reel = document.getElementById('reel');
   reel.innerHTML = '';
   currentPlayingSlide = null;
+  pendingActiveSlide = null;
+  if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; }
 
   if (playObserver) playObserver.disconnect();
   if (sentinelObserver) sentinelObserver.disconnect();
   if (topSentinelObserver) topSentinelObserver.disconnect();
 
+  // The observer only NOTES which slide is active. It must not create or destroy
+  // players here: this fires mid-swipe, and doing iframe work while the finger is
+  // moving is what made scrolling feel frozen. All heavy work is committed once
+  // scrolling settles (see scheduleCommit / commitActive).
   playObserver = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       const slide = entry.target;
-      const short = (slide.dataset.id || '').slice(-4);
       if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
-        if (slide === currentPlayingSlide) return; // already the active slide
-        dlog('active ' + short);
-        // Pause (don't destroy) the outgoing slide — it may stay in the window.
-        if (currentPlayingSlide) {
+        if (slide === pendingActiveSlide) return;
+        pendingActiveSlide = slide;
+        activeSlideItem = currentFeedList.find(i => i.id === slide.dataset.id);
+        // Silencing the outgoing player is a single postMessage — cheap enough
+        // to do immediately so audio never bleeds across slides.
+        if (currentPlayingSlide && currentPlayingSlide !== slide) {
           const pf = currentPlayingSlide.querySelector('iframe');
           if (pf) sendToPlayer(pf, 'pause');
           if (currentPlayingSlide._playTimer) {
@@ -1339,12 +1390,8 @@ function openFeed(list, label, startIndex = 0) {
             currentPlayingSlide._playTimer = null;
           }
         }
-        currentPlayingSlide = slide;
-        syncPlayerWindow(slide);   // creates/keeps prev+current+next, tears down the rest
-        ensurePlaying(slide);
-        activeSlideItem = currentFeedList.find(i => i.id === slide.dataset.id);
+        scheduleCommit(COMMIT_IDLE_MS);
       }
-      // Slides leaving view are handled by syncPlayerWindow, so nothing to do here.
     });
   }, { threshold: 0.6 });
 
@@ -1369,29 +1416,14 @@ function openFeed(list, label, startIndex = 0) {
   // never fights an in-progress momentum scroll.
   let scrollIdleTimer = null;
   reel.onscroll = () => {
+    scheduleCommit(COMMIT_IDLE_MS);
     if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
     scrollIdleTimer = setTimeout(() => { trimTop(); trimBottom(); }, 250);
   };
 
-  // AUDIO UNLOCK POINTS. iOS only accepts an unmute during a real gesture, and
-  // the permission does not transfer to a player created later. Because the warm
-  // window means the NEXT slide's player already exists while the finger is down,
-  // unmuting every live player on touchstart AND touchend pre-authorises whichever
-  // slide the swipe lands on — which is what makes sound carry across videos.
-  reel.addEventListener('touchstart', () => { unlockAudioIfWanted(); }, { passive: true });
-  reel.addEventListener('touchend', () => {
-    unlockAudioIfWanted();
-    // Warm neighbours were just unmuted too; keep them paused so only the
-    // active slide is audible.
-    if (currentPlayingSlide) {
-      windowSlidesFor(currentPlayingSlide).forEach(s => {
-        if (s !== currentPlayingSlide) {
-          const f = s.querySelector('iframe');
-          if (f) sendToPlayer(f, 'pause');
-        }
-      });
-    }
-  }, { passive: true });
+  // When the finger lifts, the swipe is over — commit sooner than the plain
+  // scroll-idle delay so the video you landed on starts promptly.
+  reel.addEventListener('touchend', () => { scheduleCommit(60); }, { passive: true });
 
   document.getElementById('feed').classList.add('open');
   feedActive = true;
@@ -1667,6 +1699,8 @@ document.getElementById('debugToggle').onclick = () => {
 };
 
 document.getElementById('feedBack').onclick = () => {
+  if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; }
+  pendingActiveSlide = null;
   if (currentPlayingSlide) deactivateSlide(currentPlayingSlide);
   currentPlayingSlide = null;
   feedActive = false;
