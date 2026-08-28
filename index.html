@@ -148,18 +148,21 @@
     background: transparent;
     touch-action: pan-y; /* let vertical swipes scroll the feed; we only handle taps/holds */
   }
-  /* Opaque masks covering the screen regions where TikTok renders its own
-     clickable buttons (bottom caption/"Discover more" bar and the right-side
-     profile/like rail), so those outbound links can't be reached. */
+  /* Scrims over the regions where TikTok renders its own chrome. Taps can never
+     reach the player anyway (.tap-catcher sits above it), so these are purely
+     visual — gradients rather than solid blocks, so they hide TikTok's overlay
+     text without blacking out part of the video. */
   .mask-bottom {
     position: absolute; left: 0; right: 0; bottom: 0;
-    height: 90px; z-index: 3;
-    background: #000;
+    height: 96px; z-index: 3;
+    background: linear-gradient(to top, #000 0%, rgba(0,0,0,0.92) 42%, rgba(0,0,0,0) 100%);
+    pointer-events: none;
   }
   .mask-rail {
-    position: absolute; right: 0; bottom: 90px;
-    width: 60px; height: 260px; z-index: 3;
-    background: #000;
+    position: absolute; right: 0; bottom: 96px;
+    width: 64px; height: 250px; z-index: 3;
+    background: linear-gradient(to left, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.55) 55%, rgba(0,0,0,0) 100%);
+    pointer-events: none;
   }
   .slide-media:not(.has-player) .mask-bottom,
   .slide-media:not(.has-player) .mask-rail { display: none; }
@@ -756,7 +759,19 @@ function requestThumbnail(id, onReady, onFail, priorityFn) {
     return;
   }
   pending.set(id, { id, onReady, onFail, priority: priorityFn || (() => 0) });
-  pumpQueue();
+  // Deferred on purpose: an IntersectionObserver callback delivers a whole batch
+  // of tiles at once. If we started fetching on the first one, the earliest tiles
+  // in DOM order would claim every slot and the priority ordering below would
+  // never get a say — which is exactly why loading crawled down from the top of
+  // the gallery instead of starting where the user actually is.
+  schedulePump();
+}
+
+let pumpScheduled = false;
+function schedulePump() {
+  if (pumpScheduled) return;
+  pumpScheduled = true;
+  setTimeout(() => { pumpScheduled = false; pumpQueue(); }, 0);
 }
 
 function cancelThumbnail(id) {
@@ -1113,86 +1128,180 @@ function bindPlayerMessages() {
 // Swap a slide's thumbnail poster for the live TikTok player iframe,
 // wrapped in our own tap-catcher + edge masks so TikTok's own buttons
 // can never be reached and taps toggle play/pause in-app.
-function activateSlide(slide) {
-  if (slide.querySelector('iframe')) return; // already active
-  const id = slide.dataset.id;
-  if (slide.classList.contains('unavailable-slide')) return;
+// ---------- Player window ----------
+// We keep a small window of live players around the active slide:
+//   [prev, current, next]
+// Why: (a) the next video is already loaded, so arriving on it is instant;
+// (b) it EXISTS while the user's finger is still down, which is the only moment
+// iOS will accept an unmute for it. Creating players on arrival (the old model)
+// broke both: slow load, and nothing to unmute during the gesture.
+const WARM_AHEAD = 2;
+const WARM_BEHIND = 1;
+
+function createPlayer(slide) {
+  if (!slide || slide.querySelector('iframe')) return null;
+  if (slide.classList.contains('unavailable-slide')) return null;
   bindPlayerMessages();
   const media = slide.querySelector('.slide-media');
+  if (!media) return null;
   const iframe = document.createElement('iframe');
-  iframe.src = playerSrc(id);
+  iframe.src = playerSrc(slide.dataset.id);
   iframe.allow = 'autoplay; fullscreen';
   iframe.setAttribute('scrolling', 'no');
   media.appendChild(iframe);
   media.classList.add('has-player');
+  return iframe;
 }
 
-function deactivateSlide(slide) {
+function destroyPlayer(slide) {
+  if (!slide) return;
   if (slide._playTimer) { clearInterval(slide._playTimer); slide._playTimer = null; }
   const iframe = slide.querySelector('iframe');
   if (!iframe) return;
-  // Fully tear down — no lingering paused players (which can get stuck).
   iframe.remove();
-  slide.querySelector('.slide-media').classList.remove('has-player');
+  const media = slide.querySelector('.slide-media');
+  if (media) media.classList.remove('has-player', 'paused');
   delete slide.dataset.userPaused;
-  slide.querySelector('.slide-media')?.classList.remove('paused');
+  slide._state = undefined;
 }
 
-// Neighbour warming is intentionally disabled: pre-loading a player and then
-// pausing it (because it's not active yet) can trap TikTok's player in a state
-// where it refuses to autoplay once it does become active — the likely cause of
-// autoplay dying after the first couple of videos. We load fresh on activation.
-function warmNeighbours(slide) {
-  /* no-op */
+// Alias used by the trim/cleanup paths.
+function deactivateSlide(slide) { destroyPlayer(slide); }
+
+function windowSlidesFor(activeSlide) {
+  const out = [];
+  if (!activeSlide) return out;
+  let n = activeSlide;
+  for (let i = 0; i < WARM_BEHIND && n; i++) {
+    n = n.previousElementSibling;
+    if (n && n.classList && n.classList.contains('slide')) out.push(n);
+  }
+  out.push(activeSlide);
+  n = activeSlide;
+  for (let i = 0; i < WARM_AHEAD && n; i++) {
+    n = n.nextElementSibling;
+    if (n && n.classList && n.classList.contains('slide')) out.push(n);
+  }
+  return out;
 }
 
-// Make the active slide play with the session's current mute state.
-// Retries a few times because a warmed/just-created player may not be ready
-// to accept 'play' immediately, and a single lost command = a stuck video.
+// Ensure exactly the window has players; everything else is torn down.
+function syncPlayerWindow(activeSlide) {
+  const reel = document.getElementById('reel');
+  if (!reel) return;
+  const keep = windowSlidesFor(activeSlide);
+  const keepSet = new Set(keep);
+
+  reel.querySelectorAll('.slide').forEach(s => {
+    if (!keepSet.has(s) && s.querySelector('iframe')) destroyPlayer(s);
+  });
+
+  const distance = (s) => {
+    let d = 0, n = activeSlide;
+    while (n && d <= WARM_AHEAD + WARM_BEHIND) { if (n === s) return d; n = n.nextElementSibling; d++; }
+    d = 0; n = activeSlide;
+    while (n && d <= WARM_AHEAD + WARM_BEHIND) { if (n === s) return d; n = n.previousElementSibling; d++; }
+    return 99;
+  };
+
+  keep.forEach(s => {
+    if (s.querySelector('iframe')) {
+      if (s !== activeSlide) sendToPlayer(s.querySelector('iframe'), 'pause');
+      return;
+    }
+    if (distance(s) >= 2) {
+      // Far preload: defer so it doesn't compete with the video being watched.
+      setTimeout(() => {
+        if (!currentPlayingSlide) return;
+        if (!windowSlidesFor(currentPlayingSlide).includes(s)) return;
+        const f = createPlayer(s);
+        if (f) sendToPlayer(f, 'pause');
+      }, 700);
+    } else {
+      const f = createPlayer(s);
+      if (f && s !== activeSlide) sendToPlayer(f, 'pause');
+    }
+  });
+  dlog('window ' + keep.map(s => (s.dataset.id||'').slice(-4)).join(','));
+}
+
+// Make the active slide play. Retries because a just-created player may not be
+// ready to accept 'play' yet, and one lost command leaves a video stuck.
 function ensurePlaying(slide) {
+  if (!slide) return;
   const iframe = slide.querySelector('iframe');
   if (!iframe) return;
   delete slide.dataset.userPaused;
-  slide.querySelector('.slide-media').classList.remove('paused');
+  const media = slide.querySelector('.slide-media');
+  if (media) media.classList.remove('paused');
 
   if (slide._playTimer) clearInterval(slide._playTimer);
   let tries = 0;
   const attempt = () => {
-    // Stop retrying if this slide is no longer the active one, or the user paused it.
     if (slide !== currentPlayingSlide || slide.dataset.userPaused === 'true') {
+      clearInterval(slide._playTimer); slide._playTimer = null; return;
+    }
+    if (slide._state === 1) { // confirmed playing
       clearInterval(slide._playTimer); slide._playTimer = null; return;
     }
     const f = slide.querySelector('iframe');
     if (f) {
-      sendToPlayer(f, desiredMuted ? 'mute' : 'unMute');
+      if (desiredMuted) sendToPlayer(f, 'mute'); else sendToPlayer(f, 'unMute');
       sendToPlayer(f, 'play');
-      dlog('ensurePlaying try ' + (tries+1) + ' ' + (slide.dataset.id||'').slice(-4));
     }
     if (++tries >= 6) { clearInterval(slide._playTimer); slide._playTimer = null; }
   };
   attempt();
-  slide._playTimer = setInterval(attempt, 500);
+  slide._playTimer = setInterval(attempt, 400);
 }
 
 function togglePlay(slide) {
   const iframe = slide.querySelector('iframe');
   if (!iframe) return;
   const media = slide.querySelector('.slide-media');
-  // Use the player's real reported state (1=playing) as the source of truth.
   const isPlaying = slide._state === 1;
   if (isPlaying) {
-    // Pause. Stop the autoplay-retry loop so it can't immediately re-play.
     if (slide._playTimer) { clearInterval(slide._playTimer); slide._playTimer = null; }
     slide.dataset.userPaused = 'true';
     sendToPlayer(iframe, 'pause');
     media.classList.add('paused');
-    dlog('tap → pause ' + (slide.dataset.id||'').slice(-4));
+    dlog('tap pause ' + (slide.dataset.id||'').slice(-4));
   } else {
     delete slide.dataset.userPaused;
-    sendToPlayer(iframe, desiredMuted ? 'mute' : 'unMute');
+    // This tap is a gesture — a good moment to honour the session sound setting.
+    unlockAudioIfWanted();
     sendToPlayer(iframe, 'play');
     media.classList.remove('paused', 'needs-tap');
-    dlog('tap → play ' + (slide.dataset.id||'').slice(-4));
+    dlog('tap play ' + (slide.dataset.id||'').slice(-4));
+  }
+}
+
+// AUDIO: iOS only honours an unmute that happens during a real user gesture, and
+// that permission does NOT carry to a player created later. So we unmute EVERY
+// live player (active + warm neighbours) whenever a gesture happens. The warm
+// next-slide is therefore already authorised by the time you land on it.
+// Muting needs no gesture, so it can happen anywhere.
+function unlockAudioIfWanted() {
+  if (desiredMuted) return;
+  const reel = document.getElementById('reel');
+  if (!reel) return;
+  reel.querySelectorAll('.slide iframe').forEach(f => sendToPlayer(f, 'unMute'));
+}
+
+function applyMuteState() {
+  const reel = document.getElementById('reel');
+  if (!reel) return;
+  reel.querySelectorAll('.slide iframe').forEach(f => {
+    sendToPlayer(f, desiredMuted ? 'mute' : 'unMute');
+  });
+  // Warm neighbours must stay silent regardless: keep them paused.
+  if (currentPlayingSlide) {
+    windowSlidesFor(currentPlayingSlide).forEach(s => {
+      if (s !== currentPlayingSlide) {
+        const f = s.querySelector('iframe');
+        if (f) sendToPlayer(f, 'pause');
+      }
+    });
   }
 }
 
@@ -1219,19 +1328,23 @@ function openFeed(list, label, startIndex = 0) {
       const slide = entry.target;
       const short = (slide.dataset.id || '').slice(-4);
       if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
-        dlog('▶ active ' + short + ' (ratio ' + entry.intersectionRatio.toFixed(2) + ')');
-        if (currentPlayingSlide && currentPlayingSlide !== slide) {
-          deactivateSlide(currentPlayingSlide);
+        if (slide === currentPlayingSlide) return; // already the active slide
+        dlog('active ' + short);
+        // Pause (don't destroy) the outgoing slide — it may stay in the window.
+        if (currentPlayingSlide) {
+          const pf = currentPlayingSlide.querySelector('iframe');
+          if (pf) sendToPlayer(pf, 'pause');
+          if (currentPlayingSlide._playTimer) {
+            clearInterval(currentPlayingSlide._playTimer);
+            currentPlayingSlide._playTimer = null;
+          }
         }
         currentPlayingSlide = slide;
-        activateSlide(slide);
+        syncPlayerWindow(slide);   // creates/keeps prev+current+next, tears down the rest
         ensurePlaying(slide);
-        warmNeighbours(slide);
         activeSlideItem = currentFeedList.find(i => i.id === slide.dataset.id);
-      } else if (!entry.isIntersecting) {
-        dlog('✕ leave ' + short);
-        deactivateSlide(slide);
       }
+      // Slides leaving view are handled by syncPlayerWindow, so nothing to do here.
     });
   }, { threshold: 0.6 });
 
@@ -1260,38 +1373,24 @@ function openFeed(list, label, startIndex = 0) {
     scrollIdleTimer = setTimeout(() => { trimTop(); trimBottom(); }, 250);
   };
 
-  // iOS autoplay is not "sticky": muted playback is always allowed, but AUDIO
-  // needs a transient user gesture per video. The finger-lift ending a swipe IS
-  // a gesture — so if the session wants sound, we unMute SYNCHRONOUSLY here,
-  // inside the touch handler (deferring it would break the gesture chain).
+  // AUDIO UNLOCK POINTS. iOS only accepts an unmute during a real gesture, and
+  // the permission does not transfer to a player created later. Because the warm
+  // window means the NEXT slide's player already exists while the finger is down,
+  // unmuting every live player on touchstart AND touchend pre-authorises whichever
+  // slide the swipe lands on — which is what makes sound carry across videos.
+  reel.addEventListener('touchstart', () => { unlockAudioIfWanted(); }, { passive: true });
   reel.addEventListener('touchend', () => {
-    // Synchronous part: unmute the currently-active slide within the gesture.
-    if (!desiredMuted && currentPlayingSlide) {
-      const cf = currentPlayingSlide.querySelector('iframe');
-      if (cf && currentPlayingSlide.dataset.userPaused !== 'true') {
-        sendToPlayer(cf, 'unMute');
-        sendToPlayer(cf, 'play');
-      }
-    }
-    // Deferred part: after the snap settles, ensure the now-centred slide is
-    // playing (muted autoplay is reliable; this just re-asserts it) and, if the
-    // session wants sound, unmute it too (still close to the gesture).
-    requestAnimationFrame(() => {
-      const centre = reel.scrollTop + reel.clientHeight / 2;
-      const slides = reel.querySelectorAll('.slide');
-      let best = null, bestDist = Infinity;
-      slides.forEach(s => {
-        const mid = s.offsetTop + s.offsetHeight / 2;
-        const dist = Math.abs(mid - centre);
-        if (dist < bestDist) { bestDist = dist; best = s; }
+    unlockAudioIfWanted();
+    // Warm neighbours were just unmuted too; keep them paused so only the
+    // active slide is audible.
+    if (currentPlayingSlide) {
+      windowSlidesFor(currentPlayingSlide).forEach(s => {
+        if (s !== currentPlayingSlide) {
+          const f = s.querySelector('iframe');
+          if (f) sendToPlayer(f, 'pause');
+        }
       });
-      if (best && best.querySelector('iframe') && best.dataset.userPaused !== 'true') {
-        const f = best.querySelector('iframe');
-        sendToPlayer(f, 'play');
-        if (!desiredMuted) sendToPlayer(f, 'unMute');
-        dlog('swipe-end ' + (desiredMuted ? 'play' : 'play+unmute') + ' ' + (best.dataset.id||'').slice(-4));
-      }
-    });
+    }
   }, { passive: true });
 
   document.getElementById('feed').classList.add('open');
@@ -1393,6 +1492,7 @@ function buildSlideEl(item) {
   tc.addEventListener('pointerdown', (e) => {
     startX = e.clientX; startY = e.clientY; startT = Date.now();
     moved = false; holding = false;
+    unlockAudioIfWanted(); // pointerdown is a gesture: good moment to authorise audio
     if (holdTimer) clearTimeout(holdTimer);
     holdTimer = setTimeout(() => { if (!moved) beginFF(); }, 350);
   });
@@ -1453,7 +1553,8 @@ async function shareVideo(item) {
   }
 }
 
-const MAX_LIVE_SLIDES = 12; // keep at most this many slide elements in the DOM
+const MAX_LIVE_SLIDES = 12; // steady-state window kept after scrolling settles
+const HARD_SLIDE_CAP = 48;  // never exceed this even mid-scroll
 
 function appendSlides(count) {
   const reel = document.getElementById('reel');
@@ -1483,6 +1584,11 @@ function appendSlides(count) {
     }
     sentinelObserver.observe(sentinel);
   }
+
+  // Trimming normally waits for scroll-idle (so scrollTop compensation can't
+  // fight a momentum scroll). But one long continuous scroll never goes idle,
+  // which let the DOM grow into the hundreds. This is the safety valve.
+  if (reel.querySelectorAll('.slide').length > HARD_SLIDE_CAP) trimTop();
 }
 
 // Remove slides that have scrolled far above the viewport so the DOM stays small.
