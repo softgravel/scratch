@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://www.tiktok.com" crossorigin>
+<title>Diagnostics</title>
+<style>
+  :root { --bg:#000; --panel:#151515; --line:#242424; --text:#f2f2f2; --dim:#8a8a8a; --accent:#3b7dd8; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+         padding:max(16px,env(safe-area-inset-top)) 16px max(24px,env(safe-area-inset-bottom)); }
+  h1 { font-size:18px; margin:0 0 4px; }
+  p.sub { color:var(--dim); font-size:13px; margin:0 0 18px; }
+  .step { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+          padding:14px; margin-bottom:12px; }
+  .step h2 { font-size:14px; margin:0 0 6px; }
+  .step p { font-size:13px; color:var(--dim); margin:0 0 10px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:9px;
+           padding:11px 16px; font-size:14px; font-weight:600; margin-right:8px; }
+  button.sec { background:#2a2a2a; }
+  button:disabled { opacity:.4; }
+  #stage { position:relative; width:100%; aspect-ratio:9/16; max-height:38vh;
+           background:#111; border-radius:10px; overflow:hidden; margin-bottom:10px; }
+  #stage iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+  .verdict { font-size:13px; padding:8px 10px; border-radius:8px; margin-top:8px; }
+  .ok { background:#12301c; color:#7fe0a0; }
+  .bad { background:#3a1414; color:#ff8f8f; }
+  .wait { background:#2a2410; color:#e8c56a; }
+  pre#report { background:#0c0c0c; border:1px solid var(--line); border-radius:10px;
+               padding:12px; font-size:11px; line-height:1.5; white-space:pre-wrap;
+               color:#bfe3bf; margin-top:8px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+
+<h1>App diagnostics</h1>
+<p class="sub">Runs on your actual phone and reports numbers. Nothing here is guesswork — the results decide how the app is built.</p>
+
+<div id="stage"></div>
+
+<div class="step">
+  <h2>1 · Audio</h2>
+  <p>Finds which method actually turns sound on. Have your ringer switch off silent and volume up. Each test plays a video for a few seconds — just say whether you heard anything.</p>
+  <div class="row">
+    <button id="a-start">Start audio tests</button>
+  </div>
+  <div id="a-status" class="verdict wait" style="display:none"></div>
+  <div class="row" id="a-answer" style="display:none;margin-top:10px">
+    <button id="a-yes">I heard sound</button>
+    <button id="a-no" class="sec">Silent</button>
+  </div>
+</div>
+
+<div class="step">
+  <h2>2 · Performance</h2>
+  <p>Measures how long a player takes to start, and how smoothly the page animates with 1, 2, and 3 players alive at once. Takes about a minute; leave it alone while it runs.</p>
+  <button id="p-start">Start performance tests</button>
+  <div id="p-status" class="verdict wait" style="display:none"></div>
+</div>
+
+<div class="step">
+  <h2>3 · Results</h2>
+  <p>Send me this text.</p>
+  <pre id="report">(nothing yet)</pre>
+  <button id="copy" class="sec">Copy results</button>
+</div>
+
+<script>
+// Real video ids are read from the app's own data file so we test real content.
+let VIDEO_IDS = [];
+const results = { audio: {}, perf: {}, device: {} };
+
+function playerSrc(id, muted) {
+  const p = new URLSearchParams({
+    rel:'0', autoplay:'1', loop:'1', controls:'0', progress_bar:'0', play_button:'0',
+    volume_control:'0', fullscreen_button:'0', timestamp:'0', music_info:'0',
+    description:'0', native_context_menu:'0', closed_caption:'0', muted: muted ? '1':'0'
+  });
+  return 'https://www.tiktok.com/player/v1/' + id + '?' + p.toString();
+}
+function send(frame, type, value) {
+  if (frame && frame.contentWindow) {
+    frame.contentWindow.postMessage({ 'x-tiktok-player':true, type, value }, '*');
+  }
+}
+const stage = document.getElementById('stage');
+function makePlayer(id, muted, hidden) {
+  const f = document.createElement('iframe');
+  f.allow = 'autoplay; fullscreen';
+  f.setAttribute('scrolling','no');
+  f.src = playerSrc(id, muted);
+  if (hidden) { f.style.position='absolute'; f.style.width='1px'; f.style.height='1px';
+                f.style.opacity='0'; f.style.pointerEvents='none'; document.body.appendChild(f); }
+  else stage.appendChild(f);
+  return f;
+}
+function clearStage() { stage.innerHTML=''; }
+
+// Track player->host messages per frame.
+const state = new Map();
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (!d || !d['x-tiktok-player']) return;
+  for (const [f, st] of state) {
+    if (f.contentWindow === e.source) {
+      st.msgs.push(d.type);
+      if (d.type === 'onPlayerReady') { st.readyAt = performance.now(); }
+      if (d.type === 'onStateChange') { st.lastState = d.value;
+        if (d.value === 1 && !st.playingAt) st.playingAt = performance.now(); }
+      if (d.type === 'onMute') { st.muted = (d.value===true||d.value===1||!!(d.value&&d.value.muted)); }
+      if (d.type === 'onPlayerError') { st.error = d.value && d.value.errorCode; }
+      break;
+    }
+  }
+});
+function track(f) { const st={msgs:[],createdAt:performance.now()}; state.set(f,st); return st; }
+const wait = ms => new Promise(r=>setTimeout(r,ms));
+async function until(fn, timeout=12000) {
+  const t0=performance.now();
+  while (performance.now()-t0 < timeout) { if (fn()) return true; await wait(80); }
+  return false;
+}
+
+function setStatus(el, text, cls) {
+  const n = document.getElementById(el);
+  n.style.display='block'; n.textContent=text;
+  n.className = 'verdict ' + (cls||'wait');
+}
+function renderReport() {
+  const L=[];
+  L.push('DIAGNOSTIC RESULTS');
+  L.push('device: ' + (results.device.ua||''));
+  L.push('');
+  L.push('AUDIO');
+  Object.entries(results.audio).forEach(([k,v]) => L.push('  ' + k + ': ' + v));
+  L.push('');
+  L.push('PERFORMANCE');
+  Object.entries(results.perf).forEach(([k,v]) => L.push('  ' + k + ': ' + v));
+  document.getElementById('report').textContent = L.join('\n');
+}
+
+// ---------------- audio trials ----------------
+let answerResolve = null;
+function askHeard(label) {
+  setStatus('a-status', label, 'wait');
+  document.getElementById('a-answer').style.display='flex';
+  return new Promise(res => { answerResolve = res; });
+}
+document.getElementById('a-yes').onclick = () => { document.getElementById('a-answer').style.display='none'; answerResolve && answerResolve(true); };
+document.getElementById('a-no').onclick  = () => { document.getElementById('a-answer').style.display='none'; answerResolve && answerResolve(false); };
+
+document.getElementById('a-start').onclick = async (ev) => {
+  document.getElementById('a-start').disabled = true;
+  results.device.ua = navigator.userAgent;
+
+  // TRIAL 1 — unmute a video that is already PLAYING, from a timer (no gesture).
+  clearStage();
+  let f = makePlayer(VIDEO_IDS[0], true); let st = track(f);
+  setStatus('a-status','Trial 1: loading…','wait');
+  await until(()=>st.lastState===1, 15000);
+  await wait(600);
+  send(f,'unMute');
+  await wait(2500);
+  let heard = await askHeard('Trial 1 — unmute a PLAYING video, no tap involved. Did you hear sound?');
+  results.audio['playing_unmute_no_gesture'] = heard ? 'WORKS' : 'blocked' +
+    (st.muted===true ? ' (player reports still muted)' : '');
+  renderReport();
+
+  // TRIAL 2 — same, but the unmute happens inside a tap handler.
+  clearStage();
+  f = makePlayer(VIDEO_IDS[1], true); st = track(f);
+  setStatus('a-status','Trial 2: loading…','wait');
+  await until(()=>st.lastState===1, 15000);
+  await new Promise(res => {
+    setStatus('a-status','Trial 2 — tap the button below, then listen.','wait');
+    const b=document.getElementById('a-yes');
+    document.getElementById('a-answer').style.display='flex';
+    b.textContent='Tap here to unmute';
+    const handler = () => { send(f,'unMute'); b.textContent='I heard sound';
+      b.removeEventListener('click',handler); document.getElementById('a-answer').style.display='none'; res(); };
+    b.addEventListener('click',handler);
+  });
+  await wait(2500);
+  heard = await askHeard('Trial 2 — unmute triggered by your tap. Did you hear sound?');
+  results.audio['playing_unmute_in_tap'] = heard ? 'WORKS' : 'blocked';
+  renderReport();
+
+  // TRIAL 3 — a player that was PAUSED while warm, then played and unmuted.
+  clearStage();
+  f = makePlayer(VIDEO_IDS[2], true); st = track(f);
+  setStatus('a-status','Trial 3: loading…','wait');
+  await until(()=>st.lastState===1, 15000);
+  send(f,'pause');                 // simulate a warm neighbour
+  await wait(1200);
+  send(f,'play');                  // then land on it
+  await until(()=>st.lastState===1, 8000);
+  await wait(400);
+  send(f,'unMute');                // unmute after it reports playing
+  await wait(2500);
+  heard = await askHeard('Trial 3 — a preloaded video, played then unmuted. Did you hear sound?');
+  results.audio['warm_then_play_then_unmute'] = heard ? 'WORKS' : 'blocked';
+  renderReport();
+
+  // TRIAL 4 — brand new player created without any gesture, unmuted once playing.
+  clearStage();
+  f = makePlayer(VIDEO_IDS[3], true); st = track(f);
+  setStatus('a-status','Trial 4: loading…','wait');
+  const got = await until(()=>st.lastState===1, 15000);
+  results.audio['fresh_player_autoplays_muted'] = got ? 'WORKS' : 'FAILED (err ' + (st.error||'?') + ')';
+  await wait(400);
+  send(f,'unMute');
+  await wait(2500);
+  heard = await askHeard('Trial 4 — a freshly created video, unmuted after it started. Did you hear sound?');
+  results.audio['fresh_player_unmute_after_play'] = heard ? 'WORKS' : 'blocked';
+  clearStage();
+  setStatus('a-status','Audio tests complete — see Results below.','ok');
+  renderReport();
+};
+
+// ---------------- performance trials ----------------
+async function measureFPS(ms) {
+  return new Promise(res => {
+    let frames=0, worst=0, last=performance.now();
+    const t0=last;
+    function step(now){
+      const dt=now-last; last=now; frames++;
+      if (dt>worst) worst=dt;
+      if (now-t0 < ms) requestAnimationFrame(step);
+      else res({ fps: Math.round(frames/((now-t0)/1000)), worstFrameMs: Math.round(worst) });
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+document.getElementById('p-start').onclick = async () => {
+  document.getElementById('p-start').disabled = true;
+  results.device.ua = navigator.userAgent;
+
+  // Long tasks, if the browser exposes them.
+  let longTasks = 0;
+  try {
+    const po = new PerformanceObserver(list => { longTasks += list.getEntries().length; });
+    po.observe({ entryTypes: ['longtask'] });
+  } catch (e) { longTasks = -1; }
+
+  // Baseline smoothness with nothing loaded.
+  setStatus('p-status','Measuring baseline…','wait');
+  clearStage();
+  await wait(500);
+  let base = await measureFPS(2500);
+  results.perf['baseline_fps'] = base.fps + ' fps (worst frame ' + base.worstFrameMs + 'ms)';
+  renderReport();
+
+  // Time to first playback, and smoothness with N players alive.
+  for (const n of [1,2,3]) {
+    setStatus('p-status','Testing with ' + n + ' player(s) alive…','wait');
+    clearStage();
+    document.querySelectorAll('body > iframe').forEach(x=>x.remove());
+    const frames=[], sts=[];
+    const t0=performance.now();
+    for (let i=0;i<n;i++){
+      const f = makePlayer(VIDEO_IDS[(i+4) % VIDEO_IDS.length], true, i>0);
+      frames.push(f); sts.push(track(f));
+    }
+    const ready = await until(()=>sts[0].lastState===1, 20000);
+    if (n===1) {
+      results.perf['time_to_first_play_ms'] = ready
+        ? Math.round(sts[0].playingAt - t0) : 'TIMED OUT (err ' + (sts[0].error||'?') + ')';
+      results.perf['time_to_player_ready_ms'] = sts[0].readyAt
+        ? Math.round(sts[0].readyAt - t0) : 'n/a';
+    }
+    // keep the others paused, like warm neighbours in the app
+    for (let i=1;i<n;i++) send(frames[i],'pause');
+    await wait(1200);
+    const m = await measureFPS(3000);
+    results.perf['fps_with_' + n + '_players'] = m.fps + ' fps (worst frame ' + m.worstFrameMs + 'ms)';
+    renderReport();
+  }
+
+  document.querySelectorAll('body > iframe').forEach(x=>x.remove());
+  clearStage();
+  results.perf['long_tasks_observed'] = longTasks < 0 ? 'not supported' : String(longTasks);
+  if (performance.memory) {
+    results.perf['js_heap_mb'] = Math.round(performance.memory.usedJSHeapSize/1048576) + ' MB';
+  }
+  setStatus('p-status','Performance tests complete — see Results below.','ok');
+  renderReport();
+};
+
+document.getElementById('copy').onclick = async () => {
+  try { await navigator.clipboard.writeText(document.getElementById('report').textContent);
+        document.getElementById('copy').textContent='Copied'; }
+  catch (e) { document.getElementById('copy').textContent='Select the text above to copy'; }
+};
+
+// Pull real video ids from the app's data file.
+(async () => {
+  try {
+    const r = await fetch('favorites.json');
+    const list = await r.json();
+    for (let i=0;i<8;i++) VIDEO_IDS.push(list[Math.floor(i * list.length / 8)].id);
+  } catch (e) {
+    document.getElementById('a-start').disabled = true;
+    document.getElementById('p-start').disabled = true;
+    setStatus('a-status','Could not load favorites.json — put this file in the same folder.','bad');
+  }
+})();
+</script>
+</body>
+</html>
