@@ -78,6 +78,10 @@
   }
   .cat-tile .name { font-size: 15px; font-weight: 600; padding-right: 20px; }
   .cat-tile .count { font-size: 12px; color: var(--dim); }
+  .cat-tile.trash { opacity: 0.72; }
+  .cat-tile.trash .name::before { content: '\1F5D1  '; }
+  .sheet-action { font-weight: 600; }
+  .sheet-action.destructive { color: #ff6b6b; }
   .cat-manage {
     position: absolute; top: 8px; right: 8px;
     background: none; border: none;
@@ -491,6 +495,9 @@
 
 <script>
 // ---------- Real data loading ----------
+// Videos moved to this category are hidden everywhere except the Deleted tile.
+const DELETED = 'Deleted';
+const GRID_PAGE_SIZE = 30;
 const PALETTE = [
   ["#2a2f3a","#101216"], ["#3a2f28","#161210"], ["#26332e","#0f1613"],
   ["#332a3a","#141017"], ["#3a3128","#161310"], ["#28323a","#0f1417"]
@@ -502,6 +509,20 @@ function hashPalette(id) {
   return PALETTE[h % PALETTE.length];
 }
 
+// url and label are derived, not stored: keeping them for 6,070 items wasted
+// roughly half of the saved state, and localStorage is a hard limit on iOS.
+// Category names are user-supplied, so anything of theirs going into markup is
+// escaped — a name containing a quote or angle bracket would otherwise break
+// the layout (or the value="" attribute in the rename dialog).
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function itemUrl(item) { return 'https://www.tiktok.com/@i/video/' + item.id; }
+function itemLabel(item) { return item.date ? formatDate(item.date) : ''; }
+
 function formatDate(iso) {
   const d = new Date(iso.replace(' ', 'T'));
   if (isNaN(d)) return iso;
@@ -509,7 +530,7 @@ function formatDate(iso) {
 }
 
 let state = JSON.parse(localStorage.getItem('gallery-state') || 'null');
-const DATA_VERSION = 3; // bump to force a clean re-hydration when the model changes
+const DATA_VERSION = 4; // bump to force a clean re-hydration when the model changes
 
 async function ensureRealData() {
   // If saved state is missing, stale (old version), or still on mock data, re-hydrate.
@@ -533,19 +554,24 @@ async function ensureRealData() {
       return Object.values(existingById).some(i => i.category === c);
     });
 
-    const items = raw.map(entry => {
+    // Videos the user permanently deleted must never come back when the
+    // library is rebuilt from favorites.json.
+    const purged = new Set((state && state.purged) || []);
+    const items = raw.filter(entry => !purged.has(entry.id)).map(entry => {
       const prev = existingById[entry.id];
       return {
         id: entry.id,
-        url: entry.url,
         date: entry.date,
-        label: formatDate(entry.date),
         category: (prev && prev.category) || 'Uncategorized'
       };
     });
     if (!categories.includes('Uncategorized')) categories.unshift('Uncategorized');
+    if (items.some(i => i.category === DELETED) && !categories.includes(DELETED)) {
+      categories.push(DELETED);
+    }
 
-    state = { categories, items, hydrated: true, version: DATA_VERSION };
+    state = { categories, items, hydrated: true, version: DATA_VERSION,
+              purged: [...purged] };
     save();
   } catch (e) {
     console.error('Failed to load favorites.json, falling back to empty state', e);
@@ -560,28 +586,45 @@ function showLoadingState() {
   document.getElementById('allCount').textContent = 'Loading…';
 }
 
-function save() {
+// Serialising the whole library (thousands of items) on every category tap was
+// a visible hitch, so writes are coalesced. Anything in flight is flushed if the
+// page is backgrounded or closed.
+let saveTimer = null;
+function save() { if (!saveTimer) saveTimer = setTimeout(flushSave, 400); }
+function flushSave() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   try {
     localStorage.setItem('gallery-state', JSON.stringify(state));
   } catch (e) {
     console.error('Failed to save state — storage may be full', e);
-    showToast('Storage full — this change may not be saved');
+    // Thumbnail cache is rebuildable; sacrifice it to make room for real data.
+    try { thumbCache = {}; localStorage.removeItem('thumb-cache');
+          localStorage.setItem('gallery-state', JSON.stringify(state)); return; }
+    catch (e2) { showToast('Storage full — this change may not be saved'); }
   }
 }
+window.addEventListener('pagehide', flushSave);
+window.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); });
 
 let currentFeedList = [];
 let activeSlideItem = null;
 
 // ---------- Home rendering ----------
+// Deleted videos are excluded from "All Videos" and from every normal category
+// view — they only exist inside the Deleted tile.
+function liveItems() { return state.items.filter(i => i.category !== DELETED); }
+
 function renderHome() {
-  document.getElementById('allCount').textContent = state.items.length + ' saved';
+  document.getElementById('allCount').textContent = liveItems().length + ' saved';
   const grid = document.getElementById('catGrid');
   grid.innerHTML = '';
-  state.categories.forEach(cat => {
+  const ordered = state.categories.filter(c => c !== DELETED);
+  if (state.categories.includes(DELETED)) ordered.push(DELETED); // always last
+  ordered.forEach(cat => {
     const count = state.items.filter(i => i.category === cat).length;
     const tile = document.createElement('div');
-    tile.className = 'cat-tile';
-    tile.innerHTML = `<button class="cat-manage">&#8942;</button><div class="name">${cat}</div><div class="count">${count} saved</div>`;
+    tile.className = 'cat-tile' + (cat === DELETED ? ' trash' : '');
+    tile.innerHTML = `<button class="cat-manage">&#8942;</button><div class="name">${esc(cat)}</div><div class="count">${count} saved</div>`;
     tile.onclick = () => openGrid(state.items.filter(i => i.category === cat), cat);
     tile.querySelector('.cat-manage').onclick = (e) => {
       e.stopPropagation();
@@ -596,7 +639,7 @@ function renderHome() {
   grid.appendChild(addTile);
 }
 
-document.getElementById('allTile').onclick = () => openGrid(state.items, 'All Videos');
+document.getElementById('allTile').onclick = () => openGrid(liveItems(), 'All Videos');
 
 function promptNewCategory() {
   inputModal({
@@ -613,6 +656,13 @@ function promptNewCategory() {
 }
 
 function manageCategory(cat) {
+  if (cat === DELETED) {
+    actionSheet({
+      title: DELETED,
+      rows: [{ label: 'Empty Deleted', destructive: true, onClick: emptyDeleted }]
+    });
+    return;
+  }
   actionSheet({
     title: cat,
     rows: [
@@ -668,8 +718,8 @@ function inputModal({ title, placeholder, initialValue, confirmLabel, onSubmit }
   backdrop.className = 'modal-backdrop';
   backdrop.innerHTML = `
     <div class="modal-card">
-      <div class="modal-title">${title}</div>
-      <input class="modal-input" id="modalInput" placeholder="${placeholder}" value="${initialValue || ''}">
+      <div class="modal-title">${esc(title)}</div>
+      <input class="modal-input" id="modalInput" placeholder="${esc(placeholder)}" value="${esc(initialValue || '')}">
       <div class="modal-error" id="modalError"></div>
       <div class="modal-actions">
         <button class="modal-btn" id="modalCancel">Cancel</button>
@@ -696,8 +746,8 @@ function confirmModal({ title, message, confirmLabel, destructive, onConfirm }) 
   backdrop.className = 'modal-backdrop';
   backdrop.innerHTML = `
     <div class="modal-card">
-      <div class="modal-title">${title}</div>
-      <div class="modal-message">${message}</div>
+      <div class="modal-title">${esc(title)}</div>
+      <div class="modal-message">${esc(message)}</div>
       <div class="modal-actions">
         <button class="modal-btn" id="modalCancel">Cancel</button>
         <button class="modal-btn ${destructive ? 'destructive' : 'primary'}" id="modalConfirm">${confirmLabel}</button>
@@ -717,9 +767,9 @@ function actionSheet({ title, rows }) {
   const sheet = document.createElement('div');
   sheet.className = 'action-sheet';
   sheet.innerHTML =
-    (title ? `<div class="action-sheet-title">${title}</div>` : '') +
+    (title ? `<div class="action-sheet-title">${esc(title)}</div>` : '') +
     rows.map((r, idx) =>
-      `<div class="action-row${r.destructive ? ' destructive' : ''}" data-idx="${idx}">${r.label}</div>`
+      `<div class="action-row${r.destructive ? ' destructive' : ''}" data-idx="${idx}">${esc(r.label)}</div>`
     ).join('') +
     `<div class="action-row cancel" id="sheetCancel">Cancel</div>`;
   document.body.appendChild(sheet);
@@ -746,6 +796,7 @@ setInterval(() => {
 }, 2000);
 
 let MAX_CONCURRENT_FETCHES = 6;
+const MAX_PENDING = 120;
 let activeFetches = 0;
 // Pending requests keyed by id, each carrying a live priority() function so we
 // can always pick whatever is closest to the viewport right now.
@@ -759,6 +810,11 @@ function requestThumbnail(id, onReady, onFail, priorityFn) {
     return;
   }
   pending.set(id, { id, onReady, onFail, priority: priorityFn || (() => 0) });
+  // Keep the queue bounded. Without this it can grow into the thousands during a
+  // long scroll, and since picking the best entry scans the whole queue, the cost
+  // becomes quadratic and stalls everything. Dropped entries simply re-request
+  // when their tile comes back into view.
+  if (pending.size > MAX_PENDING * 1.5) trimPending();
   // Deferred on purpose: an IntersectionObserver callback delivers a whole batch
   // of tiles at once. If we started fetching on the first one, the earliest tiles
   // in DOM order would claim every slot and the priority ordering below would
@@ -772,6 +828,14 @@ function schedulePump() {
   if (pumpScheduled) return;
   pumpScheduled = true;
   setTimeout(() => { pumpScheduled = false; pumpQueue(); }, 0);
+}
+
+// Drop the furthest-away pending requests, keeping the queue small and cheap.
+function trimPending() {
+  const scored = [];
+  pending.forEach(item => scored.push([item.priority(), item.id]));
+  scored.sort((a, b) => a[0] - b[0]);
+  for (let i = MAX_PENDING; i < scored.length; i++) pending.delete(scored[i][1]);
 }
 
 function cancelThumbnail(id) {
@@ -878,9 +942,10 @@ function buildDatePanel(index) {
 // Ensure tiles are rendered up to targetIdx, then scroll it into view.
 function jumpToIndex(targetIdx) {
   document.getElementById('datePanel').classList.remove('open');
-  // Render enough tiles to include the target.
-  while (gridRenderedCount <= targetIdx && gridRenderedCount < currentGridList.length) {
-    appendGridTiles(GRID_PAGE_SIZE);
+  // Render straight through to the target in ONE pass. Doing this 30 tiles at a
+  // time meant ~200 separate DOM passes for a jump near the end of the library.
+  if (gridRenderedCount <= targetIdx) {
+    appendGridTiles(targetIdx - gridRenderedCount + GRID_PAGE_SIZE);
   }
   const grid = document.getElementById('thumbGrid');
   const tiles = grid.querySelectorAll('.thumb-tile');
@@ -895,7 +960,6 @@ document.getElementById('dateJumpBtn').onclick = () => {
 };
 
 // ---------- Grid view (thumbnail library per category) ----------
-const GRID_PAGE_SIZE = 30;
 let gridRenderedCount = 0;
 let gridSentinelObserver = null;
 let gridThumbObserver = null;
@@ -971,7 +1035,7 @@ function appendGridTiles(count) {
     tile.dataset.id = item.id;
     tile.style.setProperty('--a', palette[0]);
     tile.style.setProperty('--b', palette[1]);
-    tile.innerHTML = `<img alt="" decoding="async"><div class="thumb-date">${item.label}</div>`;
+    tile.innerHTML = `<img alt="" decoding="async"><div class="thumb-date">${esc(itemLabel(item))}</div>`;
     tile.onclick = () => {
       openFeed(currentGridList, currentGridLabel, idx);
     };
@@ -1050,6 +1114,17 @@ function sendToPlayer(iframe, type, value) {
   }
 }
 
+// Pause is a command we issue, so reflect it in our own state right away rather
+// than waiting for the player's report to come back — a stale _state made
+// tap-to-toggle read the wrong value and briefly let two slides look "playing".
+function pauseSlide(slide) {
+  if (!slide) return;
+  const f = slide.querySelector('iframe');
+  if (f) sendToPlayer(f, 'pause');
+  if (slide._state === 1) slide._state = 2;
+  if (slide._playTimer) { clearInterval(slide._playTimer); slide._playTimer = null; }
+}
+
 // Central listener for messages coming FROM any TikTok player iframe.
 let playerMessageBound = false;
 function bindPlayerMessages() {
@@ -1102,7 +1177,7 @@ function bindPlayerMessages() {
             sourceSlide.querySelector('.slide-media').classList.add('paused');
           }
         } else {
-          if (d.value === 1) sendToPlayer(iframe, 'pause');
+          if (d.value === 1) pauseSlide(sourceSlide);
         }
         break;
       case 'onMute':
@@ -1236,7 +1311,7 @@ function syncPlayerWindow(activeSlide) {
 
   keep.forEach(s => {
     if (s.querySelector('iframe')) {
-      if (s !== activeSlide) sendToPlayer(s.querySelector('iframe'), 'pause');
+      if (s !== activeSlide) pauseSlide(s);
       return;
     }
     if (distance(s) >= 2) {
@@ -1291,9 +1366,8 @@ function togglePlay(slide) {
   const media = slide.querySelector('.slide-media');
   const isPlaying = slide._state === 1;
   if (isPlaying) {
-    if (slide._playTimer) { clearInterval(slide._playTimer); slide._playTimer = null; }
     slide.dataset.userPaused = 'true';
-    sendToPlayer(iframe, 'pause');
+    pauseSlide(slide);
     media.classList.add('paused');
     dlog('tap pause ' + (slide.dataset.id||'').slice(-4));
   } else {
@@ -1382,14 +1456,7 @@ function openFeed(list, label, startIndex = 0) {
         activeSlideItem = currentFeedList.find(i => i.id === slide.dataset.id);
         // Silencing the outgoing player is a single postMessage — cheap enough
         // to do immediately so audio never bleeds across slides.
-        if (currentPlayingSlide && currentPlayingSlide !== slide) {
-          const pf = currentPlayingSlide.querySelector('iframe');
-          if (pf) sendToPlayer(pf, 'pause');
-          if (currentPlayingSlide._playTimer) {
-            clearInterval(currentPlayingSlide._playTimer);
-            currentPlayingSlide._playTimer = null;
-          }
-        }
+        if (currentPlayingSlide && currentPlayingSlide !== slide) pauseSlide(currentPlayingSlide);
         scheduleCommit(COMMIT_IDLE_MS);
       }
     });
@@ -1450,8 +1517,8 @@ function buildSlideEl(item) {
       <div class="pause-icon">&#10074;&#10074;</div>
     </div>
     <div class="slide-overlay">
-      <div class="slide-title">${item.label}</div>
-      <div class="slide-cat">${item.category}</div>
+      <div class="slide-title">${esc(itemLabel(item))}</div>
+      <div class="slide-cat">${esc(item.category)}</div>
     </div>
     <div class="rail">
       <button class="rail-btn mute-btn" aria-label="Mute or unmute">&#128263;</button>
@@ -1469,14 +1536,12 @@ function buildSlideEl(item) {
   // The thumbnail acts as a poster behind the iframe until the player loads.
   // Priority = distance (in slides) from the active slide, so the visible
   // poster loads first when scrolling fast.
+  // Must be O(1): this is evaluated for every queued thumbnail on every pump
+  // cycle, so anything that walks the DOM here turns the queue quadratic.
   const posterPriority = () => {
     const reel = document.getElementById('reel');
-    if (!reel || !currentPlayingSlide) return 0;
-    const slides = reel.querySelectorAll('.slide');
-    const myIdx = Array.prototype.indexOf.call(slides, slide);
-    const activeIdx = Array.prototype.indexOf.call(slides, currentPlayingSlide);
-    if (myIdx < 0 || activeIdx < 0) return 0;
-    return Math.abs(myIdx - activeIdx);
+    if (!reel) return 0;
+    return Math.abs(slide.offsetTop - reel.scrollTop);
   };
   requestThumbnail(item.id, (url) => {
     img.onload = () => img.classList.add('loaded');
@@ -1620,7 +1685,7 @@ function appendSlides(count) {
   // Trimming normally waits for scroll-idle (so scrollTop compensation can't
   // fight a momentum scroll). But one long continuous scroll never goes idle,
   // which let the DOM grow into the hundreds. This is the safety valve.
-  if (reel.querySelectorAll('.slide').length > HARD_SLIDE_CAP) trimTop();
+  if (reel.querySelectorAll('.slide').length > HARD_SLIDE_CAP) { trimTop(); trimBottom(); }
 }
 
 // Remove slides that have scrolled far above the viewport so the DOM stays small.
@@ -1629,9 +1694,12 @@ function trimTop() {
   const slides = reel.querySelectorAll('.slide');
   const excess = slides.length - MAX_LIVE_SLIDES;
   if (excess <= 0) return;
-  // Never trim the active slide or its immediate neighbours.
-  const activeIdx = currentPlayingSlide ?
-    Array.prototype.indexOf.call(slides, currentPlayingSlide) : slides.length;
+  // Anchor on where the user actually IS, not where playback last committed.
+  // During a continuous scroll the committed slide lags far behind, which used
+  // to make trimming refuse to run at all.
+  const anchor = pendingActiveSlide || currentPlayingSlide;
+  const activeIdx = anchor ?
+    Array.prototype.indexOf.call(slides, anchor) : slides.length;
   let removed = 0;
   for (let i = 0; i < excess && i < activeIdx - 2; i++) {
     const s = slides[i];
@@ -1678,8 +1746,9 @@ function trimBottom() {
   const slides = reel.querySelectorAll('.slide');
   const excess = slides.length - MAX_LIVE_SLIDES;
   if (excess <= 0) return;
-  const activeIdx = currentPlayingSlide ?
-    Array.prototype.indexOf.call(slides, currentPlayingSlide) : 0;
+  const anchor = pendingActiveSlide || currentPlayingSlide;
+  const activeIdx = anchor ?
+    Array.prototype.indexOf.call(slides, anchor) : 0;
   let removed = 0;
   for (let i = slides.length - 1; i >= 0 && removed < excess && i > activeIdx + 2; i--) {
     const s = slides[i];
@@ -1716,20 +1785,134 @@ function openCategorySheet(item) {
   activeSlideItem = item;
   const list = document.getElementById('sheetCats');
   list.innerHTML = '';
-  state.categories.forEach(cat => {
+  const inTrash = item.category === DELETED;
+
+  if (!inTrash) {
+    // "Deleted" is never a destination you pick by hand — it's what Delete does.
+    state.categories.filter(c => c !== DELETED).forEach(cat => {
+      const row = document.createElement('div');
+      row.className = 'sheet-cat' + (cat === item.category ? ' selected' : '');
+      row.textContent = cat + (cat === item.category ? '  \u2713' : '');
+      row.onclick = () => {
+        item.category = cat;
+        save();
+        updateActiveOverlay(item);
+        closeSheet();
+      };
+      list.appendChild(row);
+    });
+  }
+
+  const act = (label, cls, fn) => {
     const row = document.createElement('div');
-    row.className = 'sheet-cat' + (cat === item.category ? ' selected' : '');
-    row.textContent = cat + (cat === item.category ? '  \u2713' : '');
-    row.onclick = () => {
-      item.category = cat;
-      save();
-      updateActiveOverlay(item);
-      closeSheet();
-    };
+    row.className = 'sheet-cat sheet-action' + (cls ? ' ' + cls : '');
+    row.textContent = label;
+    row.onclick = fn;
     list.appendChild(row);
-  });
+  };
+
+  if (inTrash) {
+    act('Restore to Uncategorized', '', () => { restoreVideo(item); closeSheet(); });
+    act('Delete permanently', 'destructive', () => {
+      closeSheet();
+      confirmModal({
+        title: 'Delete permanently?',
+        message: 'This removes the video from your library for good. It will not come back.',
+        confirmLabel: 'Delete', destructive: true,
+        onConfirm: () => purgeVideo(item)
+      });
+    });
+  } else {
+    act('Delete', 'destructive', () => { deleteVideo(item); closeSheet(); });
+  }
+
   document.getElementById('sheetBackdrop').classList.add('open');
   document.getElementById('sheet').classList.add('open');
+}
+
+// ---------- Delete / restore / purge ----------
+function ensureDeletedCategory() {
+  if (!state.categories.includes(DELETED)) state.categories.push(DELETED);
+}
+
+function deleteVideo(item) {
+  item.category = DELETED;
+  ensureDeletedCategory();
+  save();
+  removeFromCurrentViews(item);
+  showToast('Moved to Deleted');
+}
+
+function restoreVideo(item) {
+  item.category = 'Uncategorized';
+  if (!state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+  save();
+  removeFromCurrentViews(item);
+  showToast('Restored');
+}
+
+function purgeVideo(item) {
+  state.items = state.items.filter(i => i.id !== item.id);
+  // Remember it so re-hydrating from favorites.json can never resurrect it.
+  state.purged = state.purged || [];
+  if (!state.purged.includes(item.id)) state.purged.push(item.id);
+  flushSave();   // irreversible — never leave this sitting in a debounce window
+  removeFromCurrentViews(item);
+  showToast('Deleted permanently');
+}
+
+function emptyDeleted() {
+  const gone = state.items.filter(i => i.category === DELETED);
+  if (!gone.length) { showToast('Nothing to empty'); return; }
+  confirmModal({
+    title: 'Empty Deleted?',
+    message: gone.length + ' video' + (gone.length === 1 ? '' : 's') +
+             ' will be removed for good. This cannot be undone.',
+    confirmLabel: 'Empty', destructive: true,
+    onConfirm: () => {
+      state.purged = state.purged || [];
+      gone.forEach(i => { if (!state.purged.includes(i.id)) state.purged.push(i.id); });
+      state.items = state.items.filter(i => i.category !== DELETED);
+      flushSave();   // irreversible
+      if (document.getElementById('gridView').classList.contains('open') &&
+          currentGridLabel === DELETED) {
+        openGrid([], DELETED);
+      }
+      renderHome();
+      showToast('Deleted ' + gone.length);
+    }
+  });
+}
+
+// Drop a video out of whatever the user is currently looking at, so the change
+// is visible immediately rather than on the next visit.
+function removeFromCurrentViews(item) {
+  const i = currentFeedList.findIndex(x => x.id === item.id);
+  if (i >= 0) currentFeedList.splice(i, 1);
+  const gi = currentGridList.findIndex(x => x.id === item.id);
+  if (gi >= 0) currentGridList.splice(gi, 1);
+
+  const slide = document.querySelector('#reel .slide[data-id="' + item.id + '"]');
+  if (slide) {
+    const next = slide.nextElementSibling && slide.nextElementSibling.classList.contains('slide')
+      ? slide.nextElementSibling : slide.previousElementSibling;
+    if (playObserver) playObserver.unobserve(slide);
+    destroyPlayer(slide);
+    if (currentPlayingSlide === slide) currentPlayingSlide = null;
+    if (pendingActiveSlide === slide) pendingActiveSlide = null;
+    slide.remove();
+    if (renderedEnd > renderedStart) renderedEnd--;
+    if (next && next.classList.contains('slide')) {
+      next.scrollIntoView({ behavior: 'instant' });
+      pendingActiveSlide = next;
+      scheduleCommit(60);
+    } else {
+      document.getElementById('feedBack').onclick();
+      return;
+    }
+  }
+  const tile = document.querySelector('.thumb-tile[data-id="' + item.id + '"]');
+  if (tile) { if (gridThumbObserver) gridThumbObserver.unobserve(tile); tile.remove(); if (gridRenderedCount > 0) gridRenderedCount--; }
 }
 
 function updateActiveOverlay(item) {
@@ -1762,14 +1945,14 @@ function handleIncomingAdd() {
   const incoming = params.get('add');
   if (!incoming) return;
 
-  const exists = state.items.some(i => i.url === incoming);
+  const m = String(incoming).match(/\/video\/(\d+)/);
+  const incomingId = m ? m[1] : ('added-' + Date.now());
+  const exists = state.items.some(i => i.id === incomingId);
   if (!exists) {
     const now = new Date();
     state.items.unshift({
-      id: 'added-' + Date.now(),
-      url: incoming,
-      date: now.toISOString(),
-      label: formatDate(now.toISOString()),
+      id: incomingId,
+      date: now.toISOString().replace('T', ' ').slice(0, 19),
       category: 'Uncategorized'
     });
     if (!state.categories.includes('Uncategorized')) {
