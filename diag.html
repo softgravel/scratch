@@ -43,6 +43,13 @@
 <div id="stage"></div>
 
 <div class="step">
+  <h2>0 · Does video work at all?</h2>
+  <p>This loads one of your saved videos with TikTok's own play button visible. If autoplay is blocked, just tap it. If this plays, the player works and any issue is in the app's own logic — which is what the tests below pin down.</p>
+  <button id="sanity-btn" disabled>Load a test video</button>
+  <div id="sanity-status" class="verdict wait" style="display:none"></div>
+</div>
+
+<div class="step">
   <h2>1 · Audio</h2>
   <p>Finds which method actually turns sound on. Have your ringer switch off silent and volume up. Each test plays a video for a few seconds — just say whether you heard anything.</p>
   <div class="row">
@@ -88,6 +95,7 @@ function send(frame, type, value) {
   }
 }
 const stage = document.getElementById('stage');
+// A player for the AUDIO/PERF trials: all chrome hidden, autoplay on, like the app.
 function makePlayer(id, muted, hidden) {
   const f = document.createElement('iframe');
   f.allow = 'autoplay; fullscreen';
@@ -96,6 +104,20 @@ function makePlayer(id, muted, hidden) {
   if (hidden) { f.style.position='absolute'; f.style.width='1px'; f.style.height='1px';
                 f.style.opacity='0'; f.style.pointerEvents='none'; document.body.appendChild(f); }
   else stage.appendChild(f);
+  return f;
+}
+// A player WITH TikTok's own controls, for the "does video work at all" check.
+// Never hides the play button, so a blocked autoplay still leaves something you
+// can tap — the diagnostic must never look like a dead black frame.
+function playerSrcWithControls(id) {
+  const p = new URLSearchParams({ rel:'0', loop:'1', description:'0', music_info:'0' });
+  return 'https://www.tiktok.com/player/v1/' + id + '?' + p.toString();
+}
+function makeControlPlayer(id) {
+  const f = document.createElement('iframe');
+  f.allow = 'autoplay; fullscreen';
+  f.setAttribute('scrolling','no');
+  f.src = playerSrcWithControls(id);
   return f;
 }
 function clearStage() { stage.innerHTML=''; }
@@ -303,12 +325,34 @@ document.getElementById('copy').onclick = async () => {
     const r = await fetch('favorites.json');
     const list = await r.json();
     for (let i=0;i<8;i++) VIDEO_IDS.push(list[Math.floor(i * list.length / 8)].id);
+    document.getElementById('sanity-btn').disabled = false;
   } catch (e) {
+    document.getElementById('sanity-btn').disabled = true;
     document.getElementById('a-start').disabled = true;
     document.getElementById('p-start').disabled = true;
-    setStatus('a-status','Could not load favorites.json — put this file in the same folder.','bad');
+    setStatus('sanity-status','Could not load favorites.json — put this file in the same folder as diag.html.','bad');
   }
 })();
+
+// Section 0: prove a video plays, with TikTok's controls visible as a fallback.
+document.getElementById('sanity-btn').onclick = () => {
+  clearStage();
+  setStatus('sanity-status','Loading a video… if it doesn\u2019t start on its own, tap it.','wait');
+  const f = makeControlPlayer(VIDEO_IDS[Math.floor(Math.random()*VIDEO_IDS.length)]);
+  const st = track(f);
+  stage.appendChild(f);
+  let settled = false;
+  const check = setInterval(() => {
+    if (st.playingAt) { settled = true; clearInterval(check);
+      setStatus('sanity-status','\u2713 Video is playing. The player works on this device.','ok'); }
+  }, 200);
+  setTimeout(() => {
+    if (settled) return;
+    clearInterval(check);
+    if (st.readyAt) setStatus('sanity-status','The player loaded but autoplay was blocked — tap the video to play it. If it plays on tap, the player works.','wait');
+    else setStatus('sanity-status','The player did not load. Check your connection, or your network may block tiktok.com.','bad');
+  }, 8000);
+};
 </script>
 </body>
 </html>
