@@ -83,7 +83,8 @@ const results = { audio: {}, perf: {}, device: {} };
 
 function playerSrc(id, muted) {
   const p = new URLSearchParams({
-    rel:'0', autoplay:'1', loop:'1', controls:'0', progress_bar:'0', play_button:'0',
+    rel:'0', autoplay:'1', loop:'1', playsinline:'1',
+    controls:'0', progress_bar:'0', play_button:'0',
     volume_control:'0', fullscreen_button:'0', timestamp:'0', music_info:'0',
     description:'0', native_context_menu:'0', closed_caption:'0', muted: muted ? '1':'0'
   });
@@ -99,6 +100,8 @@ const stage = document.getElementById('stage');
 function makePlayer(id, muted, hidden) {
   const f = document.createElement('iframe');
   f.allow = 'autoplay; fullscreen';
+  f.setAttribute('playsinline','');
+  f.setAttribute('webkit-playsinline','');
   f.setAttribute('scrolling','no');
   f.src = playerSrc(id, muted);
   if (hidden) { f.style.position='absolute'; f.style.width='1px'; f.style.height='1px';
@@ -179,16 +182,47 @@ document.getElementById('a-start').onclick = async (ev) => {
   document.getElementById('a-start').disabled = true;
   results.device.ua = navigator.userAgent;
 
-  // TRIAL 1 — unmute a video that is already PLAYING, from a timer (no gesture).
+  // TRIAL 0 — THE decisive one. Load a muted player but DON'T rely on autoplay;
+  // instead wait for you to tap, then send play()+unMute() inside that gesture.
+  // This is exactly what the tap-to-play redesign does. If this works, the app
+  // works — regardless of whether autoplay is blocked.
   clearStage();
   let f = makePlayer(VIDEO_IDS[0], true); let st = track(f);
+  setStatus('a-status','Trial 0: loading a video (it may stay still)…','wait');
+  await until(()=>st.readyAt || st.lastState!==undefined, 15000);
+  await new Promise(res => {
+    setStatus('a-status','Trial 0 — tap the button, then watch AND listen.','wait');
+    const b = document.getElementById('a-yes');
+    document.getElementById('a-answer').style.display = 'flex';
+    b.textContent = 'Tap to play with sound';
+    const handler = () => {
+      send(f,'play'); send(f,'unMute');   // both inside the real gesture
+      b.textContent = 'I heard sound';
+      b.removeEventListener('click', handler);
+      document.getElementById('a-answer').style.display = 'none';
+      res();
+    };
+    b.addEventListener('click', handler);
+  });
+  await wait(400);
+  const played = st.lastState === 1;
+  await wait(2000);
+  let heard = await askHeard('Trial 0 — did the video PLAY when you tapped? (say yes only if it played)');
+  results.audio['tap_to_play'] = played ? 'PLAYS' : 'did not play';
+  heard = await askHeard('Trial 0 — and did you HEAR it?');
+  results.audio['tap_to_play_sound'] = heard ? 'WORKS' : 'silent';
+  renderReport();
+
+  // TRIAL 1 — unmute a video that is already PLAYING, from a timer (no gesture).
+  clearStage();
+  f = makePlayer(VIDEO_IDS[0], true); st = track(f);
   setStatus('a-status','Trial 1: loading…','wait');
   await until(()=>st.lastState===1, 15000);
   await wait(600);
   send(f,'unMute');
   await wait(2500);
-  let heard = await askHeard('Trial 1 — unmute a PLAYING video, no tap involved. Did you hear sound?');
-  results.audio['playing_unmute_no_gesture'] = heard ? 'WORKS' : 'blocked' +
+  let heard1 = await askHeard('Trial 1 — unmute a PLAYING video, no tap involved. Did you hear sound?');
+  results.audio['playing_unmute_no_gesture'] = heard1 ? 'WORKS' : 'blocked' +
     (st.muted===true ? ' (player reports still muted)' : '');
   renderReport();
 
