@@ -1,0 +1,1413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Favorites">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://www.tiktok.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.tiktok.com">
+<link rel="dns-prefetch" href="https://p16-sign-va.tiktokcdn.com">
+<title>Favorites</title>
+<style>
+  :root {
+    --bg:#000; --panel:#151515; --line:#242424;
+    --text:#f2f2f2; --dim:#8a8a8a; --accent:#3b7dd8;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body {
+    margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+    overscroll-behavior:none;
+  }
+  button { font:inherit; color:inherit; }
+
+  /* ===================== HOME ===================== */
+  #home { padding:max(18px,env(safe-area-inset-top)) 14px max(24px,env(safe-area-inset-bottom)); }
+  #allTile {
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:18px 16px; margin-bottom:14px;
+  }
+  #allTile .name { font-size:17px; font-weight:600; }
+  #allTile .count { font-size:13px; color:var(--dim); margin-top:3px; }
+  #catGrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .cat-tile {
+    position:relative; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:16px 14px; min-height:78px;
+    display:flex; flex-direction:column; justify-content:space-between;
+  }
+  .cat-tile .name { font-size:15px; font-weight:600; padding-right:22px; word-break:break-word; }
+  .cat-tile .count { font-size:12px; color:var(--dim); margin-top:6px; }
+  .cat-tile.add { align-items:center; justify-content:center; color:var(--dim); border-style:dashed; }
+  .cat-tile.trash { opacity:.72; }
+  .cat-manage {
+    position:absolute; top:6px; right:6px; background:none; border:0;
+    color:var(--dim); font-size:16px; line-height:1; padding:6px 8px;
+  }
+
+  /* ===================== GRID ===================== */
+  #gridView { position:fixed; inset:0; background:#000; display:none; flex-direction:column; z-index:15; }
+  #gridView.open { display:flex; }
+  .grid-top {
+    display:flex; align-items:center; gap:10px;
+    padding:max(14px,env(safe-area-inset-top)) 12px 8px;
+  }
+  .grid-title { font-size:15px; font-weight:600; flex:1; }
+  .icon-btn {
+    width:32px; height:32px; border-radius:50%; border:0;
+    background:rgba(255,255,255,0.09); color:var(--text); font-size:15px; line-height:1;
+  }
+  #gridScroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  /* Virtualized: the container is sized to the whole library, but only the
+     visible tiles exist in the DOM. */
+  #thumbGrid { position:relative; width:100%; }
+  .thumb-tile {
+    position:absolute; overflow:hidden;
+    background:linear-gradient(160deg,#232323,#111);
+  }
+  .thumb-tile img {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    opacity:0; transition:opacity .18s ease;
+  }
+  .thumb-tile img.loaded { opacity:1; }
+  .thumb-date {
+    position:absolute; left:4px; bottom:4px; font-size:9px;
+    color:rgba(255,255,255,.75); background:rgba(0,0,0,.45);
+    padding:1px 4px; border-radius:3px;
+  }
+  .thumb-tile.unavailable::after {
+    content:'Unavailable'; position:absolute; top:6px; left:6px;
+    font-size:9px; color:rgba(255,255,255,.6); background:rgba(0,0,0,.55);
+    padding:2px 5px; border-radius:3px;
+  }
+  #gridEmpty { padding:40px 20px; text-align:center; color:var(--dim); font-size:14px; display:none; }
+
+  /* date jump */
+  #datePanel {
+    position:absolute; left:0; right:0; bottom:0; background:#161616;
+    border-top:1px solid var(--line); max-height:55vh; overflow-y:auto;
+    transform:translateY(100%); transition:transform .22s ease; z-index:16;
+    padding-bottom:max(16px,env(safe-area-inset-bottom));
+  }
+  #datePanel.open { transform:translateY(0); }
+  .date-panel-inner { padding:8px 12px; }
+  .date-year-hdr {
+    font-size:13px; font-weight:700; color:var(--accent);
+    padding:12px 4px 6px; position:sticky; top:0; background:#161616;
+  }
+  .date-month-row {
+    display:inline-flex; margin:3px; padding:7px 12px; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; font-size:13px;
+  }
+
+  /* ===================== FEED ===================== */
+  #feed { position:fixed; inset:0; background:#000; display:none; flex-direction:column; z-index:20; }
+  #feed.open { display:flex; }
+  .feed-top {
+    position:absolute; top:0; left:0; right:0; z-index:8;
+    display:flex; align-items:center; gap:10px;
+    padding:max(12px,env(safe-area-inset-top)) 12px 8px;
+    background:linear-gradient(to bottom,rgba(0,0,0,.55),transparent);
+  }
+  .feed-label {
+    flex:1; font-size:13px; font-weight:600; text-align:center;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);
+  }
+  #reel {
+    flex:1; overflow-y:scroll; -webkit-overflow-scrolling:touch;
+    scroll-snap-type:y mandatory; overscroll-behavior:contain; position:relative;
+    display:flex; flex-direction:column;
+  }
+  #reelInner { position:relative; width:100%; display:flex; flex-direction:column; }
+  .feed-spacer { width:100%; flex:0 0 auto; }
+  .slide {
+    position:relative; width:100%;
+    scroll-snap-align:start; scroll-snap-stop:always; overflow:hidden; flex:0 0 auto;
+  }
+  .slide-media { position:absolute; inset:0; background:#0b0b0b; }
+  /* Thumbnail sits ABOVE the iframe (z-index 2 vs 1) until the video is
+     confirmed playing. On devices where autoplay is blocked this means the
+     slide shows its thumbnail, never a black frame; once playing, .is-playing
+     fades the thumbnail out to reveal the video underneath. */
+  .slide-media img {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    opacity:0; transition:opacity .2s ease; z-index:2;
+  }
+  .slide-media img.loaded { opacity:1; }
+  .slide-media.is-playing img { opacity:0; pointer-events:none; }
+  .slide-media iframe { position:absolute; inset:0; width:100%; height:100%; border:0; z-index:1; }
+
+  /* scrims hiding TikTok's own chrome; taps can't reach it regardless */
+  .mask-bottom {
+    position:absolute; left:0; right:0; bottom:0; height:96px; z-index:3;
+    background:linear-gradient(to top,#000 0%,rgba(0,0,0,.9) 42%,rgba(0,0,0,0) 100%);
+    pointer-events:none;
+  }
+  .mask-rail {
+    position:absolute; right:0; bottom:96px; width:64px; height:250px; z-index:3;
+    background:linear-gradient(to left,rgba(0,0,0,.82) 0%,rgba(0,0,0,.5) 55%,rgba(0,0,0,0) 100%);
+    pointer-events:none;
+  }
+  /* full-surface tap interceptor: nothing reaches TikTok's player */
+  .tap-catcher { position:absolute; inset:0; z-index:4; background:transparent; touch-action:pan-y; }
+
+  .status-badge {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:5;
+    pointer-events:none; text-align:center; max-width:220px;
+    font-size:12px; color:rgba(255,255,255,.5);
+  }
+  .spinner {
+    width:26px; height:26px; border-radius:50%; margin:0 auto;
+    border:2px solid rgba(255,255,255,.22); border-top-color:rgba(255,255,255,.75);
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .slide-media.has-player .status-badge { display:none; }
+  .slide-media.paused .pause-icon,
+  .slide-media.needs-tap .tap-icon { display:flex; }
+  .pause-icon, .tap-icon {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:6;
+    width:74px; height:74px; border-radius:50%; background:rgba(0,0,0,.45);
+    display:none; align-items:center; justify-content:center;
+    font-size:30px; color:#fff; pointer-events:none;
+  }
+  .tap-icon {
+    padding-left:6px; width:88px; height:88px; font-size:36px;
+    background:rgba(0,0,0,.55); box-shadow:0 0 0 4px rgba(255,255,255,.14);
+  }
+  .slide-media.needs-tap::after {
+    content:'Tap to play'; position:absolute; left:0; right:0; z-index:6;
+    top:calc(50% + 62px); text-align:center; font-size:13px;
+    color:rgba(255,255,255,.9); text-shadow:0 1px 3px rgba(0,0,0,.7);
+    pointer-events:none;
+  }
+  .slide-media.ffwd::after {
+    content:'\26A1 2\00D7'; position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%); z-index:7; font-size:19px; font-weight:700;
+    color:#fff; background:rgba(0,0,0,.5); padding:6px 14px; border-radius:20px;
+    pointer-events:none;
+  }
+  .slide-overlay {
+    position:absolute; left:0; right:74px; bottom:max(26px,env(safe-area-inset-bottom));
+    padding:0 16px; z-index:6; pointer-events:none;
+    text-shadow:0 1px 4px rgba(0,0,0,.65);
+  }
+  .slide-title { font-size:14px; font-weight:600; }
+  .slide-cat { font-size:12px; color:rgba(255,255,255,.85); margin-top:2px; }
+  .rail {
+    position:absolute; right:10px; bottom:max(118px,calc(env(safe-area-inset-bottom) + 108px));
+    display:flex; flex-direction:column; align-items:center; gap:16px; z-index:7;
+  }
+  .rail-btn {
+    width:46px; height:46px; border-radius:50%; border:0;
+    background:rgba(0,0,0,.5); color:var(--text); font-size:18px;
+  }
+  .rail-btn.active { background:var(--accent); }
+
+  /* ===================== SHEETS / MODALS ===================== */
+  #sheetBackdrop { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; z-index:30; }
+  #sheetBackdrop.open { display:block; }
+  #sheet {
+    position:fixed; left:0; right:0; bottom:0; z-index:31; background:#1a1a1a;
+    border-radius:16px 16px 0 0; padding:16px 16px max(20px,env(safe-area-inset-bottom));
+    transform:translateY(100%); transition:transform .22s ease; max-height:70vh; overflow-y:auto;
+  }
+  #sheet.open { transform:translateY(0); }
+  .sheet-title { font-size:13px; color:var(--dim); margin-bottom:8px; }
+  .sheet-cat { padding:12px 4px; border-bottom:1px solid #262626; font-size:15px; }
+  .sheet-cat.selected { color:var(--accent); }
+  .sheet-action { font-weight:600; }
+  .sheet-action.destructive { color:#ff6b6b; }
+  .sheet-new { display:flex; gap:8px; margin-top:14px; }
+  .sheet-new input {
+    flex:1; background:#101010; border:1px solid #2a2a2a; border-radius:8px;
+    color:var(--text); padding:10px 12px; font-size:15px;
+  }
+  .sheet-new button { background:var(--accent); border:0; border-radius:8px; padding:0 16px; font-weight:600; }
+
+  .modal-backdrop {
+    position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:40;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .modal-card { background:#1c1c1c; border:1px solid var(--line); border-radius:14px; width:100%; max-width:320px; padding:18px; }
+  .modal-title { font-size:16px; font-weight:600; margin-bottom:6px; }
+  .modal-message { font-size:13px; color:var(--dim); margin-bottom:14px; }
+  .modal-input {
+    width:100%; background:#101010; border:1px solid #2a2a2a; border-radius:8px;
+    color:var(--text); padding:10px 12px; font-size:15px; margin-bottom:6px;
+  }
+  .modal-error { font-size:12px; color:#ff6b6b; min-height:15px; }
+  .modal-actions { display:flex; gap:8px; margin-top:10px; }
+  .modal-btn { flex:1; border:0; border-radius:8px; padding:11px 0; font-size:14px; font-weight:600; background:#2a2a2a; }
+  .modal-btn.primary { background:var(--accent); }
+  .modal-btn.destructive { background:#4a2020; color:#ff8f8f; }
+
+  .action-sheet {
+    position:fixed; left:16px; right:16px; bottom:max(20px,env(safe-area-inset-bottom));
+    z-index:41; background:#1c1c1c; border-radius:14px; overflow:hidden;
+  }
+  .action-sheet-title { font-size:12px; color:var(--dim); text-align:center; padding:12px; border-bottom:1px solid #262626; }
+  .action-row { padding:14px; text-align:center; font-size:16px; border-bottom:1px solid #262626; }
+  .action-row.destructive { color:#ff6b6b; }
+  .action-row.cancel { font-weight:600; border-bottom:0; }
+
+  #toast {
+    position:fixed; top:max(16px,env(safe-area-inset-top)); left:50%;
+    transform:translateX(-50%); background:#222; padding:8px 16px; border-radius:20px;
+    font-size:13px; z-index:50; box-shadow:0 2px 10px rgba(0,0,0,.4); display:none;
+  }
+  #toast.show { display:block; }
+
+  #debugLog {
+    position:absolute; left:0; right:0; bottom:0; max-height:38vh; overflow-y:auto;
+    margin:0; padding:8px 10px; background:rgba(0,0,0,.82); color:#5f5;
+    font-family:ui-monospace,monospace; font-size:10px; line-height:1.35;
+    z-index:40; white-space:pre-wrap; pointer-events:none; display:none;
+  }
+  #debugLog.show { display:block; }
+</style>
+</head>
+<body>
+
+<div id="home">
+  <div id="allTile"><div class="name">All Videos</div><div class="count" id="allCount">Loading…</div></div>
+  <div id="catGrid"></div>
+</div>
+
+<div id="gridView">
+  <div class="grid-top">
+    <button class="icon-btn" id="gridBack">&lsaquo;</button>
+    <div class="grid-title" id="gridTitle">All Videos</div>
+    <button class="icon-btn" id="dateJumpBtn" style="display:none">&#128197;</button>
+  </div>
+  <div id="gridScroll"><div id="thumbGrid"></div><div id="gridEmpty">Nothing here yet.</div></div>
+  <div id="datePanel"><div class="date-panel-inner" id="datePanelInner"></div></div>
+</div>
+
+<div id="feed">
+  <div class="feed-top">
+    <button class="icon-btn" id="feedBack">&lsaquo;</button>
+    <div class="feed-label" id="feedLabel">All Videos</div>
+    <button class="icon-btn" id="debugToggle">&#128027;</button>
+  </div>
+  <div id="reel"><div id="reelInner"></div></div>
+  <pre id="debugLog"></pre>
+</div>
+
+<div id="sheetBackdrop"></div>
+<div id="sheet">
+  <div class="sheet-title">Move to category</div>
+  <div id="sheetCats"></div>
+  <div class="sheet-new"><input id="newCatInput" placeholder="New category"><button id="newCatBtn">Add</button></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ============================================================
+   DATA
+   ============================================================ */
+const DELETED = 'Deleted';
+const DATA_VERSION = 5;
+
+let state = JSON.parse(localStorage.getItem('gallery-state') || 'null');
+
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function formatDate(iso) {
+  const d = new Date(String(iso).replace(' ','T'));
+  return isNaN(d) ? '' : d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+}
+function itemLabel(it) { return it.date ? formatDate(it.date) : ''; }
+function itemUrl(it) { return 'https://www.tiktok.com/@i/video/' + it.id; }
+function liveItems() { return state.items.filter(i => i.category !== DELETED); }
+
+let saveTimer = null;
+function save() { if (!saveTimer) saveTimer = setTimeout(flushSave, 400); }
+function flushSave() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try { localStorage.setItem('gallery-state', JSON.stringify(state)); }
+  catch (e) {
+    // The thumbnail cache is rebuildable; drop it to make room for real data.
+    try { thumbCache = {}; localStorage.removeItem('thumb-cache');
+          localStorage.setItem('gallery-state', JSON.stringify(state)); }
+    catch (e2) { toast('Storage full — change may not be saved'); }
+  }
+}
+window.addEventListener('pagehide', flushSave);
+window.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); });
+
+async function boot() {
+  const fresh = !state || state.version !== DATA_VERSION || !state.hydrated;
+  if (!fresh) { handleIncomingAdd(); renderHome(); return; }
+  document.getElementById('allCount').textContent = 'Loading…';
+  try {
+    const raw = await (await fetch('favorites.json')).json();
+    const prev = {};
+    if (state && state.items) state.items.forEach(i => { prev[i.id] = i; });
+    const purged = new Set((state && state.purged) || []);
+    const cats = ((state && state.categories) || []).slice();
+    const items = raw.filter(e => !purged.has(e.id)).map(e => ({
+      id: e.id,
+      date: e.date,
+      category: (prev[e.id] && prev[e.id].category) || 'Uncategorized'
+    }));
+    if (!cats.includes('Uncategorized')) cats.unshift('Uncategorized');
+    if (items.some(i => i.category === DELETED) && !cats.includes(DELETED)) cats.push(DELETED);
+    state = { categories: cats, items, hydrated: true, version: DATA_VERSION, purged: [...purged] };
+    flushSave();
+  } catch (e) {
+    console.error('favorites.json failed to load', e);
+    state = state || { categories:['Uncategorized'], items:[], hydrated:false, version:DATA_VERSION, purged:[] };
+  }
+  handleIncomingAdd();
+  renderHome();
+}
+
+function handleIncomingAdd() {
+  const p = new URLSearchParams(window.location.search).get('add');
+  if (!p) return;
+  const m = String(p).match(/\/video\/(\d+)/);
+  const id = m ? m[1] : null;
+  if (!id) { toast('Could not read that link'); return; }
+  if (state.items.some(i => i.id === id)) { toast('Already saved'); }
+  else {
+    state.items.unshift({ id, date: new Date().toISOString().replace('T',' ').slice(0,19), category:'Uncategorized' });
+    if (!state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+    flushSave();
+    toast('Added to Uncategorized');
+  }
+  window.history.replaceState({}, '', window.location.pathname);
+}
+
+/* ============================================================
+   THUMBNAILS
+   A failed fetch must NEVER permanently brand a video unavailable:
+   TikTok rate-limits, and its thumbnail URLs expire between sessions.
+   Only an explicit "this video is gone" response is treated as final,
+   and even that is re-checked after a day.
+   ============================================================ */
+const THUMB_TTL   = 6 * 60 * 60 * 1000;   // refresh a URL after 6h (they expire)
+const GONE_TTL    = 24 * 60 * 60 * 1000;  // re-check "gone" verdicts after a day
+const MAX_INFLIGHT = 3;                   // gentle: high concurrency invites throttling
+
+let thumbCache = {};
+try { thumbCache = JSON.parse(localStorage.getItem('thumb-cache') || '{}'); } catch (e) { thumbCache = {}; }
+
+let cacheDirty = false;
+setInterval(() => {
+  if (!cacheDirty) return;
+  cacheDirty = false;
+  try { localStorage.setItem('thumb-cache', JSON.stringify(thumbCache)); } catch (e) {}
+}, 3000);
+
+const pending = new Map();      // id -> {id, priority(), cbs:[]}
+const inflight = new Map();     // id -> AbortController
+let activeFetches = 0;
+let failStreak = 0;
+let backoffUntil = 0;
+
+function cachedThumb(id) {
+  const e = thumbCache[id];
+  if (!e) return null;
+  if (e.gone) return (Date.now() - e.t < GONE_TTL) ? { gone: true } : null;
+  if (Date.now() - e.t > THUMB_TTL) return null;      // stale URL, refetch
+  return { url: e.u };
+}
+
+function requestThumb(id, cb, priority) {
+  const hit = cachedThumb(id);
+  if (hit) { cb(hit); return; }
+  const ex = pending.get(id);
+  if (ex) { ex.cbs.push(cb); return; }
+  pending.set(id, { id, cbs: [cb], priority: priority || (() => 0) });
+  schedulePump();
+}
+
+function dropThumbRequest(id) {
+  const p = pending.get(id);
+  if (p) pending.delete(id);
+  const c = inflight.get(id);
+  if (c) { c.abort(); inflight.delete(id); }
+}
+
+let pumpScheduled = false;
+function schedulePump() {
+  if (pumpScheduled) return;
+  pumpScheduled = true;
+  // Deferred so an entire batch of newly visible tiles is queued before any
+  // fetch starts — otherwise arrival order wins and priority never applies.
+  setTimeout(() => { pumpScheduled = false; pump(); }, 0);
+}
+
+function pump() {
+  if (Date.now() < backoffUntil) {
+    setTimeout(schedulePump, backoffUntil - Date.now() + 20);
+    return;
+  }
+  while (activeFetches < MAX_INFLIGHT && pending.size) {
+    let best = null, bestP = Infinity;
+    pending.forEach(p => { const v = p.priority(); if (v < bestP) { bestP = v; best = p; } });
+    if (!best) break;
+    pending.delete(best.id);
+    startFetch(best);
+  }
+}
+
+function startFetch(req) {
+  activeFetches++;
+  const ctrl = new AbortController();
+  inflight.set(req.id, ctrl);
+  const url = 'https://www.tiktok.com/oembed?url=' +
+              encodeURIComponent('https://www.tiktok.com/@i/video/' + req.id);
+
+  fetch(url, { signal: ctrl.signal })
+    .then(async res => {
+      let data = null;
+      try { data = await res.json(); } catch (e) {}
+      if (data && data.thumbnail_url) {
+        thumbCache[req.id] = { u: data.thumbnail_url, t: Date.now() };
+        cacheDirty = true; failStreak = 0;
+        return { url: data.thumbnail_url };
+      }
+      if (res.status === 400 || res.status === 404) {
+        // An explicit "no such video" — the only case we treat as unavailable.
+        thumbCache[req.id] = { gone: 1, t: Date.now() };
+        cacheDirty = true; failStreak = 0;
+        return { gone: true };
+      }
+      throw new Error('transient ' + res.status);
+    })
+    .catch(err => {
+      if (err && err.name === 'AbortError') return null;
+      // Transient: never cached, never shown as unavailable. Back off so we
+      // stop hammering a rate limiter and making things worse.
+      failStreak++;
+      backoffUntil = Date.now() + Math.min(30000, 400 * Math.pow(2, Math.min(failStreak, 6)));
+      return { retry: true };
+    })
+    .then(result => {
+      if (result) req.cbs.forEach(cb => { try { cb(result); } catch (e) {} });
+    })
+    .finally(() => {
+      inflight.delete(req.id);
+      activeFetches--;
+      schedulePump();
+    });
+}
+
+// Binds a thumbnail to an <img>, surviving the two ways TikTok fails us:
+//  - a transient failure (throttling, flaky network) -> retry with backoff,
+//    because a tile that stays on screen would otherwise never load again;
+//  - an expired cached URL -> the image fails to decode, so refetch it once.
+function bindThumb(imgEl, id, priority, onGone) {
+  let urlRetried = false, attempts = 0;
+  const alive = () => imgEl.parentNode !== null;
+
+  const apply = (r) => {
+    if (!alive()) return;
+    if (r.gone) { if (onGone) onGone(); return; }
+    if (r.retry) {
+      // Try again while this tile is still on screen, backing off each time.
+      if (++attempts > 6) return;
+      setTimeout(() => { if (alive()) requestThumb(id, apply, priority); },
+                 Math.min(20000, 700 * Math.pow(2, attempts)));
+      return;
+    }
+    imgEl.onerror = () => {
+      if (urlRetried) return;
+      urlRetried = true;
+      delete thumbCache[id]; cacheDirty = true;   // the signed URL expired
+      requestThumb(id, apply, priority);
+    };
+    imgEl.onload = () => imgEl.classList.add('loaded');
+    imgEl.src = r.url;
+  };
+  requestThumb(id, apply, priority);
+}
+
+/* ============================================================
+   VIRTUAL LIST
+   Only the visible window exists in the DOM, so cost is constant
+   whether the library holds 30 videos or 6,070.
+   ============================================================ */
+function VirtualList(opts) {
+  const { scroller, content, perRow, overscan } = opts;
+  const self = {
+    items: [], rowH: 0, perRow: perRow || 1, overscan: overscan == null ? 2 : overscan,
+    live: new Map(), range: [-1,-1], onRange: null
+  };
+  self.rows = () => Math.ceil(self.items.length / self.perRow);
+  self.totalHeight = () => self.rows() * self.rowH;
+
+  self.setItems = (items, rowH) => {
+    self.items = items;
+    if (rowH) self.rowH = rowH;
+    self.live.forEach(el => el.remove());
+    self.live.clear();
+    self.range = [-1,-1];
+    content.style.height = self.totalHeight() + 'px';
+    self.update(true);
+  };
+
+  self.indexAtScroll = () => Math.round(scroller.scrollTop / Math.max(1, self.rowH)) * self.perRow;
+
+  self.update = (force) => {
+    if (!self.rowH) return;
+    const first = Math.max(0, Math.floor(scroller.scrollTop / self.rowH) - self.overscan);
+    const last  = Math.min(self.rows() - 1,
+                  Math.ceil((scroller.scrollTop + scroller.clientHeight) / self.rowH) + self.overscan);
+    if (!force && first === self.range[0] && last === self.range[1]) return;
+    self.range = [first, last];
+
+    const need = new Set();
+    for (let r = first; r <= last; r++) {
+      for (let c = 0; c < self.perRow; c++) {
+        const i = r * self.perRow + c;
+        if (i < self.items.length) need.add(i);
+      }
+    }
+    self.live.forEach((el, i) => {
+      if (!need.has(i)) { opts.recycle && opts.recycle(el, i); el.remove(); self.live.delete(i); }
+    });
+    need.forEach(i => {
+      if (self.live.has(i)) return;
+      const el = opts.render(self.items[i], i);
+      const r = Math.floor(i / self.perRow), c = i % self.perRow;
+      el.style.top = (r * self.rowH) + 'px';
+      if (self.perRow > 1) {
+        el.style.left = (c * (100 / self.perRow)) + '%';
+        el.style.width = (100 / self.perRow) + '%';
+      }
+      el.style.height = (opts.itemHeight || self.rowH) + 'px';
+      content.appendChild(el);
+      self.live.set(i, el);
+    });
+    if (self.onRange) self.onRange();
+  };
+
+  self.scrollToIndex = (i) => {
+    scroller.scrollTop = Math.floor(i / self.perRow) * self.rowH;
+    self.update(true);
+  };
+  self.get = (i) => self.live.get(i);
+  return self;
+}
+
+/* ============================================================
+   HOME
+   ============================================================ */
+function renderHome() {
+  document.getElementById('allCount').textContent = liveItems().length + ' saved';
+  const grid = document.getElementById('catGrid');
+  grid.innerHTML = '';
+  const ordered = state.categories.filter(c => c !== DELETED);
+  if (state.categories.includes(DELETED)) ordered.push(DELETED);
+  ordered.forEach(cat => {
+    const n = state.items.filter(i => i.category === cat).length;
+    const t = document.createElement('div');
+    t.className = 'cat-tile' + (cat === DELETED ? ' trash' : '');
+    t.innerHTML = '<button class="cat-manage">&#8942;</button>' +
+                  '<div class="name">' + esc(cat) + '</div>' +
+                  '<div class="count">' + n + ' saved</div>';
+    t.onclick = () => openGrid(state.items.filter(i => i.category === cat), cat);
+    t.querySelector('.cat-manage').onclick = (e) => { e.stopPropagation(); manageCategory(cat); };
+    grid.appendChild(t);
+  });
+  const add = document.createElement('div');
+  add.className = 'cat-tile add';
+  add.textContent = '+ New Category';
+  add.onclick = promptNewCategory;
+  grid.appendChild(add);
+}
+document.getElementById('allTile').onclick = () => openGrid(liveItems(), 'All Videos');
+
+function promptNewCategory() {
+  inputModal({ title:'New category', placeholder:'Category name', confirmLabel:'Add',
+    onSubmit: (name) => {
+      if (name === DELETED) return 'That name is reserved.';
+      if (state.categories.includes(name)) return 'That category already exists.';
+      state.categories.push(name); save(); renderHome();
+    }});
+}
+
+function manageCategory(cat) {
+  if (cat === DELETED) {
+    actionSheet({ title: DELETED, rows:[{ label:'Empty Deleted', destructive:true, onClick: emptyDeleted }] });
+    return;
+  }
+  actionSheet({ title: cat, rows: [
+    { label:'Rename', onClick: () => renameCategory(cat) },
+    { label:'Delete category', destructive:true, onClick: () => confirmDeleteCategory(cat) }
+  ]});
+}
+function renameCategory(cat) {
+  inputModal({ title:'Rename "' + cat + '"', placeholder:'New name', initialValue:cat, confirmLabel:'Save',
+    onSubmit: (name) => {
+      if (name === DELETED) return 'That name is reserved.';
+      if (name !== cat && state.categories.includes(name)) return 'That category already exists.';
+      state.categories = state.categories.map(c => c === cat ? name : c);
+      state.items.forEach(i => { if (i.category === cat) i.category = name; });
+      save(); renderHome();
+    }});
+}
+function confirmDeleteCategory(cat) {
+  const n = state.items.filter(i => i.category === cat).length;
+  confirmModal({
+    title:'Delete "' + cat + '"?',
+    message: n ? n + ' video(s) move to Uncategorized. The videos are not deleted.' : 'This category is empty.',
+    confirmLabel:'Delete', destructive:true,
+    onConfirm: () => {
+      state.categories = state.categories.filter(c => c !== cat);
+      state.items.forEach(i => { if (i.category === cat) i.category = 'Uncategorized'; });
+      if (n && !state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+      save(); renderHome();
+    }});
+}
+
+/* ============================================================
+   GRID
+   ============================================================ */
+const gridScroll = document.getElementById('gridScroll');
+const thumbGrid  = document.getElementById('thumbGrid');
+let gridList = [], gridLabel = '', gridScrollMemory = {};
+
+const gridVL = VirtualList({
+  scroller: gridScroll, content: thumbGrid, perRow: 3, overscan: 3,
+  render: (item, i) => {
+    const t = document.createElement('div');
+    t.className = 'thumb-tile';
+    t.dataset.id = item.id;
+    t.innerHTML = '<img alt="" decoding="async"><div class="thumb-date">' + esc(itemLabel(item)) + '</div>';
+    t.onclick = () => openFeed(gridList, gridLabel, i);
+    bindThumb(t.querySelector('img'), item.id,
+      () => Math.abs(Math.floor(i / 3) * gridVL.rowH - gridScroll.scrollTop),
+      () => t.classList.add('unavailable'));
+    return t;
+  },
+  recycle: (el) => { dropThumbRequest(el.dataset.id); }
+});
+
+function gridRowHeight() {
+  const w = gridScroll.clientWidth || window.innerWidth || 390;
+  return Math.round((w / 3) * (14 / 9));
+}
+
+function openGrid(list, label) {
+  gridList = list; gridLabel = label;
+  document.getElementById('gridTitle').textContent = label;
+  document.getElementById('gridView').classList.add('open');
+  document.getElementById('gridEmpty').style.display = list.length ? 'none' : 'block';
+  setupDateJump(list, label);
+  gridVL.setItems(list, gridRowHeight());
+  const saved = gridScrollMemory[label] || 0;
+  gridScroll.scrollTop = saved;
+  gridVL.update(true);
+}
+
+gridScroll.addEventListener('scroll', () => {
+  gridScrollMemory[gridLabel] = gridScroll.scrollTop;
+  gridVL.update();
+}, { passive:true });
+
+document.getElementById('gridBack').onclick = () => {
+  document.getElementById('gridView').classList.remove('open');
+  document.getElementById('datePanel').classList.remove('open');
+  gridVL.setItems([], gridVL.rowH);
+  renderHome();
+};
+
+/* ---- date jump ---- */
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function setupDateJump(list, label) {
+  const btn = document.getElementById('dateJumpBtn');
+  const show = (label === 'All Videos' || label === 'Uncategorized') && list.length > 0;
+  btn.style.display = show ? '' : 'none';
+  document.getElementById('datePanel').classList.remove('open');
+  if (!show) return;
+  const index = [];
+  let key = '';
+  list.forEach((it, i) => {
+    if (!it.date) return;
+    const d = new Date(String(it.date).replace(' ','T'));
+    if (isNaN(d)) return;
+    const k = d.getFullYear() + '-' + d.getMonth();
+    if (k !== key) { index.push({ y:d.getFullYear(), m:d.getMonth(), i }); key = k; }
+  });
+  const inner = document.getElementById('datePanelInner');
+  inner.innerHTML = '';
+  let year = null;
+  index.forEach(e => {
+    if (e.y !== year) {
+      year = e.y;
+      const h = document.createElement('div');
+      h.className = 'date-year-hdr'; h.textContent = year;
+      inner.appendChild(h);
+    }
+    const c = document.createElement('span');
+    c.className = 'date-month-row'; c.textContent = MONTHS[e.m];
+    c.onclick = () => {
+      document.getElementById('datePanel').classList.remove('open');
+      gridVL.scrollToIndex(e.i);   // O(1) with virtualization — no mass rendering
+    };
+    inner.appendChild(c);
+  });
+}
+document.getElementById('dateJumpBtn').onclick = () =>
+  document.getElementById('datePanel').classList.toggle('open');
+
+/* ============================================================
+   FEED
+   ============================================================ */
+/* ============================================================
+   FEED — a windowed snap carousel.
+   Scroll-snap needs real, in-flow elements to snap to, which a
+   virtualized absolute-positioned list cannot provide (that was the
+   "rapidly scrolling dates / never settles" bug). So the feed keeps a
+   small window of REAL slides between two spacer divs whose heights stand
+   in for the off-screen videos. The scrollbar and snapping behave as if all
+   videos were present, but only WINDOW*2+1 slides ever exist in the DOM.
+   ============================================================ */
+const reel = document.getElementById('reel');
+const reelInner = document.getElementById('reelInner');
+let feedList = [], feedLabel = '';
+let activeIndex = -1, committedIndex = -1, windowBase = 0;
+let commitTimer = null;
+let adjustingScroll = false;   // true while WE are setting scrollTop programmatically
+const COMMIT_IDLE = 130;
+const FEED_WINDOW = 2;          // slides kept on each side of the active one
+let desiredMuted = true;
+
+const topSpacer = document.createElement('div');
+const botSpacer = document.createElement('div');
+topSpacer.className = 'feed-spacer';
+botSpacer.className = 'feed-spacer';
+let liveSlides = new Map();     // index -> slide element
+
+function slideHeight() { return reel.clientHeight || window.innerHeight || 700; }
+
+function openFeed(list, label, startIndex) {
+  feedList = list; feedLabel = label;
+  document.getElementById('feedLabel').textContent = label;
+  document.getElementById('feed').classList.add('open');
+  activeIndex = committedIndex = -1;
+  reelInner.innerHTML = '';
+  reelInner.appendChild(topSpacer);
+  reelInner.appendChild(botSpacer);
+  liveSlides.clear();
+  const start = Math.max(0, Math.min(startIndex || 0, list.length - 1));
+  renderWindow(start, true);
+  activeIndex = start;
+  scheduleCommit(0);
+}
+
+document.getElementById('feedBack').onclick = () => {
+  if (commitTimer) { clearTimeout(commitTimer); commitTimer = null; }
+  liveSlides.forEach(el => destroyPlayer(el));
+  liveSlides.clear();
+  reelInner.innerHTML = '';
+  document.getElementById('feed').classList.remove('open');
+  activeIndex = committedIndex = -1;
+  openGrid(gridList, gridLabel);
+};
+
+// Build/replace the window of real slides centred on `center`, and set spacer
+// heights so scroll position and snapping match the full list.
+function renderWindow(center, jump) {
+  const h = slideHeight();
+  const first = Math.max(0, center - FEED_WINDOW);
+  const last  = Math.min(feedList.length - 1, center + FEED_WINDOW);
+
+  // Measure where the anchor slide sits BEFORE we change anything, so we can
+  // keep it visually fixed afterwards. offsetTop is real layout in the browser.
+  const anchor = liveSlides.get(center);
+  const anchorBefore = (anchor && !jump) ? anchor.offsetTop : null;
+
+  liveSlides.forEach((el, i) => {
+    if (i < first || i > last) { destroyPlayer(el); dropThumbRequest(el.dataset.id); el.remove(); liveSlides.delete(i); }
+  });
+  for (let i = first; i <= last; i++) {
+    if (liveSlides.has(i)) continue;
+    const el = buildSlide(feedList[i], i);
+    // insert in order between the spacers
+    let next = botSpacer;
+    for (let j = i + 1; j <= last; j++) { if (liveSlides.has(j)) { next = liveSlides.get(j); break; } }
+    reelInner.insertBefore(el, next);
+    liveSlides.set(i, el);
+  }
+
+  topSpacer.style.height = (first * h) + 'px';
+  botSpacer.style.height = (Math.max(0, feedList.length - 1 - last) * h) + 'px';
+  windowBase = first;
+
+  if (jump) {
+    // Explicit jump (open / resize / delete): position at the centered slide.
+    adjustingScroll = true;
+    reel.style.scrollSnapType = 'none';
+    reel.scrollTop = center * h;
+    requestAnimationFrame(() => { reel.style.scrollSnapType = ''; adjustingScroll = false; });
+  } else if (anchorBefore != null && anchor && anchor.parentNode) {
+    // CRITICAL: adding/removing slides and resizing the spacers moves the anchor
+    // slide within the scroll container. The NET shift is (spacer growth) minus
+    // (height of real slides removed above) — measuring offsetTop directly
+    // captures both. Compensate by exactly that so the video you're watching
+    // does not move on screen. Without this, the shift fires another scroll
+    // event which triggers another relayout: the runaway "racing through videos"
+    // loop. adjustingScroll marks the write as ours so the handler ignores it.
+    const shift = anchor.offsetTop - anchorBefore;
+    if (shift !== 0) {
+      adjustingScroll = true;
+      reel.scrollTop += shift;
+      requestAnimationFrame(() => { adjustingScroll = false; });
+    }
+  }
+}
+
+// Rebuild the window when the active slide nears its edge — done on scroll-idle
+// so we never touch the DOM mid-swipe.
+function maybeRelayout() {
+  const center = activeIndex;
+  const nearTop = center - windowBase < FEED_WINDOW;
+  const nearBot = (windowBase + liveSlides.size - 1) - center < FEED_WINDOW;
+  if (nearTop || nearBot) renderWindow(center, false);
+}
+
+reel.addEventListener('scroll', () => {
+  if (adjustingScroll) return;   // ignore scroll events we caused ourselves
+  const idx = Math.round(reel.scrollTop / Math.max(1, slideHeight()));
+  if (idx !== activeIndex && idx >= 0 && idx < feedList.length) {
+    activeIndex = idx;
+    const prev = liveSlides.get(committedIndex);
+    if (prev) pauseSlide(prev);          // one cheap message, no DOM work
+    const cur = liveSlides.get(idx);
+    if (cur) { const it = feedList[idx]; if (it) cur.querySelector('.slide-cat').textContent = it.category; }
+  }
+  scheduleCommit(COMMIT_IDLE);
+}, { passive:true });
+
+reel.addEventListener('touchend', () => scheduleCommit(60), { passive:true });
+
+function scheduleCommit(delay) {
+  if (commitTimer) clearTimeout(commitTimer);
+  commitTimer = setTimeout(commit, delay);
+}
+
+// All player + relayout work happens here — only once the feed has gone still.
+function commit() {
+  commitTimer = null;
+  const idx = activeIndex;
+  if (idx < 0 || idx >= feedList.length) return;
+  maybeRelayout();
+  const el = liveSlides.get(idx);
+  if (!el) return;
+  committedIndex = idx;
+  liveSlides.forEach((s, i) => { if (i !== idx) destroyPlayer(s); });
+  createPlayer(el);
+  ensurePlaying(el);
+  dlog('commit ' + idx);
+  clearTimeout(commit._pre);
+  commit._pre = setTimeout(() => {
+    if (committedIndex !== idx) return;
+    const nxt = liveSlides.get(idx + 1);
+    if (nxt && !nxt.querySelector('iframe')) { createPlayer(nxt); pauseSlide(nxt); }
+  }, 1200);
+}
+
+function buildSlide(item, i) {
+  const el = document.createElement('div');
+  el.className = 'slide';
+  el.dataset.id = item.id;
+  el.style.height = slideHeight() + 'px';
+  el.innerHTML =
+    '<div class="slide-media">' +
+      '<img alt="" decoding="async">' +
+      '<div class="status-badge"><div class="spinner"></div></div>' +
+      '<div class="mask-bottom"></div><div class="mask-rail"></div>' +
+      '<div class="tap-catcher"></div>' +
+      '<div class="pause-icon">&#10074;&#10074;</div>' +
+      '<div class="tap-icon">&#9654;</div>' +
+    '</div>' +
+    '<div class="slide-overlay">' +
+      '<div class="slide-title">' + esc(itemLabel(item)) + '</div>' +
+      '<div class="slide-cat">' + esc(item.category) + '</div>' +
+    '</div>' +
+    '<div class="rail">' +
+      '<button class="rail-btn mute-btn" aria-label="Sound">&#128263;</button>' +
+      '<button class="rail-btn share-btn" aria-label="Share">&#10148;</button>' +
+      '<button class="rail-btn tag-btn2" aria-label="Organise">&#127991;</button>' +
+    '</div>';
+
+  const media = el.querySelector('.slide-media');
+  bindThumb(el.querySelector('img'), item.id,
+    () => Math.abs(i - activeIndex),
+    () => { el.classList.add('unavailable-slide');
+            media.querySelector('.status-badge').textContent = 'Video unavailable'; });
+
+  el.querySelector('.tag-btn2').onclick = (e) => { e.stopPropagation(); openCategorySheet(item); };
+  el.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
+  const mb = el.querySelector('.mute-btn');
+  syncMuteBtn(mb);
+  mb.onclick = (e) => {
+    e.stopPropagation();
+    desiredMuted = !desiredMuted;
+    const cur = liveSlides.get(committedIndex);
+    if (cur) applySound(cur);
+    document.querySelectorAll('.mute-btn').forEach(syncMuteBtn);
+  };
+  wireGestures(el, media);
+  return el;
+}
+
+function syncMuteBtn(b) {
+  b.innerHTML = desiredMuted ? '&#128263;' : '&#128266;';
+  b.classList.toggle('active', !desiredMuted);
+}
+
+/* ---- gestures: tap = play/pause, hold = fast-forward ---- */
+function wireGestures(el, media) {
+  const tc = el.querySelector('.tap-catcher');
+  let holdT = null, ffT = null, sx = 0, sy = 0, t0 = 0, moved = false, holding = false;
+
+  const stopFF = () => { if (ffT) { clearInterval(ffT); ffT = null; } media.classList.remove('ffwd'); };
+
+  tc.addEventListener('pointerdown', (e) => {
+    sx = e.clientX; sy = e.clientY; t0 = Date.now(); moved = holding = false;
+    clearTimeout(holdT);
+    holdT = setTimeout(() => {
+      if (moved) return;
+      holding = true; media.classList.add('ffwd');
+      ffT = setInterval(() => {
+        const f = el.querySelector('iframe');
+        if (!f) return;
+        el._t = (el._t || 0) + 0.5;
+        post(f, 'seekTo', el._t);
+      }, 250);
+    }, 350);
+  });
+  tc.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) {
+      moved = true; clearTimeout(holdT);
+      if (holding) { stopFF(); holding = false; }
+    }
+  });
+  tc.addEventListener('pointerup', () => {
+    clearTimeout(holdT);
+    if (holding) { stopFF(); holding = false; return; }
+    if (moved || Date.now() - t0 > 500) return;
+    onTap(el, media);
+  });
+  tc.addEventListener('pointercancel', () => { clearTimeout(holdT); stopFF(); holding = false; moved = true; });
+}
+
+function onTap(el, media) {
+  const f = el.querySelector('iframe');
+  if (!f) { createPlayer(el); ensurePlaying(el); return; }
+  if (media.classList.contains('needs-tap')) {
+    media.classList.remove('needs-tap');
+    el._autoplayFails = 0;
+    delete el.dataset.userPaused;
+    applySound(el); post(f, 'play');
+    return;
+  }
+  if (el._state === 1) {
+    el.dataset.userPaused = 'true';
+    pauseSlide(el);
+    media.classList.add('paused');
+  } else {
+    delete el.dataset.userPaused;
+    applySound(el);
+    post(f, 'play');
+    media.classList.remove('paused');
+  }
+}
+
+/* ============================================================
+   PLAYER
+   ============================================================ */
+function playerSrc(id) {
+  const p = new URLSearchParams({
+    // muted + autoplay + playsinline is the combination iOS requires for inline
+    // muted autoplay. Missing playsinline is why the player wanted fullscreen and
+    // silently failed to start on iPhone.
+    rel:'0', autoplay:'1', loop:'1', muted:'1', playsinline:'1',
+    controls:'0', progress_bar:'0', play_button:'0', volume_control:'0',
+    fullscreen_button:'0', timestamp:'0', music_info:'0', description:'0',
+    native_context_menu:'0', closed_caption:'0'
+  });
+  return 'https://www.tiktok.com/player/v1/' + id + '?' + p.toString();
+}
+function post(f, type, value) {
+  if (f && f.contentWindow) f.contentWindow.postMessage({ 'x-tiktok-player':true, type, value }, '*');
+}
+
+function createPlayer(el) {
+  if (!el || el.querySelector('iframe')) return null;
+  if (el.classList.contains('unavailable-slide')) return null;
+  bindPlayerMessages();
+  const f = document.createElement('iframe');
+  f.src = playerSrc(el.dataset.id);
+  f.allow = 'autoplay; fullscreen';
+  f.setAttribute('playsinline', '');       // iOS: play inline, don't demand fullscreen
+  f.setAttribute('webkit-playsinline', ''); // older iOS attribute name
+  f.setAttribute('scrolling','no');
+  el.querySelector('.slide-media').appendChild(f);
+  el.querySelector('.slide-media').classList.add('has-player');
+  return f;
+}
+function destroyPlayer(el) {
+  if (!el) return;
+  if (el._playTimer) { clearInterval(el._playTimer); el._playTimer = null; }
+  if (el._soundTimers) { el._soundTimers.forEach(clearTimeout); el._soundTimers = null; }
+  const f = el.querySelector('iframe');
+  if (!f) return;
+  f.remove();
+  const m = el.querySelector('.slide-media');
+  if (m) m.classList.remove('has-player','paused','needs-tap','is-playing');
+  delete el.dataset.userPaused;
+  el._state = undefined;
+}
+// Pause is a command we issue, so reflect it immediately rather than waiting
+// for the player's report — otherwise tap-to-toggle can read a stale state.
+function pauseSlide(el) {
+  if (!el) return;
+  const f = el.querySelector('iframe');
+  if (f) post(f, 'pause');
+  if (el._state === 1) el._state = 2;
+  if (el._playTimer) { clearInterval(el._playTimer); el._playTimer = null; }
+}
+
+// With muted + autoplay + playsinline in the embed URL, iOS plays the video
+// inline on its own — that is the primary, reliable path. This function just
+// nudges play() a few times as backup (the player can be slow to accept the
+// URL autoplay), and only if it still hasn't started does it surface a
+// tap-to-play prompt. The thumbnail stays visible underneath until playback is
+// confirmed, so there is never a black frame.
+function ensurePlaying(el) {
+  if (!el) return;
+  delete el.dataset.userPaused;
+  const media = el.querySelector('.slide-media');
+  if (media) { media.classList.remove('paused'); media.classList.remove('needs-tap'); }
+  if (el._playTimer) clearInterval(el._playTimer);
+
+  let n = 0;
+  const ATTEMPTS = 4;               // ~4 × 300ms ≈ 1.2s to let autoplay happen
+  const tryPlay = () => {
+    if (liveSlides.get(committedIndex) !== el || el.dataset.userPaused === 'true') {
+      clearInterval(el._playTimer); el._playTimer = null; return;
+    }
+    if (el._state === 1) {          // success — autoplay is working here
+      clearInterval(el._playTimer); el._playTimer = null; return;
+    }
+    const f = el.querySelector('iframe');
+    if (f) { post(f, desiredMuted ? 'mute' : 'unMute'); post(f, 'play'); }
+    if (++n >= ATTEMPTS) {
+      clearInterval(el._playTimer); el._playTimer = null;
+      // Autoplay didn't take. Offer a tap instead of retrying forever.
+      if (el._state !== 1 && media) media.classList.add('needs-tap');
+    }
+  };
+  tryPlay();
+  el._playTimer = setInterval(tryPlay, 300);
+}
+
+// Sound follows the session setting. iOS permits unmuting a video that is
+// already playing; on a paused one it is a no-op until the next play(). Nudged
+// twice because the player can re-assert its own mute shortly after load.
+function applySound(el) {
+  const send = () => {
+    const f = el.querySelector('iframe');
+    if (!f || liveSlides.get(committedIndex) !== el) return;
+    post(f, desiredMuted ? 'mute' : 'unMute');
+  };
+  send();
+  if (el._soundTimers) el._soundTimers.forEach(clearTimeout);
+  el._soundTimers = [setTimeout(send, 250), setTimeout(send, 800)];
+}
+
+let msgBound = false;
+function bindPlayerMessages() {
+  if (msgBound) return;
+  msgBound = true;
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || !d['x-tiktok-player']) return;
+    let el = null;
+    liveSlides.forEach(s => {
+      const f = s.querySelector('iframe');
+      if (f && f.contentWindow === e.source) el = s;
+    });
+    if (!el) return;
+    const f = el.querySelector('iframe');
+    const isActive = el === liveSlides.get(committedIndex);
+
+    switch (d.type) {
+      case 'onPlayerReady':
+        if (isActive) { post(f,'play'); applySound(el); } else post(f,'pause');
+        break;
+      case 'onStateChange':
+        el._state = d.value;
+        if (isActive) {
+          if (d.value === 1) {
+            if (el._playTimer) { clearInterval(el._playTimer); el._playTimer = null; }
+            applySound(el);
+            const m = el.querySelector('.slide-media');
+            m.classList.add('is-playing');
+            m.classList.remove('paused','needs-tap');
+          } else if (d.value === 2) {
+            el.querySelector('.slide-media').classList.add('paused');
+          } else if (d.value === 0) {
+            // ended (loop=1 usually restarts, but guard anyway)
+            el.querySelector('.slide-media').classList.remove('is-playing');
+          }
+        } else if (d.value === 1) pauseSlide(el);
+        break;
+      case 'onCurrentTime':
+        if (d.value !== undefined) el._t = typeof d.value === 'object' ? d.value.currentTime : Number(d.value);
+        break;
+      case 'onPlayerError':
+        dlog('err ' + JSON.stringify(d.value));
+        if (d.value && d.value.errorCode === 3002 && isActive) {
+          el._autoplayFails = (el._autoplayFails || 0) + 1;
+          if (el._autoplayFails <= 3) { post(f,'mute'); setTimeout(() => post(f,'play'), 150 * el._autoplayFails); }
+          else el.querySelector('.slide-media').classList.add('needs-tap');
+        }
+        break;
+    }
+  });
+}
+
+/* ============================================================
+   PER-VIDEO SHEET: categories, delete, restore, purge
+   ============================================================ */
+function openCategorySheet(item) {
+  const list = document.getElementById('sheetCats');
+  list.innerHTML = '';
+  const inTrash = item.category === DELETED;
+
+  if (!inTrash) {
+    state.categories.filter(c => c !== DELETED).forEach(cat => {
+      const r = document.createElement('div');
+      r.className = 'sheet-cat' + (cat === item.category ? ' selected' : '');
+      r.textContent = cat + (cat === item.category ? '  \u2713' : '');
+      r.onclick = () => {
+        item.category = cat; save();
+        const el = liveSlides.get(committedIndex);
+        if (el && el.dataset.id === item.id) el.querySelector('.slide-cat').textContent = cat;
+        closeSheet();
+      };
+      list.appendChild(r);
+    });
+  }
+  const act = (label, cls, fn) => {
+    const r = document.createElement('div');
+    r.className = 'sheet-cat sheet-action' + (cls ? ' ' + cls : '');
+    r.textContent = label; r.onclick = fn; list.appendChild(r);
+  };
+  if (inTrash) {
+    act('Restore to Uncategorized','',() => { restoreVideo(item); closeSheet(); });
+    act('Delete permanently','destructive',() => {
+      closeSheet();
+      confirmModal({ title:'Delete permanently?',
+        message:'This removes the video from your library for good.',
+        confirmLabel:'Delete', destructive:true, onConfirm:() => purgeVideo(item) });
+    });
+  } else {
+    act('Delete','destructive',() => { deleteVideo(item); closeSheet(); });
+  }
+  document.getElementById('sheetBackdrop').classList.add('open');
+  document.getElementById('sheet').classList.add('open');
+}
+function closeSheet() {
+  document.getElementById('sheetBackdrop').classList.remove('open');
+  document.getElementById('sheet').classList.remove('open');
+}
+document.getElementById('sheetBackdrop').onclick = closeSheet;
+document.getElementById('newCatBtn').onclick = () => {
+  const inp = document.getElementById('newCatInput');
+  const name = (inp.value || '').trim();
+  if (!name || name === DELETED) return;
+  if (!state.categories.includes(name)) state.categories.push(name);
+  inp.value = '';
+  save();
+  const el = liveSlides.get(committedIndex);
+  const item = feedList[committedIndex];
+  if (item) { item.category = name; if (el) el.querySelector('.slide-cat').textContent = name; }
+  closeSheet();
+};
+
+function deleteVideo(item) {
+  item.category = DELETED;
+  if (!state.categories.includes(DELETED)) state.categories.push(DELETED);
+  save(); dropFromViews(item); toast('Moved to Deleted');
+}
+function restoreVideo(item) {
+  item.category = 'Uncategorized';
+  if (!state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+  save(); dropFromViews(item); toast('Restored');
+}
+function purgeVideo(item) {
+  state.items = state.items.filter(i => i.id !== item.id);
+  state.purged = state.purged || [];
+  if (!state.purged.includes(item.id)) state.purged.push(item.id);
+  flushSave();                    // irreversible: never leave it in a debounce window
+  dropFromViews(item);
+  toast('Deleted permanently');
+}
+function emptyDeleted() {
+  const gone = state.items.filter(i => i.category === DELETED);
+  if (!gone.length) { toast('Nothing to empty'); return; }
+  confirmModal({ title:'Empty Deleted?',
+    message: gone.length + ' video(s) will be removed for good.',
+    confirmLabel:'Empty', destructive:true,
+    onConfirm: () => {
+      state.purged = state.purged || [];
+      gone.forEach(i => { if (!state.purged.includes(i.id)) state.purged.push(i.id); });
+      state.items = state.items.filter(i => i.category !== DELETED);
+      flushSave();
+      if (document.getElementById('gridView').classList.contains('open') && gridLabel === DELETED) {
+        openGrid([], DELETED);
+      }
+      renderHome();
+      toast('Deleted ' + gone.length);
+    }});
+}
+
+// Remove a video from whatever the user is looking at right now.
+function dropFromViews(item) {
+  const fi = feedList.findIndex(x => x.id === item.id);
+  const gi = gridList.findIndex(x => x.id === item.id);
+  if (gi >= 0) gridList.splice(gi, 1);
+  if (fi >= 0) {
+    feedList.splice(fi, 1);
+    if (!feedList.length) { document.getElementById('feedBack').onclick(); return; }
+    const keep = Math.min(fi, feedList.length - 1);
+    liveSlides.forEach(el => { destroyPlayer(el); el.remove(); });
+    liveSlides.clear();
+    renderWindow(keep, true);
+    activeIndex = keep; committedIndex = -1;
+    scheduleCommit(80);
+  }
+  if (document.getElementById('gridView').classList.contains('open')) {
+    gridVL.setItems(gridList, gridVL.rowH);
+    document.getElementById('gridEmpty').style.display = gridList.length ? 'none' : 'block';
+  }
+}
+
+/* ============================================================
+   SHARE
+   ============================================================ */
+async function shareVideo(item) {
+  const url = itemUrl(item);
+  if (navigator.share) { try { await navigator.share({ url }); } catch (e) {} return; }
+  try { await navigator.clipboard.writeText(url); toast('Link copied'); }
+  catch (e) { toast('Could not share on this device'); }
+}
+
+/* ============================================================
+   UI PRIMITIVES
+   ============================================================ */
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+function closeOverlays() {
+  document.querySelectorAll('.modal-backdrop, .action-sheet').forEach(e => e.remove());
+}
+function inputModal({ title, placeholder, initialValue, confirmLabel, onSubmit }) {
+  closeOverlays();
+  const b = document.createElement('div');
+  b.className = 'modal-backdrop';
+  b.innerHTML =
+    '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div>' +
+    '<input class="modal-input" id="modalInput" placeholder="' + esc(placeholder || '') +
+    '" value="' + esc(initialValue || '') + '">' +
+    '<div class="modal-error" id="modalError"></div><div class="modal-actions">' +
+    '<button class="modal-btn" id="modalCancel">Cancel</button>' +
+    '<button class="modal-btn primary" id="modalConfirm">' + esc(confirmLabel) + '</button></div></div>';
+  document.body.appendChild(b);
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelector('#modalCancel').onclick = closeOverlays;
+  b.querySelector('#modalConfirm').onclick = () => {
+    const v = (b.querySelector('#modalInput').value || '').trim();
+    if (!v) { b.querySelector('#modalError').textContent = 'Enter a name.'; return; }
+    const err = onSubmit(v);
+    if (err) { b.querySelector('#modalError').textContent = err; return; }
+    closeOverlays();
+  };
+}
+function confirmModal({ title, message, confirmLabel, destructive, onConfirm }) {
+  closeOverlays();
+  const b = document.createElement('div');
+  b.className = 'modal-backdrop';
+  b.innerHTML =
+    '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div>' +
+    '<div class="modal-message">' + esc(message) + '</div><div class="modal-actions">' +
+    '<button class="modal-btn" id="modalCancel">Cancel</button>' +
+    '<button class="modal-btn ' + (destructive ? 'destructive' : 'primary') + '" id="modalConfirm">' +
+    esc(confirmLabel) + '</button></div></div>';
+  document.body.appendChild(b);
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelector('#modalCancel').onclick = closeOverlays;
+  b.querySelector('#modalConfirm').onclick = () => { onConfirm(); closeOverlays(); };
+}
+function actionSheet({ title, rows }) {
+  closeOverlays();
+  const s = document.createElement('div');
+  s.className = 'action-sheet';
+  s.innerHTML = (title ? '<div class="action-sheet-title">' + esc(title) + '</div>' : '') +
+    rows.map((r, i) => '<div class="action-row' + (r.destructive ? ' destructive' : '') +
+                       '" data-idx="' + i + '">' + esc(r.label) + '</div>').join('') +
+    '<div class="action-row cancel" id="sheetCancel">Cancel</div>';
+  document.body.appendChild(s);
+  rows.forEach((r, i) => {
+    s.querySelector('[data-idx="' + i + '"]').onclick = () => { closeOverlays(); r.onClick(); };
+  });
+  s.querySelector('#sheetCancel').onclick = closeOverlays;
+}
+
+/* ---- debug overlay ---- */
+let DEBUG = false;
+const dlines = [];
+function dlog(m) {
+  if (!DEBUG) return;
+  dlines.unshift(m);
+  if (dlines.length > 40) dlines.pop();
+  const el = document.getElementById('debugLog');
+  if (el) el.textContent = dlines.join('\n');
+}
+document.getElementById('debugToggle').onclick = () => {
+  DEBUG = !DEBUG;
+  document.getElementById('debugLog').classList.toggle('show', DEBUG);
+};
+
+/* ---- keep virtual lists correct across rotation / resize ---- */
+window.addEventListener('resize', () => {
+  if (document.getElementById('feed').classList.contains('open')) {
+    const i = Math.max(0, activeIndex);
+    liveSlides.forEach(el => { destroyPlayer(el); el.remove(); });
+    liveSlides.clear();
+    renderWindow(i, true);
+    activeIndex = i; committedIndex = -1;
+    scheduleCommit(120);
+  }
+  if (document.getElementById('gridView').classList.contains('open')) {
+    gridVL.setItems(gridList, gridRowHeight());
+    gridScroll.scrollTop = gridScrollMemory[gridLabel] || 0;
+    gridVL.update(true);
+  }
+});
+
+boot();
+</script>
+</body>
+</html>
