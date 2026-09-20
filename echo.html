@@ -933,6 +933,8 @@ function playCurrent() {
     el._createAttempt = 1;
     el._sawSignal = false;
     el._diag = [];                 // fresh timeline for this appearance
+    el._genericErrorFails = 0;
+    el._genericErrorBackoffUntil = 0;
     el._becameCurrentAt = Date.now();
     createPlayer(el);
     ensurePlaying(el);
@@ -1010,6 +1012,8 @@ function toggleCurrent() {
     // attempt rather than a single play() — if it still fails, the prompt
     // returns on its own after the grace window.
     el._autoplayFails = 0;
+    el._genericErrorFails = 0;
+    el._genericErrorBackoffUntil = 0;
     ensurePlaying(el);
     return;
   }
@@ -1235,12 +1239,18 @@ function ensurePlaying(el) {
       clearInterval(el._playTimer); el._playTimer = null; return;
     }
     const f = el.querySelector('iframe');
+    // Skip the nudge while a non-autoplay error (onPlayerError, generic
+    // branch) is in its backoff window — that error handler owns retry
+    // timing for that failure mode, and hammering play() every 400ms on top
+    // of it is exactly what turned one server error into 10+ seconds of
+    // repeating ERR:3001 in practice.
+    const backoffActive = el._genericErrorBackoffUntil && Date.now() < el._genericErrorBackoffUntil;
     // Nudge play() using the CURRENT sound preference — matching what the src URL
     // already requested (see playerSrc). Forcing mute here regardless of
     // desiredMuted would undo a genuine unmuted-autoplay request while still
     // buffering, pushing every unmute attempt back onto the fragile
     // after-the-fact postMessage path this fix is trying to avoid.
-    if (f) { post(f, desiredMuted ? 'mute' : 'unMute'); post(f, 'play'); }
+    if (f && !backoffActive) { post(f, desiredMuted ? 'mute' : 'unMute'); post(f, 'play'); }
     const waited = Date.now() - startedAt;
     const buffering = el._state === 3;   // still loading — keep waiting, no prompt
     if (waited > HARD_CAP || (waited > GRACE && !buffering)) {
@@ -1329,22 +1339,27 @@ function bindPlayerMessages() {
             if (el.dataset.userPaused === 'true') {
               m.classList.add('paused');
             } else {
-              // An involuntary pause the user didn't ask for. The likely cause is
-              // WebKit silently refusing an unmuted-autoplay/unmute attempt that
-              // wasn't tied to a fresh user gesture from the iframe's own point of
-              // view, and pausing the video instead of just keeping it muted. Only
-              // a genuine tap re-establishes that gesture, so recover by resuming
-              // muted after the first retry rather than leaving playback frozen —
-              // the video must never get stuck paused on its own.
+              // An involuntary pause the user didn't ask for. Measured against the
+              // real player: TikTok's own startup sequence legitimately cycles
+              // through playing->paused->buffering a couple of times before
+              // settling (nothing to do with permissions), so keep asking for the
+              // CURRENT sound preference on every retry — downgrading to forced
+              // mute after just one attempt (an earlier version of this fix) was
+              // giving up on real startup churn, not a genuine rejection. Only a
+              // pause that survives this whole retry budget is treated as truly
+              // stuck, and even then we keep the video playing (muted) rather than
+              // leaving it frozen — the video must never get stuck paused on its
+              // own, but sound is worth a real attempt first.
               el._involuntaryPauseRetries = (el._involuntaryPauseRetries || 0) + 1;
               diag(el, 'involuntary pause, retry ' + el._involuntaryPauseRetries);
-              if (el._involuntaryPauseRetries <= 3) {
-                const wantUnmute = el._involuntaryPauseRetries === 1 && !desiredMuted;
-                el._lastAskedUnmute = wantUnmute;
-                post(f, wantUnmute ? 'unMute' : 'mute');
+              if (el._involuntaryPauseRetries <= 6) {
+                el._lastAskedUnmute = !desiredMuted;
+                post(f, desiredMuted ? 'mute' : 'unMute');
                 post(f, 'play');
               } else {
-                m.classList.add('paused');
+                el._lastAskedUnmute = false;
+                post(f, 'mute');
+                post(f, 'play');
               }
             }
           } else if (d.value === 0) {
@@ -1367,14 +1382,43 @@ function bindPlayerMessages() {
                     !!(d.value && d.value.muted === true));
         if (isActive && el._lastAskedUnmute && el._muted) diag(el, 'unmute rejected');
         break;
-      case 'onPlayerError':
-        diag(el, 'ERR:' + (d.value && d.value.errorCode));
-        if (d.value && d.value.errorCode === 3002 && isActive) {
+      case 'onPlayerError': {
+        const code = d.value && d.value.errorCode;
+        diag(el, 'ERR:' + code);
+        if (!isActive) break;
+        if (code === 3002) {
+          // AUTOPLAY_ERROR: iOS blocked autoplay specifically. A short, fast
+          // retry is appropriate — the block is usually resolved by the next
+          // mute+play pair, not by waiting.
           el._autoplayFails = (el._autoplayFails || 0) + 1;
           if (el._autoplayFails <= 3) { post(f,'mute'); setTimeout(() => post(f,'play'), 150 * el._autoplayFails); }
           else el.querySelector('.slide-media').classList.add('needs-tap');
+        } else {
+          // Any other error (server error, video-unavailable, etc.) is NOT
+          // something a fast retry fixes — the player can keep re-emitting it
+          // every few hundred ms indefinitely (observed: ERR:3001 repeating
+          // for 10+ seconds straight while ensurePlaying's 400ms loop kept
+          // nudging play). Hammering it back-to-back also risks looking like
+          // abuse to TikTok's own rate limiting, making things worse. Instead:
+          // back off with growing delays, cap total attempts, then stop and
+          // let the user's tap trigger a fresh, fully re-armed attempt.
+          el._genericErrorFails = (el._genericErrorFails || 0) + 1;
+          const n = el._genericErrorFails;
+          if (n <= 4) {
+            const backoff = Math.min(1000 * Math.pow(2, n - 1), 8000); // 1s,2s,4s,8s
+            el._genericErrorBackoffUntil = Date.now() + backoff;
+            diag(el, 'backing off ' + backoff + 'ms after ' + n + ' error(s)');
+            setTimeout(() => {
+              if (slotEls['0'] === el && el._state !== 1) { post(f, desiredMuted ? 'mute' : 'unMute'); post(f, 'play'); }
+            }, backoff);
+          } else {
+            diag(el, 'giving up after ' + n + ' errors');
+            el._genericErrorBackoffUntil = Infinity; // ensurePlaying's loop stops nudging entirely
+            el.querySelector('.slide-media').classList.add('needs-tap');
+          }
         }
         break;
+      }
     }
   });
 }
