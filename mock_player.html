@@ -36,6 +36,14 @@ window.addEventListener('message', (e) => {
       setTimeout(() => send('onMute', false), 5);
     }
   } else if (d.type === 'play') {
+    if (scenario === 'server_error') {
+      // Simulate TikTok throttling/refusing the embed: every play attempt
+      // returns a server-side error (the 2001/3001 codes seen on-device when
+      // its rate limit is hit). The app must degrade gracefully, not cycle.
+      const code = Math.random() < 0.5 ? 2001 : 3001;
+      setTimeout(() => send('onPlayerError', { errorCode: code, errorType: 'SERVER_ERROR' }), 5);
+      return;
+    }
     if (scenario === 'reject_unmute' && !muted) {
       // Asked to play unmuted directly - same rejection.
       setTimeout(() => send('onPlayerError', { errorCode: 3002, errorType: 'AUTOPLAY_ERROR' }), 5);
