@@ -1,0 +1,58 @@
+<!doctype html><html><head><meta charset="utf-8"><title>mock</title></head><body>
+<script>
+// Deterministic stand-in for TikTok's player/v1 iframe, for testing this
+// app's postMessage handling in isolation from network/device/TikTok
+// cooperation. Controlled via query params on this file's own URL.
+//   muted=1|0        initial muted state (mirrors playerSrc's own param)
+//   scenario=reject_unmute   whenever asked to unmute, always respond with
+//                            ERR:3002 + report still-muted, forever (this is
+//                            the exact bug pattern reported: unmute rejected
+//                            + ERR:3002 repeating, settling on paused)
+//   scenario=clean           normal: mute/unmute/play always succeed
+const params = new URLSearchParams(location.search);
+const scenario = params.get('scenario') || 'clean';
+let muted = params.get('muted') !== '0';
+let playing = false;
+let readyTimer = null;
+
+function send(type, value) {
+  parent.postMessage({ 'x-tiktok-player': true, type, value }, '*');
+}
+
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (!d || !d['x-tiktok-player']) return;
+  if (d.type === 'mute') {
+    muted = true;
+    setTimeout(() => send('onMute', true), 5);
+  } else if (d.type === 'unMute') {
+    if (scenario === 'reject_unmute') {
+      // Simulate a genuine, persistent platform rejection: report still
+      // muted AND fire the autoplay-blocked error, every single time.
+      setTimeout(() => { send('onMute', true); send('onPlayerError', { errorCode: 3002, errorType: 'AUTOPLAY_ERROR' }); }, 5);
+      if (playing) { playing = false; setTimeout(() => send('onStateChange', 2), 8); }
+    } else {
+      muted = false;
+      setTimeout(() => send('onMute', false), 5);
+    }
+  } else if (d.type === 'play') {
+    if (scenario === 'reject_unmute' && !muted) {
+      // Asked to play unmuted directly - same rejection.
+      setTimeout(() => send('onPlayerError', { errorCode: 3002, errorType: 'AUTOPLAY_ERROR' }), 5);
+      return;
+    }
+    if (!playing) {
+      playing = true;
+      send('onStateChange', 3);
+      setTimeout(() => { if (playing) send('onStateChange', 1); }, 40);
+    }
+  } else if (d.type === 'pause') {
+    playing = false;
+    send('onStateChange', 2);
+  }
+});
+
+// onPlayerReady shortly after load, like the real player.
+readyTimer = setTimeout(() => send('onPlayerReady'), 30);
+</script>
+</body></html>
