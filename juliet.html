@@ -1,0 +1,1842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Favorites">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://www.tiktok.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.tiktok.com">
+<link rel="dns-prefetch" href="https://p16-sign-va.tiktokcdn.com">
+<title>Favorites</title>
+<style>
+  :root {
+    --bg:#000; --panel:#151515; --line:#242424;
+    --text:#f2f2f2; --dim:#8a8a8a; --accent:#3b7dd8;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body {
+    margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+    overscroll-behavior:none;
+  }
+  button { font:inherit; color:inherit; }
+
+  /* ===================== HOME ===================== */
+  #home { padding:max(18px,env(safe-area-inset-top)) 14px max(24px,env(safe-area-inset-bottom)); }
+  #allTile {
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:18px 16px; margin-bottom:14px;
+  }
+  #allTile .name { font-size:17px; font-weight:600; }
+  #allTile .count { font-size:13px; color:var(--dim); margin-top:3px; }
+  #catGrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .cat-tile {
+    position:relative; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:16px 14px; min-height:78px;
+    display:flex; flex-direction:column; justify-content:space-between;
+  }
+  .cat-tile .name { font-size:15px; font-weight:600; padding-right:22px; word-break:break-word; }
+  .cat-tile .count { font-size:12px; color:var(--dim); margin-top:6px; }
+  .cat-tile.add { align-items:center; justify-content:center; color:var(--dim); border-style:dashed; }
+  .cat-tile.trash { opacity:.72; }
+  .cat-manage {
+    position:absolute; top:6px; right:6px; background:none; border:0;
+    color:var(--dim); font-size:16px; line-height:1; padding:6px 8px;
+  }
+
+  /* ===================== GRID ===================== */
+  #gridView { position:fixed; inset:0; background:#000; display:none; flex-direction:column; z-index:15; }
+  #gridView.open { display:flex; }
+  .grid-top {
+    display:flex; align-items:center; gap:10px;
+    padding:max(14px,env(safe-area-inset-top)) 12px 8px;
+  }
+  .grid-title { font-size:15px; font-weight:600; flex:1; }
+  .icon-btn {
+    width:32px; height:32px; border-radius:50%; border:0;
+    background:rgba(255,255,255,0.09); color:var(--text); font-size:15px; line-height:1;
+  }
+  #gridScroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  /* Virtualized: the container is sized to the whole library, but only the
+     visible tiles exist in the DOM. */
+  #thumbGrid { position:relative; width:100%; }
+  .thumb-tile {
+    position:absolute; overflow:hidden;
+    background:linear-gradient(160deg,#232323,#111);
+  }
+  .thumb-tile img {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    opacity:0; transition:opacity .18s ease;
+  }
+  .thumb-tile img.loaded { opacity:1; }
+  .thumb-date {
+    position:absolute; left:4px; bottom:4px; font-size:9px;
+    color:rgba(255,255,255,.75); background:rgba(0,0,0,.45);
+    padding:1px 4px; border-radius:3px;
+  }
+  .thumb-tile.unavailable::after {
+    content:'Unavailable'; position:absolute; top:6px; left:6px;
+    font-size:9px; color:rgba(255,255,255,.6); background:rgba(0,0,0,.55);
+    padding:2px 5px; border-radius:3px;
+  }
+  #gridEmpty { padding:40px 20px; text-align:center; color:var(--dim); font-size:14px; display:none; }
+
+  /* date jump */
+  #datePanel {
+    position:absolute; left:0; right:0; bottom:0; background:#161616;
+    border-top:1px solid var(--line); max-height:55vh; overflow-y:auto;
+    transform:translateY(100%); transition:transform .22s ease; z-index:16;
+    padding-bottom:max(16px,env(safe-area-inset-bottom));
+  }
+  #datePanel.open { transform:translateY(0); }
+  .date-panel-inner { padding:8px 12px; }
+  .date-year-hdr {
+    font-size:13px; font-weight:700; color:var(--accent);
+    padding:12px 4px 6px; position:sticky; top:0; background:#161616;
+  }
+  .date-month-row {
+    display:inline-flex; margin:3px; padding:7px 12px; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; font-size:13px;
+  }
+
+  /* ===================== FEED ===================== */
+  #feed { position:fixed; inset:0; background:#000; display:none; flex-direction:column; z-index:20; }
+  #feed.open { display:flex; }
+  .feed-top {
+    position:absolute; top:0; left:0; right:0; z-index:8;
+    display:flex; align-items:center; gap:10px;
+    padding:max(12px,env(safe-area-inset-top)) 12px 8px;
+    background:linear-gradient(to bottom,rgba(0,0,0,.55),transparent);
+  }
+  .feed-label {
+    flex:1; font-size:13px; font-weight:600; text-align:center;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);
+  }
+  /* No native scroll anywhere in the feed. The stage is a fixed viewport and the
+     track holds exactly three slides (prev / current / next) that we move with a
+     CSS transform in response to swipe gestures. This eliminates the entire class
+     of native-scroll + scroll-snap + momentum bugs. */
+  #stage { position:absolute; inset:0; overflow:hidden; touch-action:none; background:#000; }
+  #track { position:absolute; left:0; top:0; width:100%; will-change:transform; }
+  /* The cross-origin iframe would swallow all touches, so it never receives
+     pointer events — we drive play/pause ourselves and capture every gesture on
+     the stage. The rail buttons (z-index 7) stay interactive above everything. */
+  .slide-media iframe { pointer-events:none; }
+  .slide {
+    position:absolute; left:0; width:100%; overflow:hidden;
+  }
+  .slide-media { position:absolute; inset:0; background:#0b0b0b; }
+  /* Thumbnail sits ABOVE the iframe (z-index 2 vs 1) until the video is
+     confirmed playing. On devices where autoplay is blocked this means the
+     slide shows its thumbnail, never a black frame; once playing, .is-playing
+     fades the thumbnail out to reveal the video underneath. */
+  .slide-media img {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    opacity:0; transition:opacity .2s ease; z-index:2;
+  }
+  .slide-media img.loaded { opacity:1; }
+  .slide-media.is-playing img { opacity:0; pointer-events:none; }
+  .slide-media iframe { position:absolute; inset:0; width:100%; height:100%; border:0; z-index:1; }
+
+  /* scrims hiding TikTok's own chrome; taps can't reach it regardless */
+  .mask-bottom {
+    position:absolute; left:0; right:0; bottom:0; height:96px; z-index:3;
+    background:linear-gradient(to top,#000 0%,rgba(0,0,0,.9) 42%,rgba(0,0,0,0) 100%);
+    pointer-events:none;
+  }
+  .mask-rail {
+    position:absolute; right:0; bottom:96px; width:64px; height:250px; z-index:3;
+    background:linear-gradient(to left,rgba(0,0,0,.82) 0%,rgba(0,0,0,.5) 55%,rgba(0,0,0,0) 100%);
+    pointer-events:none;
+  }
+  /* full-surface tap interceptor: nothing reaches TikTok's player */
+
+  .status-badge {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:5;
+    pointer-events:none; text-align:center; max-width:220px;
+    font-size:12px; color:rgba(255,255,255,.5);
+  }
+  .spinner {
+    width:26px; height:26px; border-radius:50%; margin:0 auto;
+    border:2px solid rgba(255,255,255,.22); border-top-color:rgba(255,255,255,.75);
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .slide-media.has-player .status-badge { display:none; }
+  .slide-media.paused .pause-icon,
+  .slide-media.needs-tap .tap-icon { display:flex; }
+  .pause-icon, .tap-icon {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:6;
+    width:74px; height:74px; border-radius:50%; background:rgba(0,0,0,.45);
+    display:none; align-items:center; justify-content:center;
+    font-size:30px; color:#fff; pointer-events:none;
+  }
+  .tap-icon {
+    padding-left:6px; width:88px; height:88px; font-size:36px;
+    background:rgba(0,0,0,.55); box-shadow:0 0 0 4px rgba(255,255,255,.14);
+  }
+  .slide-media.needs-tap::after {
+    content:'Tap to play'; position:absolute; left:0; right:0; z-index:6;
+    top:calc(50% + 62px); text-align:center; font-size:13px;
+    color:rgba(255,255,255,.9); text-shadow:0 1px 3px rgba(0,0,0,.7);
+    pointer-events:none;
+  }
+  .slide-media.ffwd::after {
+    content:'\26A1 2\00D7'; position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%); z-index:7; font-size:19px; font-weight:700;
+    color:#fff; background:rgba(0,0,0,.5); padding:6px 14px; border-radius:20px;
+    pointer-events:none;
+  }
+  .slide-overlay {
+    position:absolute; left:0; right:74px; bottom:max(26px,env(safe-area-inset-bottom));
+    padding:0 16px; z-index:6; pointer-events:none;
+    text-shadow:0 1px 4px rgba(0,0,0,.65);
+  }
+  .slide-title { font-size:14px; font-weight:600; }
+  .slide-cat { font-size:12px; color:rgba(255,255,255,.85); margin-top:2px; }
+  .rail {
+    position:absolute; right:10px; bottom:max(118px,calc(env(safe-area-inset-bottom) + 108px));
+    display:flex; flex-direction:column; align-items:center; gap:16px; z-index:7;
+  }
+  .rail-btn {
+    width:46px; height:46px; border-radius:50%; border:0;
+    background:rgba(0,0,0,.5); color:var(--text); font-size:18px;
+  }
+  .rail-btn.active { background:var(--accent); }
+  .rail-btn.blocked { background:#8a5a1f; }
+
+  /* ===================== SHEETS / MODALS ===================== */
+  #sheetBackdrop { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; z-index:30; }
+  #sheetBackdrop.open { display:block; }
+  #sheet {
+    position:fixed; left:0; right:0; bottom:0; z-index:31; background:#1a1a1a;
+    border-radius:16px 16px 0 0; padding:16px 16px max(20px,env(safe-area-inset-bottom));
+    transform:translateY(100%); transition:transform .22s ease; max-height:70vh; overflow-y:auto;
+  }
+  #sheet.open { transform:translateY(0); }
+  .sheet-title { font-size:13px; color:var(--dim); margin-bottom:8px; }
+  .sheet-cat { padding:12px 4px; border-bottom:1px solid #262626; font-size:15px; }
+  .sheet-cat.selected { color:var(--accent); }
+  .sheet-action { font-weight:600; }
+  .sheet-action.destructive { color:#ff6b6b; }
+  .sheet-new { display:flex; gap:8px; margin-top:14px; }
+  .sheet-new input {
+    flex:1; background:#101010; border:1px solid #2a2a2a; border-radius:8px;
+    color:var(--text); padding:10px 12px; font-size:15px;
+  }
+  .sheet-new button { background:var(--accent); border:0; border-radius:8px; padding:0 16px; font-weight:600; }
+
+  .modal-backdrop {
+    position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:40;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .modal-card { background:#1c1c1c; border:1px solid var(--line); border-radius:14px; width:100%; max-width:320px; padding:18px; }
+  .modal-title { font-size:16px; font-weight:600; margin-bottom:6px; }
+  .modal-message { font-size:13px; color:var(--dim); margin-bottom:14px; }
+  .modal-input {
+    width:100%; background:#101010; border:1px solid #2a2a2a; border-radius:8px;
+    color:var(--text); padding:10px 12px; font-size:15px; margin-bottom:6px;
+  }
+  .modal-error { font-size:12px; color:#ff6b6b; min-height:15px; }
+  .modal-actions { display:flex; gap:8px; margin-top:10px; }
+  .modal-btn { flex:1; border:0; border-radius:8px; padding:11px 0; font-size:14px; font-weight:600; background:#2a2a2a; }
+  .modal-btn.primary { background:var(--accent); }
+  .modal-btn.destructive { background:#4a2020; color:#ff8f8f; }
+
+  .action-sheet {
+    position:fixed; left:16px; right:16px; bottom:max(20px,env(safe-area-inset-bottom));
+    z-index:41; background:#1c1c1c; border-radius:14px; overflow:hidden;
+  }
+  .action-sheet-title { font-size:12px; color:var(--dim); text-align:center; padding:12px; border-bottom:1px solid #262626; }
+  .action-row { padding:14px; text-align:center; font-size:16px; border-bottom:1px solid #262626; }
+  .action-row.destructive { color:#ff6b6b; }
+  .action-row.cancel { font-weight:600; border-bottom:0; }
+
+  #toast {
+    position:fixed; top:max(16px,env(safe-area-inset-top)); left:50%;
+    transform:translateX(-50%); background:#222; padding:8px 16px; border-radius:20px;
+    font-size:13px; z-index:50; box-shadow:0 2px 10px rgba(0,0,0,.4); display:none;
+  }
+  #toast.show { display:block; }
+
+  #debugLog {
+    position:absolute; left:0; right:0; bottom:0; max-height:38vh; overflow-y:auto;
+    margin:0; padding:8px 10px; background:rgba(0,0,0,.82); color:#5f5;
+    font-family:ui-monospace,monospace; font-size:10px; line-height:1.35;
+    z-index:40; white-space:pre-wrap; pointer-events:none; display:none;
+  }
+  #debugLog.show { display:block; }
+</style>
+</head>
+<body>
+
+<div id="home">
+  <div id="allTile"><div class="name">All Videos</div><div class="count" id="allCount">Loading…</div></div>
+  <div id="catGrid"></div>
+</div>
+
+<div id="gridView">
+  <div class="grid-top">
+    <button class="icon-btn" id="gridBack">&lsaquo;</button>
+    <div class="grid-title" id="gridTitle">All Videos</div>
+    <button class="icon-btn" id="dateJumpBtn" style="display:none">&#128197;</button>
+  </div>
+  <div id="gridScroll"><div id="thumbGrid"></div><div id="gridEmpty">Nothing here yet.</div></div>
+  <div id="datePanel"><div class="date-panel-inner" id="datePanelInner"></div></div>
+</div>
+
+<div id="feed">
+  <div class="feed-top">
+    <button class="icon-btn" id="feedBack">&lsaquo;</button>
+    <div class="feed-label" id="feedLabel">All Videos</div>
+    <button class="icon-btn" id="debugToggle">&#128027;</button>
+  </div>
+  <div id="stage"><div id="track"></div></div>
+  <pre id="debugLog"></pre>
+</div>
+
+<div id="sheetBackdrop"></div>
+<div id="sheet">
+  <div class="sheet-title">Move to category</div>
+  <div id="sheetCats"></div>
+  <div class="sheet-new"><input id="newCatInput" placeholder="New category"><button id="newCatBtn">Add</button></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ============================================================
+   DATA
+   ============================================================ */
+const DELETED = 'Deleted';
+const DATA_VERSION = 5;
+
+let state = JSON.parse(localStorage.getItem('gallery-state') || 'null');
+
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function formatDate(iso) {
+  const d = new Date(String(iso).replace(' ','T'));
+  return isNaN(d) ? '' : d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+}
+function itemLabel(it) { return it.date ? formatDate(it.date) : ''; }
+function itemUrl(it) { return 'https://www.tiktok.com/@i/video/' + it.id; }
+function liveItems() { return state.items.filter(i => i.category !== DELETED); }
+
+let saveTimer = null;
+function save() { if (!saveTimer) saveTimer = setTimeout(flushSave, 400); }
+function flushSave() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try { localStorage.setItem('gallery-state', JSON.stringify(state)); }
+  catch (e) {
+    // The thumbnail cache is rebuildable; drop it to make room for real data.
+    try { thumbCache = {}; localStorage.removeItem('thumb-cache');
+          localStorage.setItem('gallery-state', JSON.stringify(state)); }
+    catch (e2) { toast('Storage full — change may not be saved'); }
+  }
+}
+window.addEventListener('pagehide', flushSave);
+window.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); });
+
+async function boot() {
+  const fresh = !state || state.version !== DATA_VERSION || !state.hydrated;
+  if (!fresh) { handleIncomingAdd(); renderHome(); return; }
+  document.getElementById('allCount').textContent = 'Loading…';
+  try {
+    const raw = await (await fetch('favorites.json')).json();
+    const prev = {};
+    if (state && state.items) state.items.forEach(i => { prev[i.id] = i; });
+    const purged = new Set((state && state.purged) || []);
+    const cats = ((state && state.categories) || []).slice();
+    const items = raw.filter(e => !purged.has(e.id)).map(e => ({
+      id: e.id,
+      date: e.date,
+      category: (prev[e.id] && prev[e.id].category) || 'Uncategorized'
+    }));
+    if (!cats.includes('Uncategorized')) cats.unshift('Uncategorized');
+    if (items.some(i => i.category === DELETED) && !cats.includes(DELETED)) cats.push(DELETED);
+    state = { categories: cats, items, hydrated: true, version: DATA_VERSION, purged: [...purged] };
+    flushSave();
+  } catch (e) {
+    console.error('favorites.json failed to load', e);
+    state = state || { categories:['Uncategorized'], items:[], hydrated:false, version:DATA_VERSION, purged:[] };
+  }
+  handleIncomingAdd();
+  renderHome();
+}
+
+function handleIncomingAdd() {
+  const p = new URLSearchParams(window.location.search).get('add');
+  if (!p) return;
+  const m = String(p).match(/\/video\/(\d+)/);
+  const id = m ? m[1] : null;
+  if (!id) { toast('Could not read that link'); return; }
+  if (state.items.some(i => i.id === id)) { toast('Already saved'); }
+  else {
+    state.items.unshift({ id, date: new Date().toISOString().replace('T',' ').slice(0,19), category:'Uncategorized' });
+    if (!state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+    flushSave();
+    toast('Added to Uncategorized');
+  }
+  window.history.replaceState({}, '', window.location.pathname);
+}
+
+/* ============================================================
+   THUMBNAILS
+   A failed fetch must NEVER permanently brand a video unavailable:
+   TikTok rate-limits, and its thumbnail URLs expire between sessions.
+   Only an explicit "this video is gone" response is treated as final,
+   and even that is re-checked after a day.
+   ============================================================ */
+const THUMB_TTL   = 6 * 60 * 60 * 1000;   // refresh a URL after 6h (they expire)
+const GONE_TTL    = 24 * 60 * 60 * 1000;  // re-check "gone" verdicts after a day
+const MAX_INFLIGHT = 3;                   // gentle: high concurrency invites throttling
+
+let thumbCache = {};
+try { thumbCache = JSON.parse(localStorage.getItem('thumb-cache') || '{}'); } catch (e) { thumbCache = {}; }
+
+let cacheDirty = false;
+setInterval(() => {
+  if (!cacheDirty) return;
+  cacheDirty = false;
+  try { localStorage.setItem('thumb-cache', JSON.stringify(thumbCache)); } catch (e) {}
+}, 3000);
+
+const pending = new Map();      // id -> {id, priority(), cbs:[]}
+const inflight = new Map();     // id -> AbortController
+let activeFetches = 0;
+let failStreak = 0;
+let backoffUntil = 0;
+
+function cachedThumb(id) {
+  const e = thumbCache[id];
+  if (!e) return null;
+  if (e.gone) return (Date.now() - e.t < GONE_TTL) ? { gone: true } : null;
+  if (Date.now() - e.t > THUMB_TTL) return null;      // stale URL, refetch
+  return { url: e.u };
+}
+
+function requestThumb(id, cb, priority) {
+  const hit = cachedThumb(id);
+  if (hit) { cb(hit); return; }
+  const ex = pending.get(id);
+  if (ex) { ex.cbs.push(cb); return; }
+  pending.set(id, { id, cbs: [cb], priority: priority || (() => 0) });
+  schedulePump();
+}
+
+function dropThumbRequest(id) {
+  const p = pending.get(id);
+  if (p) pending.delete(id);
+  const c = inflight.get(id);
+  if (c) { c.abort(); inflight.delete(id); }
+}
+
+let pumpScheduled = false;
+function schedulePump() {
+  if (pumpScheduled) return;
+  pumpScheduled = true;
+  // Deferred so an entire batch of newly visible tiles is queued before any
+  // fetch starts — otherwise arrival order wins and priority never applies.
+  setTimeout(() => { pumpScheduled = false; pump(); }, 0);
+}
+
+function pump() {
+  if (Date.now() < backoffUntil) {
+    setTimeout(schedulePump, backoffUntil - Date.now() + 20);
+    return;
+  }
+  while (activeFetches < MAX_INFLIGHT && pending.size) {
+    let best = null, bestP = Infinity;
+    pending.forEach(p => { const v = p.priority(); if (v < bestP) { bestP = v; best = p; } });
+    if (!best) break;
+    pending.delete(best.id);
+    startFetch(best);
+  }
+}
+
+function startFetch(req) {
+  activeFetches++;
+  const ctrl = new AbortController();
+  inflight.set(req.id, ctrl);
+  const url = 'https://www.tiktok.com/oembed?url=' +
+              encodeURIComponent('https://www.tiktok.com/@i/video/' + req.id);
+
+  fetch(url, { signal: ctrl.signal })
+    .then(async res => {
+      let data = null;
+      try { data = await res.json(); } catch (e) {}
+      if (data && data.thumbnail_url) {
+        thumbCache[req.id] = { u: data.thumbnail_url, t: Date.now() };
+        cacheDirty = true; failStreak = 0;
+        return { url: data.thumbnail_url };
+      }
+      if (res.status === 400 || res.status === 404) {
+        // An explicit "no such video" — the only case we treat as unavailable.
+        thumbCache[req.id] = { gone: 1, t: Date.now() };
+        cacheDirty = true; failStreak = 0;
+        return { gone: true };
+      }
+      throw new Error('transient ' + res.status);
+    })
+    .catch(err => {
+      if (err && err.name === 'AbortError') return null;
+      // Transient: never cached, never shown as unavailable. Back off so we
+      // stop hammering a rate limiter and making things worse.
+      failStreak++;
+      backoffUntil = Date.now() + Math.min(30000, 400 * Math.pow(2, Math.min(failStreak, 6)));
+      return { retry: true };
+    })
+    .then(result => {
+      if (result) req.cbs.forEach(cb => { try { cb(result); } catch (e) {} });
+    })
+    .finally(() => {
+      inflight.delete(req.id);
+      activeFetches--;
+      schedulePump();
+    });
+}
+
+// Binds a thumbnail to an <img>, surviving the two ways TikTok fails us:
+//  - a transient failure (throttling, flaky network) -> retry with backoff,
+//    because a tile that stays on screen would otherwise never load again;
+//  - an expired cached URL -> the image fails to decode, so refetch it once.
+function bindThumb(imgEl, id, priority, onGone) {
+  let urlRetried = false, attempts = 0;
+  const alive = () => imgEl.parentNode !== null;
+
+  const apply = (r) => {
+    if (!alive()) return;
+    if (r.gone) { if (onGone) onGone(); return; }
+    if (r.retry) {
+      // Try again while this tile is still on screen, backing off each time.
+      if (++attempts > 6) return;
+      setTimeout(() => { if (alive()) requestThumb(id, apply, priority); },
+                 Math.min(20000, 700 * Math.pow(2, attempts)));
+      return;
+    }
+    imgEl.onerror = () => {
+      if (urlRetried) return;
+      urlRetried = true;
+      delete thumbCache[id]; cacheDirty = true;   // the signed URL expired
+      requestThumb(id, apply, priority);
+    };
+    imgEl.onload = () => imgEl.classList.add('loaded');
+    imgEl.src = r.url;
+  };
+  requestThumb(id, apply, priority);
+}
+
+/* ============================================================
+   VIRTUAL LIST
+   Only the visible window exists in the DOM, so cost is constant
+   whether the library holds 30 videos or 6,070.
+   ============================================================ */
+function VirtualList(opts) {
+  const { scroller, content, perRow, overscan } = opts;
+  const self = {
+    items: [], rowH: 0, perRow: perRow || 1, overscan: overscan == null ? 2 : overscan,
+    live: new Map(), range: [-1,-1], onRange: null
+  };
+  self.rows = () => Math.ceil(self.items.length / self.perRow);
+  self.totalHeight = () => self.rows() * self.rowH;
+
+  self.setItems = (items, rowH) => {
+    self.items = items;
+    if (rowH) self.rowH = rowH;
+    self.live.forEach(el => el.remove());
+    self.live.clear();
+    self.range = [-1,-1];
+    content.style.height = self.totalHeight() + 'px';
+    self.update(true);
+  };
+
+  self.indexAtScroll = () => Math.round(scroller.scrollTop / Math.max(1, self.rowH)) * self.perRow;
+
+  self.update = (force) => {
+    if (!self.rowH) return;
+    const first = Math.max(0, Math.floor(scroller.scrollTop / self.rowH) - self.overscan);
+    const last  = Math.min(self.rows() - 1,
+                  Math.ceil((scroller.scrollTop + scroller.clientHeight) / self.rowH) + self.overscan);
+    if (!force && first === self.range[0] && last === self.range[1]) return;
+    self.range = [first, last];
+
+    const need = new Set();
+    for (let r = first; r <= last; r++) {
+      for (let c = 0; c < self.perRow; c++) {
+        const i = r * self.perRow + c;
+        if (i < self.items.length) need.add(i);
+      }
+    }
+    self.live.forEach((el, i) => {
+      if (!need.has(i)) { opts.recycle && opts.recycle(el, i); el.remove(); self.live.delete(i); }
+    });
+    need.forEach(i => {
+      if (self.live.has(i)) return;
+      const el = opts.render(self.items[i], i);
+      const r = Math.floor(i / self.perRow), c = i % self.perRow;
+      el.style.top = (r * self.rowH) + 'px';
+      if (self.perRow > 1) {
+        el.style.left = (c * (100 / self.perRow)) + '%';
+        el.style.width = (100 / self.perRow) + '%';
+      }
+      el.style.height = (opts.itemHeight || self.rowH) + 'px';
+      content.appendChild(el);
+      self.live.set(i, el);
+    });
+    if (self.onRange) self.onRange();
+  };
+
+  self.scrollToIndex = (i) => {
+    scroller.scrollTop = Math.floor(i / self.perRow) * self.rowH;
+    self.update(true);
+  };
+  self.get = (i) => self.live.get(i);
+  return self;
+}
+
+/* ============================================================
+   HOME
+   ============================================================ */
+function renderHome() {
+  document.getElementById('allCount').textContent = liveItems().length + ' saved';
+  const grid = document.getElementById('catGrid');
+  grid.innerHTML = '';
+  const ordered = state.categories.filter(c => c !== DELETED);
+  if (state.categories.includes(DELETED)) ordered.push(DELETED);
+  ordered.forEach(cat => {
+    const n = state.items.filter(i => i.category === cat).length;
+    const t = document.createElement('div');
+    t.className = 'cat-tile' + (cat === DELETED ? ' trash' : '');
+    t.innerHTML = '<button class="cat-manage">&#8942;</button>' +
+                  '<div class="name">' + esc(cat) + '</div>' +
+                  '<div class="count">' + n + ' saved</div>';
+    t.onclick = () => openGrid(state.items.filter(i => i.category === cat), cat);
+    t.querySelector('.cat-manage').onclick = (e) => { e.stopPropagation(); manageCategory(cat); };
+    grid.appendChild(t);
+  });
+  const add = document.createElement('div');
+  add.className = 'cat-tile add';
+  add.textContent = '+ New Category';
+  add.onclick = promptNewCategory;
+  grid.appendChild(add);
+}
+document.getElementById('allTile').onclick = () => openGrid(liveItems(), 'All Videos');
+
+function promptNewCategory() {
+  inputModal({ title:'New category', placeholder:'Category name', confirmLabel:'Add',
+    onSubmit: (name) => {
+      if (name === DELETED) return 'That name is reserved.';
+      if (state.categories.includes(name)) return 'That category already exists.';
+      state.categories.push(name); save(); renderHome();
+    }});
+}
+
+function manageCategory(cat) {
+  if (cat === DELETED) {
+    actionSheet({ title: DELETED, rows:[{ label:'Empty Deleted', destructive:true, onClick: emptyDeleted }] });
+    return;
+  }
+  actionSheet({ title: cat, rows: [
+    { label:'Rename', onClick: () => renameCategory(cat) },
+    { label:'Delete category', destructive:true, onClick: () => confirmDeleteCategory(cat) }
+  ]});
+}
+function renameCategory(cat) {
+  inputModal({ title:'Rename "' + cat + '"', placeholder:'New name', initialValue:cat, confirmLabel:'Save',
+    onSubmit: (name) => {
+      if (name === DELETED) return 'That name is reserved.';
+      if (name !== cat && state.categories.includes(name)) return 'That category already exists.';
+      state.categories = state.categories.map(c => c === cat ? name : c);
+      state.items.forEach(i => { if (i.category === cat) i.category = name; });
+      save(); renderHome();
+    }});
+}
+function confirmDeleteCategory(cat) {
+  const n = state.items.filter(i => i.category === cat).length;
+  confirmModal({
+    title:'Delete "' + cat + '"?',
+    message: n ? n + ' video(s) move to Uncategorized. The videos are not deleted.' : 'This category is empty.',
+    confirmLabel:'Delete', destructive:true,
+    onConfirm: () => {
+      state.categories = state.categories.filter(c => c !== cat);
+      state.items.forEach(i => { if (i.category === cat) i.category = 'Uncategorized'; });
+      if (n && !state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+      save(); renderHome();
+    }});
+}
+
+/* ============================================================
+   GRID
+   ============================================================ */
+const gridScroll = document.getElementById('gridScroll');
+const thumbGrid  = document.getElementById('thumbGrid');
+let gridList = [], gridLabel = '', gridScrollMemory = {};
+
+const gridVL = VirtualList({
+  scroller: gridScroll, content: thumbGrid, perRow: 3, overscan: 3,
+  render: (item, i) => {
+    const t = document.createElement('div');
+    t.className = 'thumb-tile';
+    t.dataset.id = item.id;
+    t.innerHTML = '<img alt="" decoding="async"><div class="thumb-date">' + esc(itemLabel(item)) + '</div>';
+    t.onclick = () => openFeed(gridList, gridLabel, i);
+    bindThumb(t.querySelector('img'), item.id,
+      () => Math.abs(Math.floor(i / 3) * gridVL.rowH - gridScroll.scrollTop),
+      () => t.classList.add('unavailable'));
+    return t;
+  },
+  recycle: (el) => { dropThumbRequest(el.dataset.id); }
+});
+
+function gridRowHeight() {
+  const w = gridScroll.clientWidth || window.innerWidth || 390;
+  return Math.round((w / 3) * (14 / 9));
+}
+
+function openGrid(list, label) {
+  gridList = list; gridLabel = label;
+  document.getElementById('gridTitle').textContent = label;
+  document.getElementById('gridView').classList.add('open');
+  document.getElementById('gridEmpty').style.display = list.length ? 'none' : 'block';
+  setupDateJump(list, label);
+  gridVL.setItems(list, gridRowHeight());
+  const saved = gridScrollMemory[label] || 0;
+  gridScroll.scrollTop = saved;
+  gridVL.update(true);
+}
+
+gridScroll.addEventListener('scroll', () => {
+  gridScrollMemory[gridLabel] = gridScroll.scrollTop;
+  gridVL.update();
+}, { passive:true });
+
+document.getElementById('gridBack').onclick = () => {
+  document.getElementById('gridView').classList.remove('open');
+  document.getElementById('datePanel').classList.remove('open');
+  gridVL.setItems([], gridVL.rowH);
+  renderHome();
+};
+
+/* ---- date jump ---- */
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function setupDateJump(list, label) {
+  const btn = document.getElementById('dateJumpBtn');
+  const show = (label === 'All Videos' || label === 'Uncategorized') && list.length > 0;
+  btn.style.display = show ? '' : 'none';
+  document.getElementById('datePanel').classList.remove('open');
+  if (!show) return;
+  const index = [];
+  let key = '';
+  list.forEach((it, i) => {
+    if (!it.date) return;
+    const d = new Date(String(it.date).replace(' ','T'));
+    if (isNaN(d)) return;
+    const k = d.getFullYear() + '-' + d.getMonth();
+    if (k !== key) { index.push({ y:d.getFullYear(), m:d.getMonth(), i }); key = k; }
+  });
+  const inner = document.getElementById('datePanelInner');
+  inner.innerHTML = '';
+  let year = null;
+  index.forEach(e => {
+    if (e.y !== year) {
+      year = e.y;
+      const h = document.createElement('div');
+      h.className = 'date-year-hdr'; h.textContent = year;
+      inner.appendChild(h);
+    }
+    const c = document.createElement('span');
+    c.className = 'date-month-row'; c.textContent = MONTHS[e.m];
+    c.onclick = () => {
+      document.getElementById('datePanel').classList.remove('open');
+      gridVL.scrollToIndex(e.i);   // O(1) with virtualization — no mass rendering
+    };
+    inner.appendChild(c);
+  });
+}
+document.getElementById('dateJumpBtn').onclick = () =>
+  document.getElementById('datePanel').classList.toggle('open');
+
+/* ============================================================
+   FEED — transform carousel (NO native scroll).
+   The stage is a fixed viewport. A track holds exactly three slides
+   (previous / current / next), positioned by an absolute transform. Swiping
+   drags the track with the finger; on release it either advances one video or
+   snaps back, animated with a CSS transition. There is no scroll container, no
+   scroll-snap, no momentum, no spacers, no scrollTop — so the whole class of
+   "racing / stuck between videos" bugs cannot occur. Only 3 videos are ever in
+   the DOM regardless of library size.
+   ============================================================ */
+const stage = document.getElementById('stage');
+const track = document.getElementById('track');
+let feedList = [], feedLabel = '';
+let curIndex = -1;               // index of the currently-shown video
+let desiredMuted = true;
+
+// slot elements: slots[-1]=prev, slots[0]=current, slots[1]=next (by offset)
+let slotEls = { '-1': null, '0': null, '1': null };
+let stageH = 0;
+let dragging = false, dragStartY = 0, dragDY = 0, dragStartT = 0, dragMoved = false;
+let animating = false;
+let holdTimer = null, ffTimer = null, holding = false;
+
+function stageHeight() { return stage.clientHeight || window.innerHeight || 700; }
+
+function setTrack(y, animate) {
+  track.style.transition = animate ? 'transform .26s cubic-bezier(.22,.61,.36,1)' : 'none';
+  track.style.transform = 'translate3d(0,' + y + 'px,0)';
+}
+
+// Base offset that centres the current slide: slots are laid at rows -1,0,1
+// (pixel tops -H, 0, H), and the track is translated 0, so the row-0 slide fills
+// the stage. We translate by -dragDY during a drag (drag up = negative dy shows next).
+function layoutSlots() {
+  stageH = stageHeight();
+  ['-1','0','1'].forEach(k => {
+    const el = slotEls[k];
+    if (!el) return;
+    el.style.height = stageH + 'px';
+    el.style.top = (Number(k) * stageH) + 'px';
+  });
+}
+
+function openFeed(list, label, startIndex) {
+  feedList = list.slice(); feedLabel = label;
+  document.getElementById('feedLabel').textContent = label;
+  document.getElementById('feed').classList.add('open');
+  curIndex = Math.max(0, Math.min(startIndex || 0, list.length - 1));
+  buildAllSlots();
+  layoutSlots();
+  setTrack(0, false);
+  // playCurrent() self-defers player creation to the next paint (iOS won't
+  // autoplay an iframe created before its container is on-screen), so we can
+  // just call it directly here.
+  playCurrent();
+  warmNeighbors();   // pre-buffer whichever neighbours exist, for the first swipe
+}
+
+document.getElementById('feedBack').onclick = () => {
+  ['-1','0','1'].forEach(k => { if (slotEls[k]) destroyPlayer(slotEls[k]); });
+  track.innerHTML = '';
+  slotEls = { '-1': null, '0': null, '1': null };
+  document.getElementById('feed').classList.remove('open');
+  curIndex = -1;
+  openGrid(gridList, gridLabel);
+};
+
+function indexForOffset(off) { return curIndex + off; }
+
+function buildAllSlots() {
+  track.innerHTML = '';
+  slotEls = { '-1': null, '0': null, '1': null };
+  ['-1','0','1'].forEach(k => {
+    const idx = curIndex + Number(k);
+    if (idx < 0 || idx >= feedList.length) return;
+    const el = buildSlide(feedList[idx], idx);
+    el.dataset.slot = k;
+    track.appendChild(el);
+    slotEls[k] = el;
+  });
+  layoutSlots();
+}
+
+// Advance the carousel by +1 (next) or -1 (prev), recycling slots so only three
+// Advance by ±1. Recycle the existing slot elements instead of rebuilding them,
+// so the video you swiped to — which was already preloaded — keeps its player
+// and starts instantly, rather than being destroyed and recreated (a recreate
+// loses any warm autoplay state and causes a visible reload).
+function commitAdvance(dir) {
+  const newIndex = curIndex + dir;
+  if (newIndex < 0 || newIndex >= feedList.length) { setTrack(0, true); return; }
+
+  const old = { '-1': slotEls['-1'], '0': slotEls['0'], '1': slotEls['1'] };
+  const next = { '-1': null, '0': null, '1': null };
+
+  if (dir === 1) {
+    // moving forward: old next becomes current, old current becomes prev
+    if (old['-1']) { destroyPlayer(old['-1']); dropThumbRequest(old['-1'].dataset.id); old['-1'].remove(); }
+    next['-1'] = old['0'];
+    next['0']  = old['1'];
+    curIndex = newIndex;
+    next['1'] = makeSlotSlide(curIndex + 1);
+  } else {
+    if (old['1']) { destroyPlayer(old['1']); dropThumbRequest(old['1'].dataset.id); old['1'].remove(); }
+    next['1']  = old['0'];
+    next['0']  = old['-1'];
+    curIndex = newIndex;
+    next['-1'] = makeSlotSlide(curIndex - 1);
+  }
+
+  slotEls = next;
+  ['-1','0','1'].forEach(k => { if (slotEls[k]) slotEls[k].dataset.slot = k; });
+
+  // Promote the incoming current slide FIRST, synchronously, as the very next
+  // thing after the swipe settles — every extra line before this is time
+  // subtracted from whatever gesture-validity window a platform's audible-
+  // autoplay policy enforces. If it was already warmed (see warmNeighbor), a
+  // single postMessage is all that's needed; ensurePlaying-going-forward.
+  promoteCurrent(next['0']);
+
+  // The demoted old-current slide is now a neighbour: keep it playing but
+  // muted rather than pausing it — a paused cross-origin iframe is exactly
+  // what iOS won't resume via postMessage, which is the original bug this
+  // warm-neighbour design must not reintroduce. Staying warm-but-muted also
+  // makes swiping back instant.
+  const demoted = (dir === 1) ? next['-1'] : next['1'];
+  if (demoted) {
+    const df = demoted.querySelector('iframe');
+    if (df) { demoted._lastAskedUnmute = false; post(df, 'mute'); }
+  }
+
+  layoutSlots();
+  setTrack(0, false);
+  warmNeighbors();   // start pre-buffering whichever edge slide is newly exposed
+}
+
+// Create a MUTED, autoplaying player for a neighbour slot ahead of time, so a
+// future swipe only needs one synchronous postMessage (promoteCurrent) to ask
+// an ALREADY-LIVE player for sound, instead of waiting through a full
+// create->ready->buffer->play handshake AFTER the gesture. That handshake
+// (several hundred ms, measured against the real player) was previously the
+// dominant source of delay between a swipe and the first unmute attempt —
+// consistent with sound reliably working on the first, directly-tapped video
+// but not on swiped-to ones.
+function warmNeighbor(el) {
+  if (!el || el.querySelector('iframe')) return;
+  if (el.classList.contains('unavailable-slide')) return;
+  el._becameCurrentAt = el._becameCurrentAt || Date.now();
+  if (!el._diag) el._diag = [];
+  createPlayer(el, true);   // true = force muted, regardless of desiredMuted
+  const nudge = () => {
+    if (slotEls['0'] === el) return;               // promoted — promoteCurrent owns it now
+    if (el._state === 1) return;
+    const f = el.querySelector('iframe');
+    if (f) { post(f, 'mute'); post(f, 'play'); }
+  };
+  if (el._warmTimer) clearInterval(el._warmTimer);
+  el._warmTimer = setInterval(() => {
+    if (slotEls['0'] === el || el._state === 1) { clearInterval(el._warmTimer); el._warmTimer = null; return; }
+    nudge();
+  }, 400);
+  nudge();
+}
+function warmNeighbors() {
+  ['-1', '1'].forEach(k => { if (slotEls[k]) warmNeighbor(slotEls[k]); });
+}
+
+// Promote a slide to current, synchronously, from within the swipe gesture's
+// own call chain. Reuses an already-warm (or still-warming) player rather
+// than tearing it down and starting over, which would throw away whatever
+// head start it already had. Falls back to the full creation path only when
+// there is genuinely no player yet (the very first video ever opened, or a
+// neighbour that somehow never got warmed in time).
+function promoteCurrent(el) {
+  if (!el) return;
+  const f = el.querySelector('iframe');
+  if (!f) { playCurrent(); return; }
+  if (el._warmTimer) { clearInterval(el._warmTimer); el._warmTimer = null; }
+  el._becameCurrentAt = el._becameCurrentAt || Date.now();
+  el._genericErrorFails = 0; el._autoplayFails = 0; el._errorBackoffUntil = 0; el._soundBlocked = false;
+  el._lastAskedUnmute = !desiredMuted;
+  post(f, desiredMuted ? 'mute' : 'unMute');
+  post(f, 'play');
+  diag(el, 'promoted (state ' + (el._state == null ? 'none' : el._state) + '), requesting ' + (desiredMuted ? 'mute' : 'unmute'));
+  const media = el.querySelector('.slide-media');
+  media.classList.remove('paused', 'needs-tap');
+  if (el._state === 1) media.classList.add('is-playing');
+  syncCurrentMuteBtn();
+  ensurePlaying(el);   // safety net — a no-op once genuinely stable at state 1
+}
+
+// Build a slide for an absolute index and insert it into the track (or return
+// null if out of range). Used to fill the newly-exposed edge slot on advance.
+function makeSlotSlide(idx) {
+  if (idx < 0 || idx >= feedList.length) return null;
+  const el = buildSlide(feedList[idx], idx);
+  track.appendChild(el);
+  return el;
+}
+
+// Run fn after the next paint. Setting an iframe's src in the same frame the
+// slide's position/visibility just changed makes the browser silently drop the
+// load, so player creation must wait one paint. A SINGLE rAF is the minimum
+// paint-aligned path iOS needs for the muted-autoplay grant; a setTimeout
+// backstop guarantees fn still runs in a later task if rAF is ever starved
+// (tab backgrounded, Low Power Mode) — which would otherwise leave the video
+// permanently unloaded. Kept to one frame (not two) because every extra tick
+// between the swipe gesture and the src assignment is time iOS's separate,
+// stricter "audible autoplay needs a recent user gesture" check can run out
+// on — unlike the muted-autoplay grant, that one appears to require the
+// navigation to still read as gesture-adjacent, not just post-paint.
+function deferToPaint(fn) {
+  let done = false;
+  const run = () => { if (done) return; done = true; fn(); };
+  requestAnimationFrame(run);
+  setTimeout(run, 80);
+}
+
+function playCurrent() {
+  const el = slotEls['0'];
+  if (!el) return;
+  // Update the caption immediately (cheap, and it should never wait for a paint).
+  const it = feedList[curIndex];
+  if (it) { const c = el.querySelector('.slide-cat'); if (c) c.textContent = it.category; }
+
+  // Create the player after the slide has settled and painted (see deferToPaint).
+  // This is the single deferral point for BOTH the first video and every
+  // swiped-to video, so the iframe load reliably fires in every case.
+  deferToPaint(() => {
+    // Bail if the user swiped again, closed the feed, or this slide is no longer
+    // current in the meantime.
+    if (slotEls['0'] !== el) return;
+    if (!document.getElementById('feed').classList.contains('open')) return;
+    // Always give the current video a FRESH autoplaying player. If it carries a
+    // stale player (e.g. one left paused from a prior visit), tear it down first
+    // — iOS won't resume a paused cross-origin frame via postMessage, which is
+    // what left videos stuck on "Tap to play". A fresh player autoplays reliably.
+    const existing = el.querySelector('iframe');
+    if (existing && el._state !== 1) destroyPlayer(el);
+    el._createAttempt = 1;
+    el._sawSignal = false;
+    el._diag = [];                 // fresh timeline for this appearance
+    el._genericErrorFails = 0;
+    el._autoplayFails = 0;
+    el._errorBackoffUntil = 0;
+    el._soundBlocked = false;
+    el._becameCurrentAt = Date.now();
+    createPlayer(el);
+    ensurePlaying(el);
+  });
+  // NOTE: neighbouring slides ARE pre-warmed (see warmNeighbor), but always
+  // kept PLAYING, muted — never paused. A player created then immediately
+  // paused enters a state iOS will not resume, which is what caused a stuck
+  // "Tap to play" in an earlier version of this app; staying muted-but-
+  // playing avoids that failure mode while still letting a swipe promote an
+  // already-live player instead of starting one from scratch.
+}
+
+/* ---------- gestures on the stage ---------- */
+stage.addEventListener('pointerdown', (e) => {
+  if (animating) return;
+  dragging = true; dragMoved = false;
+  dragStartY = e.clientY; dragDY = 0; dragStartT = Date.now();
+  setTrack(0, false);
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => { if (!dragMoved) startFF(); }, 350);
+  try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+});
+
+stage.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  dragDY = e.clientY - dragStartY;
+  if (Math.abs(dragDY) > 8) { dragMoved = true; clearTimeout(holdTimer); if (holding) stopFF(); }
+  if (holding) return;
+  let dy = dragDY;
+  // resist at the ends (no prev before 0, no next after last)
+  if (curIndex === 0 && dy > 0) dy *= 0.3;
+  if (curIndex === feedList.length - 1 && dy < 0) dy *= 0.3;
+  setTrack(dy, false);
+});
+
+function endDrag(e) {
+  if (!dragging) return;
+  dragging = false;
+  clearTimeout(holdTimer);
+  if (holding) { stopFF(); return; }
+  const dt = Date.now() - dragStartT;
+  const H = stageHeight();
+  // a tap: little movement, short time → toggle play/pause
+  if (!dragMoved && dt < 400) { toggleCurrent(); setTrack(0, false); return; }
+  const threshold = H * 0.18;
+  const fast = Math.abs(dragDY) > 60 && dt < 250;
+  if (dragDY < 0 && (Math.abs(dragDY) > threshold || fast) && curIndex < feedList.length - 1) {
+    animating = true;
+    setTrack(-H, true);
+    afterTransition(() => { animating = false; commitAdvance(1); });
+  } else if (dragDY > 0 && (Math.abs(dragDY) > threshold || fast) && curIndex > 0) {
+    animating = true;
+    setTrack(H, true);
+    afterTransition(() => { animating = false; commitAdvance(-1); });
+  } else {
+    setTrack(0, true);   // snap back
+  }
+}
+stage.addEventListener('pointerup', endDrag);
+stage.addEventListener('pointercancel', () => { dragging = false; clearTimeout(holdTimer); if (holding) stopFF(); setTrack(0, true); });
+
+function afterTransition(fn) {
+  let done = false;
+  const h = () => { if (done) return; done = true; track.removeEventListener('transitionend', h); fn(); };
+  track.addEventListener('transitionend', h);
+  setTimeout(h, 360);   // fallback in case transitionend doesn't fire
+}
+
+/* ---------- tap play/pause + hold fast-forward ---------- */
+function toggleCurrent() {
+  const el = slotEls['0']; if (!el) return;
+  const media = el.querySelector('.slide-media');
+  const f = el.querySelector('iframe');
+  if (!f) { createPlayer(el); ensurePlaying(el); return; }
+  if (media.classList.contains('needs-tap')) {
+    // Manual recovery from a blocked autoplay: make a fresh, fully re-armed
+    // attempt rather than a single play() — if it still fails, the prompt
+    // returns on its own after the grace window.
+    el._autoplayFails = 0;
+    el._genericErrorFails = 0;
+    el._errorBackoffUntil = 0;
+    el._soundBlocked = false;    // a real tap — worth a fresh attempt at sound
+    ensurePlaying(el);
+    return;
+  }
+  if (el._state === 1) {
+    el.dataset.userPaused = 'true'; pauseSlide(el); media.classList.add('paused');
+  } else {
+    // Send the mute/unmute intent directly, synchronously, inside this tap —
+    // this IS a genuine user gesture, and applySound() alone would defer the
+    // unmute until the state->playing transition, landing outside the gesture.
+    delete el.dataset.userPaused;
+    el._lastAskedUnmute = !desiredMuted;
+    post(f, desiredMuted ? 'mute' : 'unMute');
+    post(f, 'play');
+    media.classList.remove('paused');
+  }
+}
+
+function startFF() {
+  const el = slotEls['0']; if (!el) return;
+  holding = true;
+  el.querySelector('.slide-media').classList.add('ffwd');
+  ffTimer = setInterval(() => {
+    const f = el.querySelector('iframe'); if (!f) return;
+    el._t = (el._t || 0) + 0.5; post(f, 'seekTo', el._t);
+  }, 250);
+}
+function stopFF() {
+  holding = false;
+  if (ffTimer) { clearInterval(ffTimer); ffTimer = null; }
+  const el = slotEls['0']; if (el) el.querySelector('.slide-media').classList.remove('ffwd');
+}
+
+/* ---------- slide construction ---------- */
+function buildSlide(item, i) {
+  const el = document.createElement('div');
+  el.className = 'slide';
+  el.dataset.id = item.id;
+  el.innerHTML =
+    '<div class="slide-media">' +
+      '<img alt="" decoding="async">' +
+      '<div class="status-badge"><div class="spinner"></div></div>' +
+      '<div class="mask-bottom"></div><div class="mask-rail"></div>' +
+      '<div class="pause-icon">&#10074;&#10074;</div>' +
+      '<div class="tap-icon">&#9654;</div>' +
+    '</div>' +
+    '<div class="slide-overlay">' +
+      '<div class="slide-title">' + esc(itemLabel(item)) + '</div>' +
+      '<div class="slide-cat">' + esc(item.category) + '</div>' +
+    '</div>' +
+    '<div class="rail">' +
+      '<button class="rail-btn mute-btn" aria-label="Sound">&#128263;</button>' +
+      '<button class="rail-btn share-btn" aria-label="Share">&#10148;</button>' +
+      '<button class="rail-btn tag-btn2" aria-label="Organise">&#127991;</button>' +
+    '</div>';
+  const media = el.querySelector('.slide-media');
+  bindThumb(el.querySelector('img'), item.id,
+    () => Math.abs(i - curIndex),
+    () => { el.classList.add('unavailable-slide');
+            media.querySelector('.status-badge').textContent = 'Video unavailable'; });
+  // rail buttons stop propagation so they don't start a drag
+  el.querySelector('.tag-btn2').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.share-btn').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.mute-btn').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.tag-btn2').onclick = (e) => { e.stopPropagation(); openCategorySheet(item); };
+  el.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
+  const mb = el.querySelector('.mute-btn');
+  syncMuteBtn(mb);
+  mb.onclick = (e) => {
+    e.stopPropagation();
+    desiredMuted = !desiredMuted;
+    if (slotEls['0']) {
+      // A real tap is exactly the fresh user gesture that can succeed where
+      // an automatic retry could not — give the current video another real
+      // shot at sound instead of leaving it permanently soundBlocked from an
+      // earlier automatic (non-gesture) attempt.
+      slotEls['0']._soundBlocked = false;
+      applySound(slotEls['0']);
+    }
+    document.querySelectorAll('.mute-btn').forEach(syncMuteBtn);
+  };
+  return el;
+}
+
+// Reflects the REAL, current sound state — not just the session preference.
+// Previously this only checked desiredMuted, so once the soundBlocked
+// fallback silently kept a video muted after a rejected unmute, the icon
+// kept claiming sound was on while the video was actually silent. Now it
+// checks the actual current slide's state when there is one.
+function syncMuteBtn(b) {
+  const slide = b.closest('.slide');
+  const isCurrent = slide && slotEls['0'] === slide;
+  const blocked = isCurrent && !desiredMuted && (slide._soundBlocked || slide._muted === true);
+  if (desiredMuted) {
+    b.innerHTML = '&#128263;';
+    b.classList.remove('active', 'blocked');
+  } else if (blocked) {
+    // Session wants sound, but THIS video's unmute was rejected and it's
+    // playing muted as a fallback — a tap retries with a fresh gesture.
+    b.innerHTML = '&#128263;';
+    b.classList.remove('active');
+    b.classList.add('blocked');
+  } else {
+    b.innerHTML = '&#128266;';
+    b.classList.add('active');
+    b.classList.remove('blocked');
+  }
+}
+
+// Re-render just the current slide's own mute button, for live updates when
+// its real sound state changes out from under the session preference (e.g.
+// the soundBlocked fallback firing, or an onMute report arriving).
+function syncCurrentMuteBtn() {
+  const el = slotEls['0'];
+  if (!el) return;
+  const b = el.querySelector('.mute-btn');
+  if (b) syncMuteBtn(b);
+}
+
+// Remove a video from the current feed view (used by delete/restore/purge).
+function feedDropCurrent(id) {
+  const i = feedList.findIndex(x => x.id === id);
+  if (i < 0) return;
+  feedList.splice(i, 1);
+  if (!feedList.length) { document.getElementById('feedBack').onclick(); return; }
+  if (curIndex >= feedList.length) curIndex = feedList.length - 1;
+  else if (i < curIndex) curIndex--;
+  buildAllSlots(); setTrack(0, false); playCurrent(); warmNeighbors();
+}
+
+// keep slot heights correct across rotation / resize
+window.addEventListener('resize', () => {
+  if (document.getElementById('feed').classList.contains('open')) {
+    layoutSlots(); setTrack(0, false);
+  }
+});
+
+
+/* ============================================================
+   PLAYER
+   ============================================================ */
+function playerSrc(id, muted) {
+  const p = new URLSearchParams({
+    // autoplay + playsinline is required for inline autoplay on iOS (missing
+    // playsinline is why the player wanted fullscreen and silently failed to
+    // start on iPhone). muted is passed explicitly by the caller: the current
+    // slide uses the session's sound preference (asking to autoplay already-
+    // unmuted gets far more reliable audio than starting muted and unmuting
+    // via postMessage after the fact), while a warm background neighbour is
+    // ALWAYS muted regardless of the session preference, since it must never
+    // make sound before it is actually promoted to current.
+    rel:'0', autoplay:'1', loop:'1', muted: muted ? '1' : '0', playsinline:'1',
+    controls:'0', progress_bar:'0', play_button:'0', volume_control:'0',
+    fullscreen_button:'0', timestamp:'0', music_info:'0', description:'0',
+    native_context_menu:'0', closed_caption:'0'
+  });
+  return 'https://www.tiktok.com/player/v1/' + id + '?' + p.toString();
+}
+function post(f, type, value) {
+  if (f && f.contentWindow) f.contentWindow.postMessage({ 'x-tiktok-player':true, type, value }, '*');
+}
+
+// forceMuted: true for a warm background neighbour (always muted); falsy for
+// the current slide (uses the session's desiredMuted preference).
+function createPlayer(el, forceMuted) {
+  if (!el || el.querySelector('iframe')) return null;
+  if (el.classList.contains('unavailable-slide')) return null;
+  bindPlayerMessages();
+  const f = document.createElement('iframe');
+  // Attributes MUST be set before src, and the iframe must be attached to the
+  // visible DOM before the load starts. If src is assigned first (or before the
+  // element is on-screen), the load begins without the autoplay grant and iOS
+  // refuses to autoplay. The working diagnostic sets flags first, attaches, then
+  // sets src — matching that order is what makes autoplay fire.
+  f.allow = 'autoplay; fullscreen';
+  f.setAttribute('playsinline', '');
+  f.setAttribute('webkit-playsinline', '');
+  f.setAttribute('scrolling', 'no');
+  el.querySelector('.slide-media').appendChild(f);   // attach while visible
+  el.querySelector('.slide-media').classList.add('has-player');
+  f.src = playerSrc(el.dataset.id, forceMuted || desiredMuted);   // src LAST, after attach
+  el._createdAt = Date.now();
+  diag(el, 'create #' + (el._createAttempt || 1) + (forceMuted ? ' (warm neighbour)' : ''));
+  armReadyWatchdog(el);
+  return f;
+}
+
+// Some player iframes — especially one created right after the previous heavy
+// player was torn down — silently never fire ANY message (the navigation gets
+// dropped), leaving the video frozen forever. Only that total-silence case is
+// recovered here: if even one message (ready / state / time) has arrived, the
+// player is alive and we leave it alone, so a merely slow handshake is never
+// disrupted. A dropped navigation is recreated up to twice.
+function armReadyWatchdog(el) {
+  if (el._readyWatchdog) clearTimeout(el._readyWatchdog);
+  el._readyWatchdog = setTimeout(() => {
+    const stillPresent = slotEls['0'] === el || slotEls['-1'] === el || slotEls['1'] === el;
+    if (!stillPresent) return;                       // fully recycled away already
+    if (el._sawSignal) return;                       // player is alive — don't touch it
+    const attempt = (el._createAttempt || 1);
+    if (attempt >= 3) { diag(el, 'watchdog gave up'); return; }
+    diag(el, 'watchdog recreate -> attempt ' + (attempt + 1));
+    el._createAttempt = attempt + 1;
+    const isCurrent = slotEls['0'] === el;
+    destroyPlayer(el);
+    createPlayer(el, !isCurrent);
+    if (isCurrent) ensurePlaying(el); else warmNeighbor(el);
+  }, 6000);
+}
+function destroyPlayer(el) {
+  if (!el) return;
+  if (el._playTimer) { clearInterval(el._playTimer); el._playTimer = null; }
+  if (el._warmTimer) { clearInterval(el._warmTimer); el._warmTimer = null; }
+  if (el._soundTimers) { el._soundTimers.forEach(clearTimeout); el._soundTimers = null; }
+  if (el._readyWatchdog) { clearTimeout(el._readyWatchdog); el._readyWatchdog = null; }
+  const f = el.querySelector('iframe');
+  if (!f) return;
+  f.remove();
+  const m = el.querySelector('.slide-media');
+  if (m) m.classList.remove('has-player','paused','needs-tap','is-playing');
+  delete el.dataset.userPaused;
+  el._state = undefined;
+}
+// Pause is a command we issue, so reflect it immediately rather than waiting
+// for the player's report — otherwise tap-to-toggle can read a stale state.
+function pauseSlide(el) {
+  if (!el) return;
+  const f = el.querySelector('iframe');
+  if (f) post(f, 'pause');
+  if (el._state === 1) el._state = 2;
+  if (el._playTimer) { clearInterval(el._playTimer); el._playTimer = null; }
+}
+
+// With muted + autoplay + playsinline in the embed URL, iOS plays the video
+// inline on its own — that is the primary, reliable path. This function just
+// nudges play() a few times as backup (the player can be slow to accept the
+// URL autoplay), and only if it still hasn't started does it surface a
+// tap-to-play prompt. The thumbnail stays visible underneath until playback is
+// confirmed, so there is never a black frame.
+function ensurePlaying(el) {
+  if (!el) return;
+  // A video already known to be gone has no player and shows "Video unavailable";
+  // don't nudge play or fall through to a "Tap to play" prompt for it.
+  if (el.classList.contains('unavailable-slide')) return;
+  delete el.dataset.userPaused;
+  const media = el.querySelector('.slide-media');
+  if (media) { media.classList.remove('paused'); media.classList.remove('needs-tap'); }
+  if (el._playTimer) clearInterval(el._playTimer);
+
+  // Real-player timing (measured against player/v1): onPlayerReady lands ~1.5-2.5s
+  // after the iframe src is set, and buffering (state 3) can precede the first
+  // playing frame. The manual "Tap to play" affordance is a fallback for when
+  // autoplay is genuinely blocked (e.g. iOS Low Power Mode) — it must NOT appear
+  // during the normal handshake, or every video flashes a spurious prompt before
+  // it starts on its own. So: keep nudging play() the whole time, but only offer
+  // the manual tap once a generous grace window has passed AND the player is not
+  // actively buffering. A hard cap covers a player that never progresses at all.
+  const startedAt = Date.now();
+  const GRACE = 4500;               // don't offer a tap before autoplay realistically fires
+  const HARD_CAP = 15000;           // but never nudge forever if it's truly stuck
+  const tryPlay = () => {
+    if (slotEls['0'] !== el || el.dataset.userPaused === 'true') {
+      clearInterval(el._playTimer); el._playTimer = null; return;
+    }
+    if (el._state === 1) {          // playing — autoplay succeeded, we're done
+      clearInterval(el._playTimer); el._playTimer = null; return;
+    }
+    const f = el.querySelector('iframe');
+    // Skip the nudge while ANY onPlayerError handler (3002 or generic) is in
+    // its own backoff window — those handlers own retry timing for their
+    // failure mode, and this loop firing on top of them at its own 400ms
+    // cadence is exactly what caused two independent retries to fight over
+    // the mute state and repeatedly re-trigger ERR:3002 / "unmute rejected"
+    // in a loop that never resolved.
+    const backoffActive = el._errorBackoffUntil && Date.now() < el._errorBackoffUntil;
+    // Nudge play() using the CURRENT sound preference — matching what the src URL
+    // already requested (see playerSrc). Forcing mute here regardless of
+    // desiredMuted would undo a genuine unmuted-autoplay request while still
+    // buffering, pushing every unmute attempt back onto the fragile
+    // after-the-fact postMessage path this fix is trying to avoid. But once
+    // this video has demonstrated sound is genuinely blocked (soundBlocked),
+    // stop asking for unmute — repeating it just reproduces the same 3002.
+    const wantUnmute = !desiredMuted && !el._soundBlocked;
+    el._lastAskedUnmute = wantUnmute;
+    if (f && !backoffActive) { post(f, wantUnmute ? 'unMute' : 'mute'); post(f, 'play'); }
+    const waited = Date.now() - startedAt;
+    const buffering = el._state === 3;   // still loading — keep waiting, no prompt
+    if (waited > HARD_CAP || (waited > GRACE && !buffering)) {
+      clearInterval(el._playTimer); el._playTimer = null;
+      if (el._state !== 1 && media) {
+        media.classList.add('needs-tap');
+        diag(el, 'needs-tap (waited ' + waited + 'ms, last state ' +
+                 (el._state == null ? 'none' : el._state) + ')');
+      }
+    }
+  };
+  tryPlay();
+  el._playTimer = setInterval(tryPlay, 400);
+}
+
+// Sound follows the session setting. iOS permits unmuting a video that is
+// already playing; on a paused one it is a no-op until the next play(). Nudged
+// twice because the player can re-assert its own mute shortly after load.
+// Sound follows the session setting, but iOS BLOCKS unmuted autoplay: a video may
+// only be unmuted once it is already playing. So we unmute only when the session
+// wants sound AND the player has reached the playing state; in every other case we
+// force mute. applySound is called on the state->playing transition (and nudged
+// twice after), which is the safe moment to lift the mute.
+function applySound(el) {
+  const send = () => {
+    const f = el.querySelector('iframe');
+    if (!f || slotEls['0'] !== el) return;
+    // Once this video's unmute has been genuinely rejected (soundBlocked),
+    // stop re-requesting it automatically — that is exactly what produced an
+    // endless mute->play->auto-unmute->ERR:3002 loop with no way out. Only a
+    // fresh tap on the mute icon (see its click handler) clears the flag.
+    const canUnmute = !desiredMuted && el._state === 1 && !el._soundBlocked;
+    el._lastAskedUnmute = canUnmute;
+    post(f, canUnmute ? 'unMute' : 'mute');
+  };
+  send();
+  if (el._soundTimers) el._soundTimers.forEach(clearTimeout);
+  el._soundTimers = [setTimeout(send, 250), setTimeout(send, 800)];
+}
+
+let msgBound = false;
+function bindPlayerMessages() {
+  if (msgBound) return;
+  msgBound = true;
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || !d['x-tiktok-player']) return;
+    let el = null;
+    ['-1','0','1'].forEach(k => {
+      const sl = slotEls[k];
+      if (sl) { const f = sl.querySelector('iframe'); if (f && f.contentWindow === e.source) el = sl; }
+    });
+    if (!el) return;
+    const f = el.querySelector('iframe');
+    const isActive = el === slotEls['0'];
+    el._sawSignal = true;   // any message means the iframe navigated & is alive
+
+    switch (d.type) {
+      case 'onPlayerReady':
+        if (el._readyWatchdog) { clearTimeout(el._readyWatchdog); el._readyWatchdog = null; }
+        diag(el, 'ready');
+        // The URL already requested the right muted/unmuted state (see
+        // playerSrc), so just reassert the CURRENT preference here rather than
+        // hard-coding mute — hard-coding it is what forced every video through
+        // the fragile "start muted, unmute later via postMessage" path.
+        if (isActive) {
+          el._lastAskedUnmute = !desiredMuted;
+          post(f, desiredMuted ? 'mute' : 'unMute');
+          post(f, 'play');
+        } else {
+          el._lastAskedUnmute = false;
+          post(f, 'pause');
+        }
+        break;
+      case 'onStateChange':
+        el._state = d.value;
+        diag(el, 'state:' + d.value);
+        if (isActive) {
+          const m = el.querySelector('.slide-media');
+          if (d.value === 1) {
+            if (el._playTimer) { clearInterval(el._playTimer); el._playTimer = null; }
+            if (el._readyWatchdog) { clearTimeout(el._readyWatchdog); el._readyWatchdog = null; }
+            el._involuntaryPauseRetries = 0;
+            applySound(el);
+            m.classList.add('is-playing');
+            m.classList.remove('paused','needs-tap');
+          } else if (d.value === 2) {
+            // The player emits transient paused states while buffering/starting.
+            // Only show the pause overlay when the user actually asked to pause.
+            if (el.dataset.userPaused === 'true') {
+              m.classList.add('paused');
+            } else {
+              // An involuntary pause the user didn't ask for. Measured against the
+              // real player: TikTok's own startup sequence legitimately cycles
+              // through playing->paused->buffering a couple of times before
+              // settling (nothing to do with permissions), so keep asking for the
+              // CURRENT sound preference on every retry — downgrading to forced
+              // mute after just one attempt (an earlier version of this fix) was
+              // giving up on real startup churn, not a genuine rejection. Only a
+              // pause that survives this whole retry budget is treated as truly
+              // stuck, and even then we keep the video playing (muted) rather than
+              // leaving it frozen — the video must never get stuck paused on its
+              // own, but sound is worth a real attempt first.
+              el._involuntaryPauseRetries = (el._involuntaryPauseRetries || 0) + 1;
+              diag(el, 'involuntary pause, retry ' + el._involuntaryPauseRetries);
+              if (el._involuntaryPauseRetries <= 6) {
+                // Respect soundBlocked (set by onPlayerError when an unmute was
+                // genuinely rejected) so this loop doesn't re-fight that outcome,
+                // and hold ensurePlaying's nudge off for one tick so the two
+                // loops don't double-fire in the same window.
+                const wantUnmute = !desiredMuted && !el._soundBlocked;
+                el._lastAskedUnmute = wantUnmute;
+                el._errorBackoffUntil = Date.now() + 300;
+                post(f, wantUnmute ? 'unMute' : 'mute');
+                post(f, 'play');
+              } else {
+                el._lastAskedUnmute = false;
+                post(f, 'mute');
+                post(f, 'play');
+              }
+            }
+          } else if (d.value === 0) {
+            // ended (loop=1 usually restarts, but guard anyway)
+            m.classList.remove('is-playing');
+          }
+          // buffering (3) / cued: leave the thumbnail poster up, show no overlay
+        } else {
+          // A non-active (neighbour) slide is INTENTIONALLY kept playing
+          // muted by warmNeighbor/promoteCurrent, so a future swipe can
+          // promote it instantly — do not pause it here. Just make sure it
+          // really is muted (defensive; it should already be).
+          if (d.value === 1 && el._muted === false) post(f, 'mute');
+        }
+        break;
+      case 'onCurrentTime':
+        if (d.value !== undefined) el._t = typeof d.value === 'object' ? d.value.currentTime : Number(d.value);
+        break;
+      case 'onMute':
+        // The player reports its real mute state, so we can tell whether an
+        // unmute actually took effect instead of assuming it did. Only flag it
+        // as "rejected" when we ourselves most recently asked to unmute —
+        // otherwise a deliberate mute (e.g. a background slide) would falsely
+        // log as a rejection just because the session wants sound overall.
+        el._muted = (d.value === true || d.value === 1 ||
+                    !!(d.value && d.value.muted === true));
+        if (isActive && el._lastAskedUnmute && el._muted) diag(el, 'unmute rejected');
+        if (isActive) syncCurrentMuteBtn();
+        break;
+      case 'onPlayerError': {
+        const code = d.value && d.value.errorCode;
+        diag(el, 'ERR:' + code);
+        if (!isActive) break;
+        if (code === 3002) {
+          // AUTOPLAY_ERROR. Two distinct cases share this code:
+          //   (a) the player was asked to autoplay UNMUTED and the platform
+          //       blocked it (a real, persistent rejection for THIS video —
+          //       retrying unmute again just reproduces the same error forever,
+          //       which is exactly what was observed: "unmute rejected" and
+          //       "ERR:3002" repeating in a loop with no resolution).
+          //   (b) muted autoplay itself got blocked (rare, but the retry-then-
+          //       give-up path below still applies).
+          // Once we've SPECIFICALLY seen this while trying to unmute, stop
+          // auto-retrying sound for this video — soundBlocked makes every
+          // other recovery path (tryPlay, applySound, the pause handler)
+          // request mute instead of fighting to re-unmute into the same wall.
+          // Only a fresh tap on the mute icon (a real, un-stale user gesture)
+          // resets this and gets another real attempt.
+          if (el._lastAskedUnmute) {
+            el._soundBlocked = true;
+            diag(el, 'sound blocked for this video, falling back to muted');
+            syncCurrentMuteBtn();
+          }
+          el._autoplayFails = (el._autoplayFails || 0) + 1;
+          const n = el._autoplayFails;
+          if (n <= 3) {
+            const backoff = 150 * n;
+            el._errorBackoffUntil = Date.now() + backoff;
+            el._lastAskedUnmute = false;
+            setTimeout(() => {
+              if (slotEls['0'] === el && el._state !== 1) { post(f, 'mute'); post(f, 'play'); }
+            }, backoff);
+          } else {
+            el.querySelector('.slide-media').classList.add('needs-tap');
+          }
+        } else {
+          // Any other error (server error, video-unavailable, etc.) is NOT
+          // something a fast retry fixes — the player can keep re-emitting it
+          // every few hundred ms indefinitely (observed: ERR:3001 repeating
+          // for 10+ seconds straight while ensurePlaying's 400ms loop kept
+          // nudging play). Hammering it back-to-back also risks looking like
+          // abuse to TikTok's own rate limiting, making things worse. Instead:
+          // back off with growing delays, cap total attempts, then stop and
+          // let the user's tap trigger a fresh, fully re-armed attempt.
+          el._genericErrorFails = (el._genericErrorFails || 0) + 1;
+          const n = el._genericErrorFails;
+          if (n <= 4) {
+            const backoff = Math.min(1000 * Math.pow(2, n - 1), 8000); // 1s,2s,4s,8s
+            el._errorBackoffUntil = Date.now() + backoff;
+            diag(el, 'backing off ' + backoff + 'ms after ' + n + ' error(s)');
+            const wantUnmute = !desiredMuted && !el._soundBlocked;
+            el._lastAskedUnmute = wantUnmute;
+            setTimeout(() => {
+              if (slotEls['0'] === el && el._state !== 1) { post(f, wantUnmute ? 'unMute' : 'mute'); post(f, 'play'); }
+            }, backoff);
+          } else {
+            diag(el, 'giving up after ' + n + ' errors');
+            el._errorBackoffUntil = Infinity; // ensurePlaying's loop stops nudging entirely
+            el.querySelector('.slide-media').classList.add('needs-tap');
+          }
+        }
+        break;
+      }
+    }
+  });
+}
+
+/* ============================================================
+   PER-VIDEO SHEET: categories, delete, restore, purge
+   ============================================================ */
+function openCategorySheet(item) {
+  const list = document.getElementById('sheetCats');
+  list.innerHTML = '';
+  const inTrash = item.category === DELETED;
+
+  if (!inTrash) {
+    state.categories.filter(c => c !== DELETED).forEach(cat => {
+      const r = document.createElement('div');
+      r.className = 'sheet-cat' + (cat === item.category ? ' selected' : '');
+      r.textContent = cat + (cat === item.category ? '  \u2713' : '');
+      r.onclick = () => {
+        item.category = cat; save();
+        const el = slotEls['0'];
+        if (el && el.dataset.id === item.id) el.querySelector('.slide-cat').textContent = cat;
+        closeSheet();
+      };
+      list.appendChild(r);
+    });
+  }
+  const act = (label, cls, fn) => {
+    const r = document.createElement('div');
+    r.className = 'sheet-cat sheet-action' + (cls ? ' ' + cls : '');
+    r.textContent = label; r.onclick = fn; list.appendChild(r);
+  };
+  if (inTrash) {
+    act('Restore to Uncategorized','',() => { restoreVideo(item); closeSheet(); });
+    act('Delete permanently','destructive',() => {
+      closeSheet();
+      confirmModal({ title:'Delete permanently?',
+        message:'This removes the video from your library for good.',
+        confirmLabel:'Delete', destructive:true, onConfirm:() => purgeVideo(item) });
+    });
+  } else {
+    act('Delete','destructive',() => { deleteVideo(item); closeSheet(); });
+  }
+  document.getElementById('sheetBackdrop').classList.add('open');
+  document.getElementById('sheet').classList.add('open');
+}
+function closeSheet() {
+  document.getElementById('sheetBackdrop').classList.remove('open');
+  document.getElementById('sheet').classList.remove('open');
+}
+document.getElementById('sheetBackdrop').onclick = closeSheet;
+document.getElementById('newCatBtn').onclick = () => {
+  const inp = document.getElementById('newCatInput');
+  const name = (inp.value || '').trim();
+  if (!name || name === DELETED) return;
+  if (!state.categories.includes(name)) state.categories.push(name);
+  inp.value = '';
+  save();
+  const el = slotEls['0'];
+  const item = feedList[curIndex];
+  if (item) { item.category = name; if (el) el.querySelector('.slide-cat').textContent = name; }
+  closeSheet();
+};
+
+function deleteVideo(item) {
+  item.category = DELETED;
+  if (!state.categories.includes(DELETED)) state.categories.push(DELETED);
+  save(); dropFromCurrentViews(item); toast('Moved to Deleted');
+}
+function restoreVideo(item) {
+  item.category = 'Uncategorized';
+  if (!state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+  save(); dropFromCurrentViews(item); toast('Restored');
+}
+function purgeVideo(item) {
+  state.items = state.items.filter(i => i.id !== item.id);
+  state.purged = state.purged || [];
+  if (!state.purged.includes(item.id)) state.purged.push(item.id);
+  flushSave();                    // irreversible: never leave it in a debounce window
+  dropFromCurrentViews(item);
+  toast('Deleted permanently');
+}
+function emptyDeleted() {
+  const gone = state.items.filter(i => i.category === DELETED);
+  if (!gone.length) { toast('Nothing to empty'); return; }
+  confirmModal({ title:'Empty Deleted?',
+    message: gone.length + ' video(s) will be removed for good.',
+    confirmLabel:'Empty', destructive:true,
+    onConfirm: () => {
+      state.purged = state.purged || [];
+      gone.forEach(i => { if (!state.purged.includes(i.id)) state.purged.push(i.id); });
+      state.items = state.items.filter(i => i.category !== DELETED);
+      flushSave();
+      if (document.getElementById('gridView').classList.contains('open') && gridLabel === DELETED) {
+        openGrid([], DELETED);
+      }
+      renderHome();
+      toast('Deleted ' + gone.length);
+    }});
+}
+
+// Remove a video from whatever the user is looking at right now.
+function dropFromCurrentViews(item) {
+  const gi = gridList.findIndex(x => x.id === item.id);
+  if (gi >= 0) gridList.splice(gi, 1);
+  if (document.getElementById('feed').classList.contains('open')) {
+    feedDropCurrent(item.id);
+  } else {
+    const fi = feedList.findIndex(x => x.id === item.id);
+    if (fi >= 0) feedList.splice(fi, 1);
+  }
+  if (document.getElementById('gridView').classList.contains('open')) {
+    gridVL.setItems(gridList, gridVL.rowH);
+    document.getElementById('gridEmpty').style.display = gridList.length ? 'none' : 'block';
+  }
+}
+
+/* ============================================================
+   SHARE
+   ============================================================ */
+async function shareVideo(item) {
+  const url = itemUrl(item);
+  if (navigator.share) { try { await navigator.share({ url }); } catch (e) {} return; }
+  try { await navigator.clipboard.writeText(url); toast('Link copied'); }
+  catch (e) { toast('Could not share on this device'); }
+}
+
+/* ============================================================
+   UI PRIMITIVES
+   ============================================================ */
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+function closeOverlays() {
+  document.querySelectorAll('.modal-backdrop, .action-sheet').forEach(e => e.remove());
+}
+function inputModal({ title, placeholder, initialValue, confirmLabel, onSubmit }) {
+  closeOverlays();
+  const b = document.createElement('div');
+  b.className = 'modal-backdrop';
+  b.innerHTML =
+    '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div>' +
+    '<input class="modal-input" id="modalInput" placeholder="' + esc(placeholder || '') +
+    '" value="' + esc(initialValue || '') + '">' +
+    '<div class="modal-error" id="modalError"></div><div class="modal-actions">' +
+    '<button class="modal-btn" id="modalCancel">Cancel</button>' +
+    '<button class="modal-btn primary" id="modalConfirm">' + esc(confirmLabel) + '</button></div></div>';
+  document.body.appendChild(b);
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelector('#modalCancel').onclick = closeOverlays;
+  b.querySelector('#modalConfirm').onclick = () => {
+    const v = (b.querySelector('#modalInput').value || '').trim();
+    if (!v) { b.querySelector('#modalError').textContent = 'Enter a name.'; return; }
+    const err = onSubmit(v);
+    if (err) { b.querySelector('#modalError').textContent = err; return; }
+    closeOverlays();
+  };
+}
+function confirmModal({ title, message, confirmLabel, destructive, onConfirm }) {
+  closeOverlays();
+  const b = document.createElement('div');
+  b.className = 'modal-backdrop';
+  b.innerHTML =
+    '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div>' +
+    '<div class="modal-message">' + esc(message) + '</div><div class="modal-actions">' +
+    '<button class="modal-btn" id="modalCancel">Cancel</button>' +
+    '<button class="modal-btn ' + (destructive ? 'destructive' : 'primary') + '" id="modalConfirm">' +
+    esc(confirmLabel) + '</button></div></div>';
+  document.body.appendChild(b);
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelector('#modalCancel').onclick = closeOverlays;
+  b.querySelector('#modalConfirm').onclick = () => { onConfirm(); closeOverlays(); };
+}
+function actionSheet({ title, rows }) {
+  closeOverlays();
+  const s = document.createElement('div');
+  s.className = 'action-sheet';
+  s.innerHTML = (title ? '<div class="action-sheet-title">' + esc(title) + '</div>' : '') +
+    rows.map((r, i) => '<div class="action-row' + (r.destructive ? ' destructive' : '') +
+                       '" data-idx="' + i + '">' + esc(r.label) + '</div>').join('') +
+    '<div class="action-row cancel" id="sheetCancel">Cancel</div>';
+  document.body.appendChild(s);
+  rows.forEach((r, i) => {
+    s.querySelector('[data-idx="' + i + '"]').onclick = () => { closeOverlays(); r.onClick(); };
+  });
+  s.querySelector('#sheetCancel').onclick = closeOverlays;
+}
+
+/* ---- debug overlay ---- */
+let DEBUG = false;
+const dlines = [];
+function dlog(m) {
+  if (!DEBUG) return;
+  dlines.unshift(m);
+  if (dlines.length > 40) dlines.pop();
+  const el = document.getElementById('debugLog');
+  if (el) el.textContent = dlines.join('\n');
+}
+
+// Per-video lifecycle recorder. Each entry is timestamped from the moment the
+// slide became current, so a single screenshot of the overlay after a failing
+// swipe shows exactly where playback stalled: whether the player never handshook
+// (no "ready"), handshook then got an autoplay error (ERR:3002), or reached
+// buffering (state:3) but never playing (state:1). Always records; the overlay
+// just reveals it.
+function diag(el, msg) {
+  if (!el) return;
+  if (!el._diag) el._diag = [];
+  const t = el._becameCurrentAt ? (Date.now() - el._becameCurrentAt) : 0;
+  el._diag.push(t + 'ms ' + msg);
+  if (el._diag.length > 30) el._diag.shift();
+  renderDiag();
+}
+function renderDiag() {
+  const box = document.getElementById('debugLog');
+  if (!box || !DEBUG) return;
+  const el = slotEls['0'];
+  if (!el) { box.textContent = '(no current video)'; return; }
+  const id = el.dataset.id || '?';
+  const st = el._state === undefined || el._state === null ? '—' : el._state;
+  const stName = ({1:'PLAYING',2:'paused',3:'buffering',0:'ended'})[el._state] || 'no-handshake';
+  const hasIframe = !!el.querySelector('iframe');
+  const header =
+    'video …' + id.slice(-8) + '   idx ' + curIndex + '/' + (feedList.length - 1) + '\n' +
+    'state ' + st + ' (' + stName + ')   iframe:' + (hasIframe ? 'yes' : 'NO') +
+    '   muted:' + (desiredMuted ? 'yes' : 'no') + '\n' +
+    '─────────────\n';
+  box.textContent = header + (el._diag || []).join('\n');
+}
+document.getElementById('debugToggle').onclick = () => {
+  DEBUG = !DEBUG;
+  document.getElementById('debugLog').classList.toggle('show', DEBUG);
+  if (DEBUG) renderDiag();
+};
+
+/* ---- keep the grid virtual list correct across rotation / resize ---- */
+window.addEventListener('resize', () => {
+  if (document.getElementById('gridView').classList.contains('open')) {
+    gridVL.setItems(gridList, gridRowHeight());
+    gridScroll.scrollTop = gridScrollMemory[gridLabel] || 0;
+    gridVL.update(true);
+  }
+});
+
+boot();
+</script>
+</body>
+</html>
