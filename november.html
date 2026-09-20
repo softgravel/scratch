@@ -1,0 +1,221 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Native Feed POC</title>
+<style>
+  :root { --bg:#000; --text:#f2f2f2; --accent:#3b7dd8; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:15px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif; overscroll-behavior:none; }
+  /* Vertical scroll-snap feed — native scrolling, one video per screen. This is
+     the primitive TikTok's own feed uses; it is instant because the browser owns
+     the scroll and we only keep a few real <video> elements alive at once. */
+  #feed { height:100dvh; overflow-y:scroll; scroll-snap-type:y mandatory; -webkit-overflow-scrolling:touch; }
+  .slide { position:relative; height:100dvh; scroll-snap-align:start; scroll-snap-stop:always;
+    display:flex; align-items:center; justify-content:center; background:#000; overflow:hidden; }
+  .slide video { width:100%; height:100%; object-fit:cover; background:#000; }
+  .poster { position:absolute; inset:0; background-size:cover; background-position:center; }
+  .badge { position:absolute; top:calc(12px + env(safe-area-inset-top)); left:12px; z-index:3;
+    background:rgba(0,0,0,.5); padding:4px 10px; border-radius:20px; font-size:12px; }
+  .spinner { position:absolute; z-index:2; width:34px; height:34px; border-radius:50%;
+    border:3px solid rgba(255,255,255,.25); border-top-color:#fff; animation:spin 1s linear infinite; opacity:0; transition:opacity .2s; }
+  .slide.buffering .spinner { opacity:1; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  /* One persistent sound button. The tap on THIS is the user gesture inside
+     which we unmute — the single thing iOS requires and the iframe can't give. */
+  #sound { position:fixed; right:14px; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:10;
+    width:54px; height:54px; border-radius:50%; border:0; background:rgba(0,0,0,.55); color:#fff; font-size:22px; }
+  #sound.on { background:var(--accent); }
+  #hint { position:fixed; left:0; right:0; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:9;
+    text-align:center; font-size:13px; color:#cfcfcf; pointer-events:none; transition:opacity .3s; }
+  #diag { position:fixed; left:8px; bottom:84px; z-index:10; max-width:70vw; font:11px/1.35 ui-monospace,monospace;
+    color:#6f6; background:rgba(0,0,0,.6); padding:6px 8px; border-radius:6px; white-space:pre-wrap; display:none; }
+  #diagToggle { position:fixed; left:14px; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:10;
+    width:44px; height:44px; border-radius:50%; border:0; background:rgba(0,0,0,.55); color:#fff; font-size:16px; }
+</style>
+
+<div id="feed"></div>
+<button id="sound" aria-label="Sound">&#128263;</button>
+<button id="diagToggle" aria-label="Debug">&#128027;</button>
+<div id="hint">Tap the speaker for sound</div>
+<pre id="diag"></pre>
+
+<script>
+/* ============================================================
+   NATIVE-VIDEO FEED — proof of concept.
+
+   Demonstrates the architecture TikTok actually uses, and that the
+   player/v1 iframe cannot: native <video>, a small recycled element pool,
+   neighbour preloading, IntersectionObserver-driven play, and — the part
+   that has been broken all along — UNMUTE PERFORMED SYNCHRONOUSLY INSIDE A
+   REAL USER GESTURE, which is the only thing iOS Safari accepts.
+
+   Uses public sample clips (with audio) because a static site cannot resolve
+   TikTok stream URLs. Swap SOURCES for real playable URLs (pre-downloaded
+   MP4s, or a resolver/proxy) and this is the real feed.
+   ============================================================ */
+
+// Same-origin sample clips generated locally, each with an AUDIBLE sine tone
+// (distinct pitch per clip) so this is a real sound test. Same-origin removes
+// any external-host/CORS variable. Swap for real playable URLs to ship the feed.
+const SOURCES = [
+  { src: 'clips/clip1.mp4', label: 'Tone G4 (392 Hz)' },
+  { src: 'clips/clip2.mp4', label: 'Tone B4 (494 Hz)' },
+  { src: 'clips/clip3.mp4', label: 'Tone D5 (587 Hz)' },
+  { src: 'clips/clip4.mp4', label: 'Tone A4 (440 Hz)' },
+  { src: 'clips/clip5.mp4', label: 'Tone E4 (330 Hz)' },
+];
+
+const feed = document.getElementById('feed');
+const soundBtn = document.getElementById('sound');
+const hint = document.getElementById('hint');
+
+let soundOn = false;            // session sound preference
+let audioUnlocked = false;      // has a real gesture ever unlocked audio on our pool?
+let activeIdx = -1;
+
+// ---- element pool: at most POOL live <video> nodes, reused across slides ----
+const POOL = 4;
+const pool = [];                // {video} reusable nodes
+function makeVideo() {
+  const v = document.createElement('video');
+  v.playsInline = true; v.muted = true; v.loop = true; v.preload = 'auto';
+  v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline','');
+  v.setAttribute('muted',''); v.setAttribute('loop','');
+  return v;
+}
+
+// Build lightweight slides for every item (cheap divs); <video> is attached only
+// to slides near the viewport, and detached when far, so memory/CPU stay flat.
+const slides = SOURCES.map((s, i) => {
+  const el = document.createElement('div');
+  el.className = 'slide'; el.dataset.i = i;
+  el.innerHTML = '<div class="poster"></div><div class="spinner"></div>' +
+                 '<div class="badge">' + (i+1) + '/' + SOURCES.length + ' · ' + s.label + '</div>';
+  feed.appendChild(el);
+  return el;
+});
+
+function dlog(m){ const d=document.getElementById('diag'); if(d.style.display!=='none'){ d.textContent=(m+'\n'+d.textContent).split('\n').slice(0,14).join('\n'); } }
+document.getElementById('diagToggle').onclick = () => { const d=document.getElementById('diag'); d.style.display = d.style.display==='none'?'block':'none'; };
+
+// Attach a pooled <video> to a slide (if not already), set its source, and make
+// it ready to play. Neighbours get preloaded (source set, paused) so the next
+// swipe is instant — this is the prefetch that makes it feel like TikTok.
+function attach(i) {
+  const slide = slides[i];
+  if (!slide || slide._video) return;
+  let v = pool.length < POOL ? makeVideo() : reclaimFarthest(i);
+  if (!v) v = makeVideo();
+  if (pool.indexOf(v) < 0) pool.push(v);
+  v._slideIdx = i;
+  slide._video = v;
+  // muted for autoplay/preload; unmuting only ever happens in a gesture (below)
+  v.muted = !(soundOn && audioUnlocked);
+  if (v.src !== SOURCES[i].src) v.src = SOURCES[i].src;
+  v.addEventListener('waiting', () => slide.classList.add('buffering'));
+  v.addEventListener('playing', () => slide.classList.remove('buffering'));
+  v.addEventListener('canplay', () => slide.classList.remove('buffering'));
+  slide.insertBefore(v, slide.firstChild);
+}
+function reclaimFarthest(i) {
+  let far = null, fard = -1;
+  for (const v of pool) {
+    const d = Math.abs((v._slideIdx ?? -99) - i);
+    if (d > fard && Math.abs((v._slideIdx ?? -99) - activeIdx) > 1) { fard = d; far = v; }
+  }
+  if (far) { const s = slides[far._slideIdx]; if (s && s._video === far) { s._video = null; far.pause(); far.removeAttribute('src'); far.load(); s.classList.remove('buffering'); } }
+  return far;
+}
+function detachFar() {
+  slides.forEach((s, i) => {
+    if (s._video && Math.abs(i - activeIdx) > 2) {
+      const v = s._video; s._video = null; v.pause(); v.removeAttribute('src'); v.load();
+      const pi = pool.indexOf(v); if (pi>=0) pool.splice(pi,1);
+      s.classList.remove('buffering');
+    }
+  });
+}
+
+function setActive(i) {
+  if (i === activeIdx) return;
+  activeIdx = i;
+  // Ensure current + neighbours are attached/preloaded.
+  attach(i); attach(i+1); attach(i-1);
+  detachFar();
+  slides.forEach((s, j) => {
+    const v = s._video; if (!v) return;
+    if (j === i) {
+      // Apply sound state to the active video. If sound is wanted AND audio was
+      // already unlocked by an earlier gesture, unmuting here is allowed because
+      // this same pooled element was unlocked before; otherwise stay muted.
+      v.muted = !(soundOn && audioUnlocked);
+      const p = v.play(); if (p) p.catch(()=>{ /* muted autoplay should not reject */ });
+      dlog('active ' + (i+1) + ' muted=' + v.muted);
+    } else {
+      v.pause();
+      if (j !== i) v.muted = true;
+    }
+  });
+  updateSoundUI();
+}
+
+// One IntersectionObserver drives which slide is active — the browser's own
+// scroll decides, so it stays perfectly in sync at any scroll speed.
+const io = new IntersectionObserver((entries) => {
+  let best = null, bestRatio = 0;
+  for (const e of entries) if (e.isIntersecting && e.intersectionRatio > bestRatio) { bestRatio = e.intersectionRatio; best = e.target; }
+  if (best && bestRatio >= 0.6) setActive(Number(best.dataset.i));
+}, { threshold: [0, 0.6, 0.9] });
+slides.forEach(s => io.observe(s));
+
+/* ---- THE iOS-CRITICAL PART: unmute inside the gesture, synchronously ---- */
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  hint.style.opacity = '0';
+  if (soundOn) {
+    // Unlock audio for the WHOLE pool inside this gesture: unmute + play each
+    // live element now, while we hold the user-activation token. Once unlocked,
+    // scrolling to another pooled element can unmute it without a fresh tap —
+    // this is how TikTok keeps sound on as you scroll.
+    audioUnlocked = true;
+    const act = slides[activeIdx] && slides[activeIdx]._video;
+    for (const s of slides) {
+      const v = s._video; if (!v) continue;
+      if (v === act) { v.muted = false; const p=v.play(); if(p)p.catch(()=>{}); }
+      else { // prime the others muted-playing so they're audio-eligible on activate
+        v.muted = true; const p=v.play(); if(p)p.catch(()=>{});
+        if (Math.abs((v._slideIdx??-9)-activeIdx) > 1) v.pause();
+      }
+    }
+    dlog('sound ON (unlocked in gesture)');
+  } else {
+    for (const s of slides) if (s._video) s._video.muted = true;
+    dlog('sound OFF');
+  }
+  updateSoundUI();
+});
+function updateSoundUI() {
+  const on = soundOn;
+  soundBtn.classList.toggle('on', on);
+  soundBtn.innerHTML = on ? '&#128266;' : '&#128263;';
+}
+
+// Also allow a tap on the video itself to toggle sound (same gesture rule).
+feed.addEventListener('click', (e) => {
+  if (e.target.closest('#sound, #diagToggle, #diag')) return;
+  soundBtn.click();
+});
+
+// Debug hook (also used by automated tests) — reports the true current state.
+window.__poc = () => {
+  const s = slides[activeIdx]; const v = s && s._video;
+  return {
+    activeIdx, soundOn, audioUnlocked,
+    liveVideos: document.querySelectorAll('#feed video').length,
+    active: v ? { muted:v.muted, paused:v.paused, cur:Math.round(v.currentTime*10)/10, ready:v.readyState } : null
+  };
+};
+
+// Kick off: activate the first slide (muted autoplay — always allowed).
+addEventListener('load', () => { attach(0); attach(1); setActive(0); });
+</script>
