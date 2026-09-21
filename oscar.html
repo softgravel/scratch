@@ -1,0 +1,218 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Feed (native + resolver)</title>
+<style>
+  :root { --bg:#000; --text:#f2f2f2; --accent:#3b7dd8; --dim:#8a8a8a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:15px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif; overscroll-behavior:none; }
+  #feed { height:100dvh; overflow-y:scroll; scroll-snap-type:y mandatory; -webkit-overflow-scrolling:touch; }
+  .slide { position:relative; height:100dvh; scroll-snap-align:start; scroll-snap-stop:always;
+    display:flex; align-items:center; justify-content:center; background:#000; overflow:hidden; }
+  .slide video, .slide .poster { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#000; }
+  .poster { background-size:cover; background-position:center; }
+  .badge { position:absolute; top:calc(12px + env(safe-area-inset-top)); left:12px; z-index:3;
+    background:rgba(0,0,0,.5); padding:4px 10px; border-radius:20px; font-size:12px; max-width:80vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .spinner { position:absolute; z-index:2; width:34px; height:34px; border-radius:50%;
+    border:3px solid rgba(255,255,255,.25); border-top-color:#fff; animation:spin 1s linear infinite; opacity:0; transition:opacity .2s; }
+  .slide.loading .spinner { opacity:1; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .err { position:absolute; z-index:3; text-align:center; color:var(--dim); font-size:13px; padding:0 24px; }
+  #sound { position:fixed; right:14px; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:10;
+    width:54px; height:54px; border-radius:50%; border:0; background:rgba(0,0,0,.55); color:#fff; font-size:22px; }
+  #sound.on { background:var(--accent); }
+  #hint { position:fixed; left:0; right:0; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:9;
+    text-align:center; font-size:13px; color:#cfcfcf; pointer-events:none; transition:opacity .3s; }
+  #diag { position:fixed; left:8px; bottom:84px; z-index:10; max-width:74vw; font:11px/1.35 ui-monospace,monospace;
+    color:#6f6; background:rgba(0,0,0,.6); padding:6px 8px; border-radius:6px; white-space:pre-wrap; display:none; }
+  #diagToggle { position:fixed; left:14px; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:10;
+    width:44px; height:44px; border-radius:50%; border:0; background:rgba(0,0,0,.55); color:#fff; font-size:16px; }
+</style>
+
+<div id="feed"></div>
+<button id="sound" aria-label="Sound">&#128263;</button>
+<button id="diagToggle" aria-label="Debug">&#128027;</button>
+<div id="hint">Tap the speaker for sound</div>
+<pre id="diag"></pre>
+
+<script>
+/* ============================================================
+   NATIVE-VIDEO FEED playing REAL TikToks — no backend, no downloads.
+
+   Pipeline: favorites.json (IDs) -> resolve ID to a direct MP4 URL via a free
+   public resolver API (CORS-open, called straight from the browser) -> feed
+   the URL to a pooled native <video>. This is what makes it fast and lets
+   sound work (unmute happens synchronously in a tap gesture — the thing the
+   TikTok iframe embed can't do).
+
+   Resolution is LAZY (only videos you actually reach) and CACHED (resolved
+   URLs last hours), so scrolling doesn't hammer the resolver and the app
+   stays a pure portable static site.
+   ============================================================ */
+
+const RESOLVER = 'https://www.tikwm.com/api/?url=';   // free, CORS: *, returns direct mp4
+const RESOLVE_TTL = 2 * 60 * 60 * 1000;               // resolved URLs are good for ~hours
+const POOL = 4;
+
+const feed = document.getElementById('feed');
+const soundBtn = document.getElementById('sound');
+const hint = document.getElementById('hint');
+
+let items = [];
+let soundOn = false, audioUnlocked = false, activeIdx = -1;
+let dwellTimer = null;
+const DWELL_MS = 300;   // settle before resolving/loading, so fast flicks cost nothing
+
+function dlog(m){ const d=document.getElementById('diag'); if(d.style.display!=='none'){ d.textContent=(m+'\n'+d.textContent).split('\n').slice(0,16).join('\n'); } }
+document.getElementById('diagToggle').onclick = () => { const d=document.getElementById('diag'); d.style.display = d.style.display==='none'?'block':'none'; };
+
+/* ---------------- resolver (lazy + cached + rate-limit friendly) ------------- */
+function cacheGet(id){ try{ const r=JSON.parse(localStorage.getItem('rv:'+id)); if(r && Date.now()-r.ts < RESOLVE_TTL) return r; }catch(e){} return null; }
+function cacheSet(id,d){ try{ localStorage.setItem('rv:'+id, JSON.stringify({play:d.play,cover:d.cover,title:d.title,ts:Date.now()})); }catch(e){} }
+
+let chain = Promise.resolve(); let lastCall = 0;
+const inflight = new Map();
+function resolve(id){
+  const c = cacheGet(id); if (c) return Promise.resolve(c);
+  if (inflight.has(id)) return inflight.get(id);
+  // Serialize calls with a min gap — the free resolver rate-limits bursts.
+  const p = chain.then(async () => {
+    const wait = Math.max(0, 900 - (Date.now()-lastCall)); if (wait) await new Promise(r=>setTimeout(r,wait));
+    lastCall = Date.now();
+    const url = RESOLVER + encodeURIComponent('https://www.tiktok.com/@i/video/' + id);
+    const res = await fetch(url); const j = await res.json();
+    if (j.code !== 0 || !j.data || !j.data.play) throw new Error('resolve failed: ' + (j.msg||j.code));
+    let play = j.data.play; if (play[0] === '/') play = 'https://www.tikwm.com' + play;
+    let cover = j.data.cover || j.data.origin_cover || ''; if (cover && cover[0]==='/') cover='https://www.tikwm.com'+cover;
+    const out = { play, cover, title: j.data.title||'' };
+    cacheSet(id, out); return out;
+  });
+  chain = p.catch(()=>{});                 // keep the chain alive on failure
+  const guarded = p.finally(()=>inflight.delete(id));
+  inflight.set(id, guarded);
+  return guarded;
+}
+
+/* ---------------- pooled native <video> player ------------------------------ */
+const pool = [];
+function makeVideo(){
+  const v=document.createElement('video');
+  v.playsInline=true; v.muted=true; v.loop=true; v.preload='auto';
+  v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline',''); v.setAttribute('muted',''); v.setAttribute('loop','');
+  return v;
+}
+let slides = [];
+function buildSlides(){
+  feed.innerHTML='';
+  slides = items.map((it,i)=>{
+    const el=document.createElement('div'); el.className='slide'; el.dataset.i=i;
+    el.innerHTML='<div class="poster"></div><div class="spinner"></div>'+
+      '<div class="badge">'+(i+1)+'/'+items.length+'</div>';
+    feed.appendChild(el); io.observe(el); return el;
+  });
+}
+
+function farVideo(i){
+  let far=null,fd=-1;
+  for(const v of pool){ const d=Math.abs((v._i??-99)-i); if(d>fd && Math.abs((v._i??-99)-activeIdx)>1){fd=d;far=v;} }
+  if(far){ const s=slides[far._i]; if(s&&s._video===far){ s._video=null; far.pause(); far.removeAttribute('src'); far.load(); s.classList.remove('loading'); } }
+  return far;
+}
+
+// Attach a pooled video to slide i: resolve its URL (lazy/cached), then load.
+async function attach(i, makeActive){
+  const slide = slides[i]; if(!slide || slide._video) return;
+  let v = pool.length<POOL ? makeVideo() : (farVideo(i)||makeVideo());
+  if(pool.indexOf(v)<0) pool.push(v);
+  v._i = i; slide._video = v;
+  v.muted = !(soundOn && audioUnlocked);
+  slide.insertBefore(v, slide.firstChild);
+  slide.classList.add('loading');
+  try{
+    const r = await resolve(items[i].id);
+    if(slide._video !== v) return;                 // recycled while resolving
+    if(r.cover) slide.querySelector('.poster').style.backgroundImage = 'url("'+r.cover+'")';
+    if(v.src !== r.play){ v.src = r.play; }
+    const done=()=>slide.classList.remove('loading');
+    v.addEventListener('canplay', done, {once:true});
+    v.addEventListener('playing', ()=>slide.classList.remove('loading'));
+    v.addEventListener('waiting', ()=>slide.classList.add('loading'));
+    if(makeActive && activeIdx===i){ const p=v.play(); if(p)p.catch(()=>{}); }
+    dlog('loaded '+(i+1));
+  }catch(e){
+    slide.classList.remove('loading');
+    if(!slide.querySelector('.err')){ const d=document.createElement('div'); d.className='err'; d.textContent='Couldn’t load this video. Tap to retry.'; slide.appendChild(d); }
+    slide._video=null; v.pause(); v.removeAttribute('src'); v.load(); const pi=pool.indexOf(v); if(pi>=0)pool.splice(pi,1);
+    dlog('ERR '+(i+1)+': '+e.message);
+  }
+}
+function detachFar(){
+  slides.forEach((s,i)=>{ if(s._video && Math.abs(i-activeIdx)>2){ const v=s._video; s._video=null; v.pause(); v.removeAttribute('src'); v.load(); const pi=pool.indexOf(v); if(pi>=0)pool.splice(pi,1); s.classList.remove('loading'); }});
+}
+
+function setActive(i){
+  if(i===activeIdx) return;
+  activeIdx=i;
+  attach(i, true);
+  // preload immediate neighbours (resolve + buffer) so the next swipe is instant
+  scheduleNeighbours();
+  detachFar();
+  slides.forEach((s,j)=>{ const v=s._video; if(!v) return;
+    if(j===i){ v.muted=!(soundOn&&audioUnlocked); const p=v.play(); if(p)p.catch(()=>{}); }
+    else { v.pause(); v.muted=true; }
+  });
+  const t = items[i] && (cacheGet(items[i].id)||{}).title;
+  updateSoundUI();
+}
+let nbTimer=null;
+function scheduleNeighbours(){
+  clearTimeout(nbTimer);
+  nbTimer=setTimeout(()=>{ attach(activeIdx+1,false); attach(activeIdx-1,false); }, 250);
+}
+
+const io = new IntersectionObserver((ents)=>{
+  let best=null,br=0; for(const e of ents) if(e.isIntersecting && e.intersectionRatio>br){br=e.intersectionRatio; best=e.target;}
+  if(best && br>=0.6){
+    const i=Number(best.dataset.i);
+    clearTimeout(dwellTimer);
+    // Debounce: only commit to loading once settled, so flicking is free.
+    dwellTimer=setTimeout(()=>setActive(i), DWELL_MS);
+  }
+},{threshold:[0,0.6,0.9]});
+
+/* ---------------- iOS-correct unmute: synchronous, inside the gesture -------- */
+soundBtn.addEventListener('click',()=>{
+  soundOn=!soundOn; hint.style.opacity='0';
+  if(soundOn){
+    audioUnlocked=true;
+    const act=slides[activeIdx]&&slides[activeIdx]._video;
+    for(const s of slides){ const v=s._video; if(!v) continue;
+      if(v===act){ v.muted=false; const p=v.play(); if(p)p.catch(()=>{}); }
+      else { v.muted=true; const p=v.play(); if(p)p.catch(()=>{}); if(Math.abs((v._i??-9)-activeIdx)>1) v.pause(); }
+    }
+    dlog('sound ON (unlocked in gesture)');
+  } else { for(const s of slides) if(s._video) s._video.muted=true; dlog('sound OFF'); }
+  updateSoundUI();
+});
+function updateSoundUI(){ soundBtn.classList.toggle('on',soundOn); soundBtn.innerHTML = soundOn?'&#128266;':'&#128263;'; }
+
+feed.addEventListener('click',(e)=>{
+  if(e.target.closest('#sound,#diagToggle,#diag')) return;
+  const errSlide = e.target.closest('.slide');
+  if(errSlide && errSlide.querySelector('.err')){          // retry a failed load
+    const i=Number(errSlide.dataset.i); errSlide.querySelector('.err').remove();
+    try{ localStorage.removeItem('rv:'+items[i].id); }catch(_){}
+    attach(i, true); return;
+  }
+  soundBtn.click();
+});
+
+window.__poc = ()=>{ const s=slides[activeIdx],v=s&&s._video; return {activeIdx,soundOn,audioUnlocked,live:document.querySelectorAll('#feed video').length,active:v?{muted:v.muted,paused:v.paused,cur:Math.round(v.currentTime*10)/10,ready:v.readyState,src:(v.currentSrc||'').slice(0,60)}:null}; };
+
+/* ---------------- boot ------------------------------------------------------- */
+fetch('favorites.json').then(r=>r.json()).then(list=>{
+  items = list;
+  buildSlides();
+  setActive(0);
+}).catch(e=>{ feed.innerHTML='<div class="slide"><div class="err">Could not load favorites.json: '+e.message+'</div></div>'; });
+</script>
