@@ -1,0 +1,1734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Favorites">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://www.tiktok.com" crossorigin>
+<link rel="dns-prefetch" href="https://www.tiktok.com">
+<link rel="dns-prefetch" href="https://p16-sign-va.tiktokcdn.com">
+<title>Favorites</title>
+<style>
+  :root {
+    --bg:#000; --panel:#151515; --line:#242424;
+    --text:#f2f2f2; --dim:#8a8a8a; --accent:#3b7dd8;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body {
+    margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+    overscroll-behavior:none;
+  }
+  button { font:inherit; color:inherit; }
+
+  /* ===================== HOME ===================== */
+  #home { padding:max(18px,env(safe-area-inset-top)) 14px max(24px,env(safe-area-inset-bottom)); }
+  #allTile {
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:18px 16px; margin-bottom:14px;
+  }
+  #allTile .name { font-size:17px; font-weight:600; }
+  #allTile .count { font-size:13px; color:var(--dim); margin-top:3px; }
+  #catGrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .cat-tile {
+    position:relative; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:16px 14px; min-height:78px;
+    display:flex; flex-direction:column; justify-content:space-between;
+  }
+  .cat-tile .name { font-size:15px; font-weight:600; padding-right:22px; word-break:break-word; }
+  .cat-tile .count { font-size:12px; color:var(--dim); margin-top:6px; }
+  .cat-tile.add { align-items:center; justify-content:center; color:var(--dim); border-style:dashed; }
+  .cat-tile.trash { opacity:.72; }
+  .cat-manage {
+    position:absolute; top:6px; right:6px; background:none; border:0;
+    color:var(--dim); font-size:16px; line-height:1; padding:6px 8px;
+  }
+
+  /* ===================== GRID ===================== */
+  #gridView { position:fixed; inset:0; background:#000; display:none; flex-direction:column; z-index:15; }
+  #gridView.open { display:flex; }
+  .grid-top {
+    display:flex; align-items:center; gap:10px;
+    padding:max(14px,env(safe-area-inset-top)) 12px 8px;
+  }
+  .grid-title { font-size:15px; font-weight:600; flex:1; }
+  .icon-btn {
+    width:32px; height:32px; border-radius:50%; border:0;
+    background:rgba(255,255,255,0.09); color:var(--text); font-size:15px; line-height:1;
+  }
+  #searchRow { display:none; align-items:center; gap:8px; padding:0 12px 8px; }
+  #searchRow.open { display:flex; }
+  #searchInput {
+    flex:1; height:38px; border-radius:10px; border:1px solid var(--line);
+    background:var(--panel); color:var(--text); font-size:15px; padding:0 12px; outline:none;
+  }
+  #searchClear { width:34px; height:34px; border-radius:50%; border:0; background:rgba(255,255,255,.09); color:var(--text); font-size:18px; }
+  #gridScroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  /* Virtualized: the container is sized to the whole library, but only the
+     visible tiles exist in the DOM. */
+  #thumbGrid { position:relative; width:100%; }
+  .thumb-tile {
+    position:absolute; overflow:hidden;
+    background:linear-gradient(160deg,#232323,#111);
+  }
+  .thumb-tile img {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    opacity:0; transition:opacity .18s ease;
+  }
+  .thumb-tile img.loaded { opacity:1; }
+  .thumb-date {
+    position:absolute; left:4px; bottom:4px; font-size:9px;
+    color:rgba(255,255,255,.75); background:rgba(0,0,0,.45);
+    padding:1px 4px; border-radius:3px;
+  }
+  .thumb-tile.unavailable::after {
+    content:'Unavailable'; position:absolute; top:6px; left:6px;
+    font-size:9px; color:rgba(255,255,255,.6); background:rgba(0,0,0,.55);
+    padding:2px 5px; border-radius:3px;
+  }
+  #gridEmpty { padding:40px 20px; text-align:center; color:var(--dim); font-size:14px; display:none; }
+
+  /* date jump */
+  #datePanel {
+    position:absolute; left:0; right:0; bottom:0; background:#161616;
+    border-top:1px solid var(--line); max-height:55vh; overflow-y:auto;
+    transform:translateY(100%); transition:transform .22s ease; z-index:16;
+    padding-bottom:max(16px,env(safe-area-inset-bottom));
+  }
+  #datePanel.open { transform:translateY(0); }
+  .date-panel-inner { padding:8px 12px; }
+  .date-year-hdr {
+    font-size:13px; font-weight:700; color:var(--accent);
+    padding:12px 4px 6px; position:sticky; top:0; background:#161616;
+  }
+  .date-month-row {
+    display:inline-flex; margin:3px; padding:7px 12px; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; font-size:13px;
+  }
+
+  /* ===================== FEED ===================== */
+  #feed { position:fixed; inset:0; background:#000; display:none; flex-direction:column; z-index:20; }
+  #feed.open { display:flex; }
+  .feed-top {
+    position:absolute; top:0; left:0; right:0; z-index:8;
+    display:flex; align-items:center; gap:10px;
+    padding:max(12px,env(safe-area-inset-top)) 12px 8px;
+    background:linear-gradient(to bottom,rgba(0,0,0,.55),transparent);
+  }
+  .feed-label {
+    flex:1; font-size:13px; font-weight:600; text-align:center;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);
+  }
+  /* No native scroll anywhere in the feed. The stage is a fixed viewport and the
+     track holds exactly three slides (prev / current / next) that we move with a
+     CSS transform in response to swipe gestures. This eliminates the entire class
+     of native-scroll + scroll-snap + momentum bugs. */
+  #stage { position:absolute; inset:0; overflow:hidden; touch-action:none; background:#000; }
+  #track { position:absolute; left:0; top:0; width:100%; will-change:transform; }
+  /* The cross-origin iframe would swallow all touches, so it never receives
+     pointer events — we drive play/pause ourselves and capture every gesture on
+     the stage. The rail buttons (z-index 7) stay interactive above everything. */
+  .slide-media iframe { pointer-events:none; }
+  .slide {
+    position:absolute; left:0; width:100%; overflow:hidden;
+  }
+  .slide-media { position:absolute; inset:0; background:#0b0b0b; }
+  /* Thumbnail sits ABOVE the iframe (z-index 2 vs 1) until the video is
+     confirmed playing. On devices where autoplay is blocked this means the
+     slide shows its thumbnail, never a black frame; once playing, .is-playing
+     fades the thumbnail out to reveal the video underneath. */
+  .slide-media img {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    opacity:0; transition:opacity .2s ease; z-index:2;
+  }
+  .slide-media img.loaded { opacity:1; }
+  .slide-media.is-playing img { opacity:0; pointer-events:none; }
+  .slide-media iframe { position:absolute; inset:0; width:100%; height:100%; border:0; z-index:1; }
+  .slide-media video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#0b0b0b; z-index:1; pointer-events:none; }
+
+  /* scrims hiding TikTok's own chrome; taps can't reach it regardless */
+  .mask-bottom {
+    position:absolute; left:0; right:0; bottom:0; height:96px; z-index:3;
+    background:linear-gradient(to top,#000 0%,rgba(0,0,0,.9) 42%,rgba(0,0,0,0) 100%);
+    pointer-events:none;
+  }
+  .mask-rail {
+    position:absolute; right:0; bottom:96px; width:64px; height:250px; z-index:3;
+    background:linear-gradient(to left,rgba(0,0,0,.82) 0%,rgba(0,0,0,.5) 55%,rgba(0,0,0,0) 100%);
+    pointer-events:none;
+  }
+  /* full-surface tap interceptor: nothing reaches TikTok's player */
+
+  .status-badge {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:5;
+    pointer-events:none; text-align:center; max-width:220px;
+    font-size:12px; color:rgba(255,255,255,.5);
+  }
+  .spinner {
+    width:26px; height:26px; border-radius:50%; margin:0 auto;
+    border:2px solid rgba(255,255,255,.22); border-top-color:rgba(255,255,255,.75);
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .slide-media.has-player .status-badge { display:none; }
+  /* While a cold video is being resolved/buffered, keep the spinner up over the
+     thumbnail so it reads as loading rather than frozen. */
+  .slide-media.has-player.resolving .status-badge { display:block; }
+  .slide-media.is-playing .status-badge { display:none; }
+  .slide-media.paused .pause-icon,
+  .slide-media.needs-tap .tap-icon { display:flex; }
+  .pause-icon, .tap-icon {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:6;
+    width:74px; height:74px; border-radius:50%; background:rgba(0,0,0,.45);
+    display:none; align-items:center; justify-content:center;
+    font-size:30px; color:#fff; pointer-events:none;
+  }
+  .tap-icon {
+    padding-left:6px; width:88px; height:88px; font-size:36px;
+    background:rgba(0,0,0,.55); box-shadow:0 0 0 4px rgba(255,255,255,.14);
+  }
+  .slide-media.needs-tap::after {
+    content:'Tap to play'; position:absolute; left:0; right:0; z-index:6;
+    top:calc(50% + 62px); text-align:center; font-size:13px;
+    color:rgba(255,255,255,.9); text-shadow:0 1px 3px rgba(0,0,0,.7);
+    pointer-events:none;
+  }
+  .slide-media.ffwd::after {
+    content:'\26A1 2\00D7'; position:absolute; top:50%; left:50%;
+    transform:translate(-50%,-50%); z-index:7; font-size:19px; font-weight:700;
+    color:#fff; background:rgba(0,0,0,.5); padding:6px 14px; border-radius:20px;
+    pointer-events:none;
+  }
+  .slide-overlay {
+    position:absolute; left:0; right:74px; bottom:max(26px,env(safe-area-inset-bottom));
+    padding:0 16px; z-index:6; pointer-events:none;
+    text-shadow:0 1px 4px rgba(0,0,0,.65);
+  }
+  .slide-author { font-size:15px; font-weight:700; margin-bottom:3px; }
+  .slide-desc {
+    font-size:13px; line-height:1.35; color:rgba(255,255,255,.95); margin-bottom:5px;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .slide-desc.expanded { -webkit-line-clamp:unset; }
+  .slide-overlay .slide-desc { pointer-events:auto; }
+  .slide-title { font-size:12px; font-weight:600; color:rgba(255,255,255,.8); }
+  .slide-cat { font-size:12px; color:rgba(255,255,255,.7); margin-top:1px; }
+  .rail {
+    position:absolute; right:10px; bottom:max(118px,calc(env(safe-area-inset-bottom) + 108px));
+    display:flex; flex-direction:column; align-items:center; gap:16px; z-index:7;
+  }
+  .rail-btn {
+    width:46px; height:46px; border-radius:50%; border:0;
+    background:rgba(0,0,0,.5); color:var(--text); font-size:18px;
+  }
+  .rail-btn.active { background:var(--accent); }
+  .rail-btn.blocked { background:#8a5a1f; }
+
+  /* ===================== SHEETS / MODALS ===================== */
+  #sheetBackdrop { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; z-index:30; }
+  #sheetBackdrop.open { display:block; }
+  #sheet {
+    position:fixed; left:0; right:0; bottom:0; z-index:31; background:#1a1a1a;
+    border-radius:16px 16px 0 0; padding:16px 16px max(20px,env(safe-area-inset-bottom));
+    transform:translateY(100%); transition:transform .22s ease; max-height:70vh; overflow-y:auto;
+  }
+  #sheet.open { transform:translateY(0); }
+  .sheet-title { font-size:13px; color:var(--dim); margin-bottom:8px; }
+  .sheet-cat { padding:12px 4px; border-bottom:1px solid #262626; font-size:15px; }
+  .sheet-cat.selected { color:var(--accent); }
+  .sheet-action { font-weight:600; }
+  .sheet-action.destructive { color:#ff6b6b; }
+  .sheet-new { display:flex; gap:8px; margin-top:14px; }
+  .sheet-new input {
+    flex:1; background:#101010; border:1px solid #2a2a2a; border-radius:8px;
+    color:var(--text); padding:10px 12px; font-size:15px;
+  }
+  .sheet-new button { background:var(--accent); border:0; border-radius:8px; padding:0 16px; font-weight:600; }
+
+  .modal-backdrop {
+    position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:40;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .modal-card { background:#1c1c1c; border:1px solid var(--line); border-radius:14px; width:100%; max-width:320px; padding:18px; }
+  .modal-title { font-size:16px; font-weight:600; margin-bottom:6px; }
+  .modal-message { font-size:13px; color:var(--dim); margin-bottom:14px; }
+  .modal-input {
+    width:100%; background:#101010; border:1px solid #2a2a2a; border-radius:8px;
+    color:var(--text); padding:10px 12px; font-size:15px; margin-bottom:6px;
+  }
+  .modal-error { font-size:12px; color:#ff6b6b; min-height:15px; }
+  .modal-actions { display:flex; gap:8px; margin-top:10px; }
+  .modal-btn { flex:1; border:0; border-radius:8px; padding:11px 0; font-size:14px; font-weight:600; background:#2a2a2a; }
+  .modal-btn.primary { background:var(--accent); }
+  .modal-btn.destructive { background:#4a2020; color:#ff8f8f; }
+
+  .action-sheet {
+    position:fixed; left:16px; right:16px; bottom:max(20px,env(safe-area-inset-bottom));
+    z-index:41; background:#1c1c1c; border-radius:14px; overflow:hidden;
+  }
+  .action-sheet-title { font-size:12px; color:var(--dim); text-align:center; padding:12px; border-bottom:1px solid #262626; }
+  .action-row { padding:14px; text-align:center; font-size:16px; border-bottom:1px solid #262626; }
+  .action-row.destructive { color:#ff6b6b; }
+  .action-row.cancel { font-weight:600; border-bottom:0; }
+
+  #toast {
+    position:fixed; top:max(16px,env(safe-area-inset-top)); left:50%;
+    transform:translateX(-50%); background:#222; padding:8px 16px; border-radius:20px;
+    font-size:13px; z-index:50; box-shadow:0 2px 10px rgba(0,0,0,.4); display:none;
+  }
+  #toast.show { display:block; }
+
+  #debugLog {
+    position:absolute; left:0; right:0; bottom:0; max-height:38vh; overflow-y:auto;
+    margin:0; padding:8px 10px; background:rgba(0,0,0,.82); color:#5f5;
+    font-family:ui-monospace,monospace; font-size:10px; line-height:1.35;
+    z-index:40; white-space:pre-wrap; pointer-events:none; display:none;
+  }
+  #debugLog.show { display:block; }
+</style>
+</head>
+<body>
+
+<div id="home">
+  <div id="allTile"><div class="name">All Videos</div><div class="count" id="allCount">Loading…</div></div>
+  <div id="catGrid"></div>
+</div>
+
+<div id="gridView">
+  <div class="grid-top">
+    <button class="icon-btn" id="gridBack">&lsaquo;</button>
+    <div class="grid-title" id="gridTitle">All Videos</div>
+    <button class="icon-btn" id="searchBtn" aria-label="Search">&#128269;</button>
+    <button class="icon-btn" id="dateJumpBtn" style="display:none">&#128197;</button>
+  </div>
+  <div id="searchRow"><input id="searchInput" type="search" autocomplete="off" autocapitalize="off" placeholder="Search creator or description…"><button id="searchClear" aria-label="Clear">&times;</button></div>
+  <div id="gridScroll"><div id="thumbGrid"></div><div id="gridEmpty">Nothing here yet.</div></div>
+  <div id="datePanel"><div class="date-panel-inner" id="datePanelInner"></div></div>
+</div>
+
+<div id="feed">
+  <div class="feed-top">
+    <button class="icon-btn" id="feedBack">&lsaquo;</button>
+    <div class="feed-label" id="feedLabel">All Videos</div>
+    <button class="icon-btn" id="debugToggle">&#128027;</button>
+  </div>
+  <div id="stage"><div id="track"></div></div>
+  <pre id="debugLog"></pre>
+</div>
+
+<div id="sheetBackdrop"></div>
+<div id="sheet">
+  <div class="sheet-title">Move to category</div>
+  <div id="sheetCats"></div>
+  <div class="sheet-new"><input id="newCatInput" placeholder="New category"><button id="newCatBtn">Add</button></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+/* ============================================================
+   DATA
+   ============================================================ */
+const DELETED = 'Deleted';
+const DATA_VERSION = 5;
+
+let state = JSON.parse(localStorage.getItem('gallery-state') || 'null');
+
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function formatDate(iso) {
+  const d = new Date(String(iso).replace(' ','T'));
+  return isNaN(d) ? '' : d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+}
+function itemLabel(it) { return it.date ? formatDate(it.date) : ''; }
+function itemUrl(it) { return 'https://www.tiktok.com/@i/video/' + it.id; }
+function liveItems() { return state.items.filter(i => i.category !== DELETED); }
+
+let saveTimer = null;
+function save() { if (!saveTimer) saveTimer = setTimeout(flushSave, 400); }
+function flushSave() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  try { localStorage.setItem('gallery-state', JSON.stringify(state)); }
+  catch (e) {
+    // The thumbnail cache is rebuildable; drop it to make room for real data.
+    try { thumbCache = {}; localStorage.removeItem('thumb-cache');
+          localStorage.setItem('gallery-state', JSON.stringify(state)); }
+    catch (e2) { toast('Storage full — change may not be saved'); }
+  }
+}
+window.addEventListener('pagehide', flushSave);
+window.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); });
+
+async function boot() {
+  const fresh = !state || state.version !== DATA_VERSION || !state.hydrated;
+  if (!fresh) { handleIncomingAdd(); renderHome(); return; }
+  document.getElementById('allCount').textContent = 'Loading…';
+  try {
+    const raw = await (await fetch('favorites.json')).json();
+    const prev = {};
+    if (state && state.items) state.items.forEach(i => { prev[i.id] = i; });
+    const purged = new Set((state && state.purged) || []);
+    const cats = ((state && state.categories) || []).slice();
+    const items = raw.filter(e => !purged.has(e.id)).map(e => ({
+      id: e.id,
+      date: e.date,
+      category: (prev[e.id] && prev[e.id].category) || 'Uncategorized'
+    }));
+    if (!cats.includes('Uncategorized')) cats.unshift('Uncategorized');
+    if (items.some(i => i.category === DELETED) && !cats.includes(DELETED)) cats.push(DELETED);
+    state = { categories: cats, items, hydrated: true, version: DATA_VERSION, purged: [...purged] };
+    flushSave();
+  } catch (e) {
+    console.error('favorites.json failed to load', e);
+    state = state || { categories:['Uncategorized'], items:[], hydrated:false, version:DATA_VERSION, purged:[] };
+  }
+  handleIncomingAdd();
+  renderHome();
+}
+
+function handleIncomingAdd() {
+  const p = new URLSearchParams(window.location.search).get('add');
+  if (!p) return;
+  const m = String(p).match(/\/video\/(\d+)/);
+  const id = m ? m[1] : null;
+  if (!id) { toast('Could not read that link'); return; }
+  if (state.items.some(i => i.id === id)) { toast('Already saved'); }
+  else {
+    state.items.unshift({ id, date: new Date().toISOString().replace('T',' ').slice(0,19), category:'Uncategorized' });
+    if (!state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+    flushSave();
+    toast('Added to Uncategorized');
+  }
+  window.history.replaceState({}, '', window.location.pathname);
+}
+
+/* ============================================================
+   THUMBNAILS
+   A failed fetch must NEVER permanently brand a video unavailable:
+   TikTok rate-limits, and its thumbnail URLs expire between sessions.
+   Only an explicit "this video is gone" response is treated as final,
+   and even that is re-checked after a day.
+   ============================================================ */
+const THUMB_TTL   = 6 * 60 * 60 * 1000;   // refresh a URL after 6h (they expire)
+const GONE_TTL    = 24 * 60 * 60 * 1000;  // re-check "gone" verdicts after a day
+const MAX_INFLIGHT = 3;                   // gentle: high concurrency invites throttling
+
+let thumbCache = {};
+try { thumbCache = JSON.parse(localStorage.getItem('thumb-cache') || '{}'); } catch (e) { thumbCache = {}; }
+
+let cacheDirty = false;
+setInterval(() => {
+  if (!cacheDirty) return;
+  cacheDirty = false;
+  try { localStorage.setItem('thumb-cache', JSON.stringify(thumbCache)); } catch (e) {}
+}, 3000);
+
+const pending = new Map();      // id -> {id, priority(), cbs:[]}
+const inflight = new Map();     // id -> AbortController
+let activeFetches = 0;
+let failStreak = 0;
+let backoffUntil = 0;
+
+function cachedThumb(id) {
+  const e = thumbCache[id];
+  if (!e) return null;
+  if (e.gone) return (Date.now() - e.t < GONE_TTL) ? { gone: true } : null;
+  if (Date.now() - e.t > THUMB_TTL) return null;      // stale URL, refetch
+  return { url: e.u };
+}
+
+function requestThumb(id, cb, priority) {
+  const hit = cachedThumb(id);
+  if (hit) { cb(hit); return; }
+  const ex = pending.get(id);
+  if (ex) { ex.cbs.push(cb); return; }
+  pending.set(id, { id, cbs: [cb], priority: priority || (() => 0) });
+  schedulePump();
+}
+
+function dropThumbRequest(id) {
+  const p = pending.get(id);
+  if (p) pending.delete(id);
+  const c = inflight.get(id);
+  if (c) { c.abort(); inflight.delete(id); }
+}
+
+let pumpScheduled = false;
+function schedulePump() {
+  if (pumpScheduled) return;
+  pumpScheduled = true;
+  // Deferred so an entire batch of newly visible tiles is queued before any
+  // fetch starts — otherwise arrival order wins and priority never applies.
+  setTimeout(() => { pumpScheduled = false; pump(); }, 0);
+}
+
+function pump() {
+  if (Date.now() < backoffUntil) {
+    setTimeout(schedulePump, backoffUntil - Date.now() + 20);
+    return;
+  }
+  while (activeFetches < MAX_INFLIGHT && pending.size) {
+    let best = null, bestP = Infinity;
+    pending.forEach(p => { const v = p.priority(); if (v < bestP) { bestP = v; best = p; } });
+    if (!best) break;
+    pending.delete(best.id);
+    startFetch(best);
+  }
+}
+
+function startFetch(req) {
+  activeFetches++;
+  const ctrl = new AbortController();
+  inflight.set(req.id, ctrl);
+  const url = 'https://www.tiktok.com/oembed?url=' +
+              encodeURIComponent('https://www.tiktok.com/@i/video/' + req.id);
+
+  fetch(url, { signal: ctrl.signal })
+    .then(async res => {
+      let data = null;
+      try { data = await res.json(); } catch (e) {}
+      if (data && (data.author_name || data.title)) {
+        // oEmbed carries the creator + caption — capture them for display + search.
+        let handle = '';
+        const m = /tiktok\.com\/@([^/?]+)/.exec(data.author_url || ''); if (m) handle = m[1];
+        metaSet(req.id, { author: data.author_name || '', handle: handle, desc: data.title || '' });
+      }
+      if (data && data.thumbnail_url) {
+        thumbCache[req.id] = { u: data.thumbnail_url, t: Date.now() };
+        cacheDirty = true; failStreak = 0;
+        return { url: data.thumbnail_url };
+      }
+      if (res.status === 400 || res.status === 404) {
+        // An explicit "no such video" — the only case we treat as unavailable.
+        thumbCache[req.id] = { gone: 1, t: Date.now() };
+        cacheDirty = true; failStreak = 0;
+        return { gone: true };
+      }
+      throw new Error('transient ' + res.status);
+    })
+    .catch(err => {
+      if (err && err.name === 'AbortError') return null;
+      // Transient: never cached, never shown as unavailable. Back off so we
+      // stop hammering a rate limiter and making things worse.
+      failStreak++;
+      backoffUntil = Date.now() + Math.min(30000, 400 * Math.pow(2, Math.min(failStreak, 6)));
+      return { retry: true };
+    })
+    .then(result => {
+      if (result) req.cbs.forEach(cb => { try { cb(result); } catch (e) {} });
+    })
+    .finally(() => {
+      inflight.delete(req.id);
+      activeFetches--;
+      schedulePump();
+    });
+}
+
+// Binds a thumbnail to an <img>, surviving the two ways TikTok fails us:
+//  - a transient failure (throttling, flaky network) -> retry with backoff,
+//    because a tile that stays on screen would otherwise never load again;
+//  - an expired cached URL -> the image fails to decode, so refetch it once.
+function bindThumb(imgEl, id, priority, onGone) {
+  let urlRetried = false, attempts = 0;
+  const alive = () => imgEl.parentNode !== null;
+
+  const apply = (r) => {
+    if (!alive()) return;
+    if (r.gone) { if (onGone) onGone(); return; }
+    if (r.retry) {
+      // Try again while this tile is still on screen, backing off each time.
+      if (++attempts > 6) return;
+      setTimeout(() => { if (alive()) requestThumb(id, apply, priority); },
+                 Math.min(20000, 700 * Math.pow(2, attempts)));
+      return;
+    }
+    imgEl.onerror = () => {
+      if (urlRetried) return;
+      urlRetried = true;
+      delete thumbCache[id]; cacheDirty = true;   // the signed URL expired
+      requestThumb(id, apply, priority);
+    };
+    imgEl.onload = () => imgEl.classList.add('loaded');
+    imgEl.src = r.url;
+  };
+  requestThumb(id, apply, priority);
+}
+
+/* ============================================================
+   VIRTUAL LIST
+   Only the visible window exists in the DOM, so cost is constant
+   whether the library holds 30 videos or 6,070.
+   ============================================================ */
+function VirtualList(opts) {
+  const { scroller, content, perRow, overscan } = opts;
+  const self = {
+    items: [], rowH: 0, perRow: perRow || 1, overscan: overscan == null ? 2 : overscan,
+    live: new Map(), range: [-1,-1], onRange: null
+  };
+  self.rows = () => Math.ceil(self.items.length / self.perRow);
+  self.totalHeight = () => self.rows() * self.rowH;
+
+  self.setItems = (items, rowH) => {
+    self.items = items;
+    if (rowH) self.rowH = rowH;
+    self.live.forEach(el => el.remove());
+    self.live.clear();
+    self.range = [-1,-1];
+    content.style.height = self.totalHeight() + 'px';
+    self.update(true);
+  };
+
+  self.indexAtScroll = () => Math.round(scroller.scrollTop / Math.max(1, self.rowH)) * self.perRow;
+
+  self.update = (force) => {
+    if (!self.rowH) return;
+    const first = Math.max(0, Math.floor(scroller.scrollTop / self.rowH) - self.overscan);
+    const last  = Math.min(self.rows() - 1,
+                  Math.ceil((scroller.scrollTop + scroller.clientHeight) / self.rowH) + self.overscan);
+    if (!force && first === self.range[0] && last === self.range[1]) return;
+    self.range = [first, last];
+
+    const need = new Set();
+    for (let r = first; r <= last; r++) {
+      for (let c = 0; c < self.perRow; c++) {
+        const i = r * self.perRow + c;
+        if (i < self.items.length) need.add(i);
+      }
+    }
+    self.live.forEach((el, i) => {
+      if (!need.has(i)) { opts.recycle && opts.recycle(el, i); el.remove(); self.live.delete(i); }
+    });
+    need.forEach(i => {
+      if (self.live.has(i)) return;
+      const el = opts.render(self.items[i], i);
+      const r = Math.floor(i / self.perRow), c = i % self.perRow;
+      el.style.top = (r * self.rowH) + 'px';
+      if (self.perRow > 1) {
+        el.style.left = (c * (100 / self.perRow)) + '%';
+        el.style.width = (100 / self.perRow) + '%';
+      }
+      el.style.height = (opts.itemHeight || self.rowH) + 'px';
+      content.appendChild(el);
+      self.live.set(i, el);
+    });
+    if (self.onRange) self.onRange();
+  };
+
+  self.scrollToIndex = (i) => {
+    scroller.scrollTop = Math.floor(i / self.perRow) * self.rowH;
+    self.update(true);
+  };
+  self.get = (i) => self.live.get(i);
+  return self;
+}
+
+/* ============================================================
+   HOME
+   ============================================================ */
+function renderHome() {
+  document.getElementById('allCount').textContent = liveItems().length + ' saved';
+  const grid = document.getElementById('catGrid');
+  grid.innerHTML = '';
+  const ordered = state.categories.filter(c => c !== DELETED);
+  if (state.categories.includes(DELETED)) ordered.push(DELETED);
+  ordered.forEach(cat => {
+    const n = state.items.filter(i => i.category === cat).length;
+    const t = document.createElement('div');
+    t.className = 'cat-tile' + (cat === DELETED ? ' trash' : '');
+    t.innerHTML = '<button class="cat-manage">&#8942;</button>' +
+                  '<div class="name">' + esc(cat) + '</div>' +
+                  '<div class="count">' + n + ' saved</div>';
+    t.onclick = () => openGrid(state.items.filter(i => i.category === cat), cat);
+    t.querySelector('.cat-manage').onclick = (e) => { e.stopPropagation(); manageCategory(cat); };
+    grid.appendChild(t);
+  });
+  const add = document.createElement('div');
+  add.className = 'cat-tile add';
+  add.textContent = '+ New Category';
+  add.onclick = promptNewCategory;
+  grid.appendChild(add);
+}
+document.getElementById('allTile').onclick = () => openGrid(liveItems(), 'All Videos');
+
+function promptNewCategory() {
+  inputModal({ title:'New category', placeholder:'Category name', confirmLabel:'Add',
+    onSubmit: (name) => {
+      if (name === DELETED) return 'That name is reserved.';
+      if (state.categories.includes(name)) return 'That category already exists.';
+      state.categories.push(name); save(); renderHome();
+    }});
+}
+
+function manageCategory(cat) {
+  if (cat === DELETED) {
+    actionSheet({ title: DELETED, rows:[{ label:'Empty Deleted', destructive:true, onClick: emptyDeleted }] });
+    return;
+  }
+  actionSheet({ title: cat, rows: [
+    { label:'Rename', onClick: () => renameCategory(cat) },
+    { label:'Delete category', destructive:true, onClick: () => confirmDeleteCategory(cat) }
+  ]});
+}
+function renameCategory(cat) {
+  inputModal({ title:'Rename "' + cat + '"', placeholder:'New name', initialValue:cat, confirmLabel:'Save',
+    onSubmit: (name) => {
+      if (name === DELETED) return 'That name is reserved.';
+      if (name !== cat && state.categories.includes(name)) return 'That category already exists.';
+      state.categories = state.categories.map(c => c === cat ? name : c);
+      state.items.forEach(i => { if (i.category === cat) i.category = name; });
+      save(); renderHome();
+    }});
+}
+function confirmDeleteCategory(cat) {
+  const n = state.items.filter(i => i.category === cat).length;
+  confirmModal({
+    title:'Delete "' + cat + '"?',
+    message: n ? n + ' video(s) move to Uncategorized. The videos are not deleted.' : 'This category is empty.',
+    confirmLabel:'Delete', destructive:true,
+    onConfirm: () => {
+      state.categories = state.categories.filter(c => c !== cat);
+      state.items.forEach(i => { if (i.category === cat) i.category = 'Uncategorized'; });
+      if (n && !state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+      save(); renderHome();
+    }});
+}
+
+/* ============================================================
+   GRID
+   ============================================================ */
+const gridScroll = document.getElementById('gridScroll');
+const thumbGrid  = document.getElementById('thumbGrid');
+let gridList = [], gridLabel = '', gridScrollMemory = {};
+
+const gridVL = VirtualList({
+  scroller: gridScroll, content: thumbGrid, perRow: 3, overscan: 3,
+  render: (item, i) => {
+    const t = document.createElement('div');
+    t.className = 'thumb-tile';
+    t.dataset.id = item.id;
+    t.innerHTML = '<img alt="" decoding="async"><div class="thumb-date">' + esc(itemLabel(item)) + '</div>';
+    t.onclick = () => { primeAudioOnGesture(); openFeed(gridList, gridLabel, i); };
+    bindThumb(t.querySelector('img'), item.id,
+      () => Math.abs(Math.floor(i / 3) * gridVL.rowH - gridScroll.scrollTop),
+      () => t.classList.add('unavailable'));
+    return t;
+  },
+  recycle: (el) => { dropThumbRequest(el.dataset.id); }
+});
+
+function gridRowHeight() {
+  const w = gridScroll.clientWidth || window.innerWidth || 390;
+  return Math.round((w / 3) * (14 / 9));
+}
+
+let gridBaseList = [];        // unfiltered list for the current grid (search filters this)
+function openGrid(list, label) {
+  gridBaseList = list;
+  // reset any active search when (re)opening a grid
+  const sr = document.getElementById('searchRow'); if (sr) sr.classList.remove('open');
+  const si = document.getElementById('searchInput'); if (si) si.value = '';
+  gridList = list; gridLabel = label;
+  document.getElementById('gridTitle').textContent = label;
+  document.getElementById('gridView').classList.add('open');
+  document.getElementById('gridEmpty').style.display = list.length ? 'none' : 'block';
+  setupDateJump(list, label);
+  gridVL.setItems(list, gridRowHeight());
+  const saved = gridScrollMemory[label] || 0;
+  gridScroll.scrollTop = saved;
+  gridVL.update(true);
+}
+
+// ---- Search over creator / description / category / date ----
+// Searches the metadata store (populated as videos are browsed/played) plus the
+// always-known fields (category, date). Filters the current grid's base list and
+// re-renders through the same virtualized grid, so tapping a result opens the
+// feed exactly as normal.
+function matchSearch(item, q) {
+  if (item.category && item.category.toLowerCase().includes(q)) return true;
+  const lbl = itemLabel(item); if (lbl && lbl.toLowerCase().includes(q)) return true;
+  const m = metaStore[item.id]; if (!m) return false;
+  return (m.author && m.author.toLowerCase().includes(q)) ||
+         (m.handle && m.handle.toLowerCase().includes(q)) ||
+         (m.desc   && m.desc.toLowerCase().includes(q));
+}
+function runSearch(qRaw) {
+  const q = (qRaw || '').trim().toLowerCase();
+  const list = q ? gridBaseList.filter(it => matchSearch(it, q)) : gridBaseList;
+  gridList = list;
+  const empty = document.getElementById('gridEmpty');
+  empty.textContent = q && !list.length ? 'No matches (metadata fills in as you browse).' : 'Nothing here yet.';
+  empty.style.display = list.length ? 'none' : 'block';
+  gridVL.setItems(list, gridRowHeight());
+  gridScroll.scrollTop = 0;
+  gridVL.update(true);
+}
+document.getElementById('searchBtn').onclick = () => {
+  const row = document.getElementById('searchRow');
+  const open = row.classList.toggle('open');
+  if (open) { document.getElementById('searchInput').focus(); }
+  else { document.getElementById('searchInput').value = ''; runSearch(''); }
+};
+document.getElementById('searchInput').addEventListener('input', (e) => runSearch(e.target.value));
+document.getElementById('searchClear').onclick = () => { const si=document.getElementById('searchInput'); si.value=''; si.focus(); runSearch(''); };
+
+gridScroll.addEventListener('scroll', () => {
+  gridScrollMemory[gridLabel] = gridScroll.scrollTop;
+  gridVL.update();
+}, { passive:true });
+
+document.getElementById('gridBack').onclick = () => {
+  document.getElementById('gridView').classList.remove('open');
+  document.getElementById('datePanel').classList.remove('open');
+  gridVL.setItems([], gridVL.rowH);
+  renderHome();
+};
+
+/* ---- date jump ---- */
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function setupDateJump(list, label) {
+  const btn = document.getElementById('dateJumpBtn');
+  const show = (label === 'All Videos' || label === 'Uncategorized') && list.length > 0;
+  btn.style.display = show ? '' : 'none';
+  document.getElementById('datePanel').classList.remove('open');
+  if (!show) return;
+  const index = [];
+  let key = '';
+  list.forEach((it, i) => {
+    if (!it.date) return;
+    const d = new Date(String(it.date).replace(' ','T'));
+    if (isNaN(d)) return;
+    const k = d.getFullYear() + '-' + d.getMonth();
+    if (k !== key) { index.push({ y:d.getFullYear(), m:d.getMonth(), i }); key = k; }
+  });
+  const inner = document.getElementById('datePanelInner');
+  inner.innerHTML = '';
+  let year = null;
+  index.forEach(e => {
+    if (e.y !== year) {
+      year = e.y;
+      const h = document.createElement('div');
+      h.className = 'date-year-hdr'; h.textContent = year;
+      inner.appendChild(h);
+    }
+    const c = document.createElement('span');
+    c.className = 'date-month-row'; c.textContent = MONTHS[e.m];
+    c.onclick = () => {
+      document.getElementById('datePanel').classList.remove('open');
+      gridVL.scrollToIndex(e.i);   // O(1) with virtualization — no mass rendering
+    };
+    inner.appendChild(c);
+  });
+}
+document.getElementById('dateJumpBtn').onclick = () =>
+  document.getElementById('datePanel').classList.toggle('open');
+
+/* ============================================================
+   FEED — transform carousel (NO native scroll).
+   The stage is a fixed viewport. A track holds exactly three slides
+   (previous / current / next), positioned by an absolute transform. Swiping
+   drags the track with the finger; on release it either advances one video or
+   snaps back, animated with a CSS transition. There is no scroll container, no
+   scroll-snap, no momentum, no spacers, no scrollTop — so the whole class of
+   "racing / stuck between videos" bugs cannot occur. Only 3 videos are ever in
+   the DOM regardless of library size.
+   ============================================================ */
+const stage = document.getElementById('stage');
+const track = document.getElementById('track');
+let feedList = [], feedLabel = '';
+let curIndex = -1;               // index of the currently-shown video
+let desiredMuted = true;
+let audioUnlocked = false;   // set true on the first unmute tap (a real gesture); persists sound across swipes
+
+// slot elements: slots[-1]=prev, slots[0]=current, slots[1]=next (by offset)
+let slotEls = { '-1': null, '0': null, '1': null };
+let stageH = 0;
+let dragging = false, dragStartY = 0, dragDY = 0, dragStartT = 0, dragMoved = false;
+let animating = false;
+let holdTimer = null, ffTimer = null, holding = false;
+
+function stageHeight() { return stage.clientHeight || window.innerHeight || 700; }
+
+function setTrack(y, animate) {
+  track.style.transition = animate ? 'transform .26s cubic-bezier(.22,.61,.36,1)' : 'none';
+  track.style.transform = 'translate3d(0,' + y + 'px,0)';
+}
+
+// Base offset that centres the current slide: slots are laid at rows -1,0,1
+// (pixel tops -H, 0, H), and the track is translated 0, so the row-0 slide fills
+// the stage. We translate by -dragDY during a drag (drag up = negative dy shows next).
+function layoutSlots() {
+  stageH = stageHeight();
+  ['-1','0','1'].forEach(k => {
+    const el = slotEls[k];
+    if (!el) return;
+    el.style.height = stageH + 'px';
+    el.style.top = (Number(k) * stageH) + 'px';
+  });
+}
+
+function openFeed(list, label, startIndex) {
+  feedList = list.slice(); feedLabel = label;
+  document.getElementById('feedLabel').textContent = label;
+  document.getElementById('feed').classList.add('open');
+  curIndex = Math.max(0, Math.min(startIndex || 0, list.length - 1));
+  buildAllSlots();
+  layoutSlots();
+  setTrack(0, false);
+  // Opening the feed is a deliberate tap on a specific video, so load it
+  // promptly — only a short settle, unlike the longer dwell used for swipes.
+  scheduleCurrentPlayer(120);
+}
+
+document.getElementById('feedBack').onclick = () => {
+  if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; }
+  clearResolveQueue();   // stop resolver work so it doesn't compete with the library's thumbnail loading
+  ['-1','0','1'].forEach(k => { if (slotEls[k]) destroyPlayer(slotEls[k]); });
+  track.innerHTML = '';
+  slotEls = { '-1': null, '0': null, '1': null };
+  document.getElementById('feed').classList.remove('open');
+  curIndex = -1;
+  openGrid(gridList, gridLabel);
+};
+
+function indexForOffset(off) { return curIndex + off; }
+
+function buildAllSlots() {
+  // Destroy existing players/timers FIRST — wiping track.innerHTML detaches the
+  // elements but does NOT stop their _playTimer/_readyWatchdog intervals (plain
+  // JS timers, no DOM lifecycle tie), which would keep firing on orphaned
+  // elements. Hit whenever this runs with a live player present (e.g.
+  // feedDropCurrent — deleting the currently-open video).
+  ['-1','0','1'].forEach(k => { if (slotEls[k]) destroyPlayer(slotEls[k]); });
+  track.innerHTML = '';
+  slotEls = { '-1': null, '0': null, '1': null };
+  ['-1','0','1'].forEach(k => {
+    const idx = curIndex + Number(k);
+    if (idx < 0 || idx >= feedList.length) return;
+    const el = buildSlide(feedList[idx], idx);
+    el.dataset.slot = k;
+    track.appendChild(el);
+    slotEls[k] = el;
+  });
+  layoutSlots();
+}
+
+// Advance the carousel by +1 (next) or -1 (prev), recycling slots so only three
+// Advance by ±1. Recycle the existing slot elements instead of rebuilding them,
+// so the video you swiped to — which was already preloaded — keeps its player
+// and starts instantly, rather than being destroyed and recreated (a recreate
+// loses any warm autoplay state and causes a visible reload).
+function commitAdvance(dir) {
+  const newIndex = curIndex + dir;
+  if (newIndex < 0 || newIndex >= feedList.length) { setTrack(0, true); return; }
+  if (slotEls['0']) pauseSlide(slotEls['0']);
+
+  const old = { '-1': slotEls['-1'], '0': slotEls['0'], '1': slotEls['1'] };
+  const next = { '-1': null, '0': null, '1': null };
+
+  if (dir === 1) {
+    // moving forward: old next becomes current, old current becomes prev.
+    // Only the FAR edge leaves the window — release its pooled video. The other
+    // two keep their (preloaded) videos, so the incoming current is already
+    // buffered and plays instantly.
+    if (old['-1']) { unmountSlot(old['-1']); dropThumbRequest(old['-1'].dataset.id); old['-1'].remove(); }
+    next['-1'] = old['0'];
+    next['0']  = old['1'];
+    curIndex = newIndex;
+    next['1'] = makeSlotSlide(curIndex + 1);
+  } else {
+    if (old['1']) { unmountSlot(old['1']); dropThumbRequest(old['1'].dataset.id); old['1'].remove(); }
+    next['1']  = old['0'];
+    next['0']  = old['-1'];
+    curIndex = newIndex;
+    next['-1'] = makeSlotSlide(curIndex - 1);
+  }
+
+  slotEls = next;
+  ['-1','0','1'].forEach(k => { if (slotEls[k]) slotEls[k].dataset.slot = k; });
+  layoutSlots();
+  setTrack(0, false);
+  // Promote the already-preloaded new current immediately (instant play), then
+  // mount/preload the newly-exposed edge after a short settle so fast flicks
+  // don't fire a burst of resolves.
+  promoteCurrent();
+  scheduleCurrentPlayer(DWELL_MS);
+}
+
+function promoteCurrent() {
+  const el = slotEls['0']; if (!el) return;
+  const it = feedList[curIndex];
+  if (it) { const c = el.querySelector('.slide-cat'); if (c) c.textContent = it.category; }
+  fillOverlay(el, el.dataset.id);   // refresh creator/description from cache on activate
+  el._becameCurrentAt = Date.now(); el._diag = [];
+  if (el._vid && el._vidId === el.dataset.id) {
+    // preloaded neighbour promoted — just play it
+    delete el.dataset.userPaused;
+    el._vid.muted = desiredMuted || !audioUnlocked;
+    const p = el._vid.play(); if (p) p.catch(()=>{});
+  } else {
+    mountSlot(el, true);
+  }
+  ensurePlaying(el);
+}
+
+// One debounce timer, shared across the whole feed, cleared on every swipe.
+let dwellTimer = null;
+const DWELL_MS = 250;     // settle before mounting/preloading the new edge slide
+function scheduleCurrentPlayer(delay) {
+  if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; }
+  const target = slotEls['0'];
+  if (!target) return;
+  dwellTimer = setTimeout(() => {
+    dwellTimer = null;
+    if (slotEls['0'] !== target) return;
+    if (!document.getElementById('feed').classList.contains('open')) return;
+    playCurrent();
+  }, delay);
+}
+
+// Build a slide for an absolute index and insert it into the track (or return
+// null if out of range). Used to fill the newly-exposed edge slot on advance.
+function makeSlotSlide(idx) {
+  if (idx < 0 || idx >= feedList.length) return null;
+  const el = buildSlide(feedList[idx], idx);
+  track.appendChild(el);
+  return el;
+}
+
+// Run fn after the next paint. Setting an iframe's src in the same frame the
+// slide's position/visibility just changed makes the browser silently drop the
+// load, so player creation must wait one paint. A SINGLE rAF is the minimum
+// paint-aligned path iOS needs for the muted-autoplay grant; a setTimeout
+// backstop guarantees fn still runs in a later task if rAF is ever starved
+// (tab backgrounded, Low Power Mode) — which would otherwise leave the video
+// permanently unloaded. Kept to one frame (not two) because every extra tick
+// between the swipe gesture and the src assignment is time iOS's separate,
+// stricter "audible autoplay needs a recent user gesture" check can run out
+// on — unlike the muted-autoplay grant, that one appears to require the
+// navigation to still read as gesture-adjacent, not just post-paint.
+function deferToPaint(fn) {
+  let done = false;
+  const run = () => { if (done) return; done = true; fn(); };
+  requestAnimationFrame(run);
+  setTimeout(run, 80);
+}
+
+function playCurrent() {
+  const el = slotEls['0'];
+  if (!el) return;
+  // Update the caption immediately (cheap, and it should never wait for a paint).
+  const it = feedList[curIndex];
+  if (it) { const c = el.querySelector('.slide-cat'); if (c) c.textContent = it.category; }
+
+  // After a paint, mount current (playing) + both neighbours (preloaded, paused)
+  // so the next swipe in either direction promotes an already-buffered element.
+  deferToPaint(() => {
+    if (slotEls['0'] !== el) return;
+    if (!document.getElementById('feed').classList.contains('open')) return;
+    if (!el._becameCurrentAt) el._becameCurrentAt = Date.now();
+    syncSlots();
+    ensurePlaying(el);
+  });
+}
+
+/* ---------- gestures on the stage ---------- */
+stage.addEventListener('pointerdown', (e) => {
+  if (animating) return;
+  dragging = true; dragMoved = false;
+  dragStartY = e.clientY; dragDY = 0; dragStartT = Date.now();
+  setTrack(0, false);
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => { if (!dragMoved) startFF(); }, 350);
+  try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+});
+
+stage.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  dragDY = e.clientY - dragStartY;
+  if (Math.abs(dragDY) > 8) { dragMoved = true; clearTimeout(holdTimer); if (holding) stopFF(); }
+  if (holding) return;
+  let dy = dragDY;
+  // resist at the ends (no prev before 0, no next after last)
+  if (curIndex === 0 && dy > 0) dy *= 0.3;
+  if (curIndex === feedList.length - 1 && dy < 0) dy *= 0.3;
+  setTrack(dy, false);
+});
+
+function endDrag(e) {
+  if (!dragging) return;
+  dragging = false;
+  clearTimeout(holdTimer);
+  if (holding) { stopFF(); return; }
+  const dt = Date.now() - dragStartT;
+  const H = stageHeight();
+  // a tap: little movement, short time → toggle play/pause
+  if (!dragMoved && dt < 400) { toggleCurrent(); setTrack(0, false); return; }
+  const threshold = H * 0.18;
+  const fast = Math.abs(dragDY) > 60 && dt < 250;
+  if (dragDY < 0 && (Math.abs(dragDY) > threshold || fast) && curIndex < feedList.length - 1) {
+    animating = true;
+    setTrack(-H, true);
+    afterTransition(() => { animating = false; commitAdvance(1); });
+  } else if (dragDY > 0 && (Math.abs(dragDY) > threshold || fast) && curIndex > 0) {
+    animating = true;
+    setTrack(H, true);
+    afterTransition(() => { animating = false; commitAdvance(-1); });
+  } else {
+    setTrack(0, true);   // snap back
+  }
+}
+stage.addEventListener('pointerup', endDrag);
+stage.addEventListener('pointercancel', () => { dragging = false; clearTimeout(holdTimer); if (holding) stopFF(); setTrack(0, true); });
+
+function afterTransition(fn) {
+  let done = false;
+  const h = () => { if (done) return; done = true; track.removeEventListener('transitionend', h); fn(); };
+  track.addEventListener('transitionend', h);
+  setTimeout(h, 360);   // fallback in case transitionend doesn't fire
+}
+
+/* ---------- tap play/pause + hold fast-forward ---------- */
+function toggleCurrent() {
+  const el = slotEls['0']; if (!el) return;
+  const media = el.querySelector('.slide-media');
+  const v = el._vid;
+  if (media.classList.contains('needs-tap') || !v) {
+    // Manual recovery: re-resolve and try again. Clear any cached-but-dead URL.
+    media.classList.remove('needs-tap');
+    try { localStorage.removeItem('rv:'+el.dataset.id); } catch(e){}
+    el._vidId = null;
+    mountSlot(el, true); ensurePlaying(el);
+    return;
+  }
+  if (!v.paused) {
+    el.dataset.userPaused = 'true'; v.pause(); el._state = 2; media.classList.add('paused');
+  } else {
+    delete el.dataset.userPaused;
+    v.muted = desiredMuted || !audioUnlocked;
+    const p = v.play(); if (p) p.catch(()=>{});
+    media.classList.remove('paused');
+  }
+}
+
+function startFF() {
+  const el = slotEls['0']; if (!el) return;
+  holding = true;
+  el.querySelector('.slide-media').classList.add('ffwd');
+  ffTimer = setInterval(() => {
+    const v = el._vid;
+    if (v && v.duration) v.currentTime = Math.min(v.duration - 0.1, v.currentTime + 0.5);
+  }, 200);
+}
+function stopFF() {
+  holding = false;
+  if (ffTimer) { clearInterval(ffTimer); ffTimer = null; }
+  const el = slotEls['0']; if (el) el.querySelector('.slide-media').classList.remove('ffwd');
+}
+
+/* ---------- slide construction ---------- */
+function buildSlide(item, i) {
+  const el = document.createElement('div');
+  el.className = 'slide';
+  el.dataset.id = item.id;
+  el.innerHTML =
+    '<div class="slide-media">' +
+      '<img alt="" decoding="async">' +
+      '<div class="status-badge"><div class="spinner"></div></div>' +
+      '<div class="mask-bottom"></div><div class="mask-rail"></div>' +
+      '<div class="pause-icon">&#10074;&#10074;</div>' +
+      '<div class="tap-icon">&#9654;</div>' +
+    '</div>' +
+    '<div class="slide-overlay">' +
+      '<div class="slide-author"></div>' +
+      '<div class="slide-desc"></div>' +
+      '<div class="slide-title">' + esc(itemLabel(item)) + '</div>' +
+      '<div class="slide-cat">' + esc(item.category) + '</div>' +
+    '</div>' +
+    '<div class="rail">' +
+      '<button class="rail-btn mute-btn" aria-label="Sound">&#128263;</button>' +
+      '<button class="rail-btn info-btn" aria-label="Info">&#8505;</button>' +
+      '<button class="rail-btn share-btn" aria-label="Share">&#10148;</button>' +
+      '<button class="rail-btn tag-btn2" aria-label="Organise">&#127991;</button>' +
+    '</div>';
+  const media = el.querySelector('.slide-media');
+  bindThumb(el.querySelector('img'), item.id,
+    () => Math.abs(i - curIndex),
+    () => { el.classList.add('unavailable-slide');
+            media.querySelector('.status-badge').textContent = 'Video unavailable'; });
+  // rail buttons stop propagation so they don't start a drag
+  el.querySelector('.tag-btn2').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.share-btn').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.mute-btn').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.info-btn').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.tag-btn2').onclick = (e) => { e.stopPropagation(); openCategorySheet(item); };
+  el.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
+  el.querySelector('.info-btn').onclick = (e) => { e.stopPropagation(); showInfo(item.id); };
+  const mb = el.querySelector('.mute-btn');
+  syncMuteBtn(mb);
+  mb.onclick = (e) => {
+    e.stopPropagation();
+    desiredMuted = !desiredMuted;
+    // This tap is a genuine user gesture. When turning sound ON, call play() on
+    // ALL live slot videos synchronously here — that grants each pooled element
+    // audio activation while the gesture is valid, so when you later swipe to a
+    // preloaded neighbour it can play unmuted without a fresh tap. The pool
+    // reuses these same activated elements, so the grant carries forward.
+    if (!desiredMuted) {
+      audioUnlocked = true;
+      ['-1','0','1'].forEach(k => { const s = slotEls[k]; if (s && s._vid) { const p = s._vid.play(); if (p) p.catch(()=>{}); } });
+    }
+    const cur = slotEls['0'];
+    if (cur && cur._vid) { cur._vid.muted = desiredMuted; if (!desiredMuted) { const p = cur._vid.play(); if (p) p.catch(()=>{}); } }
+    ['-1','1'].forEach(k => { const s = slotEls[k]; if (s && s._vid) { s._vid.muted = true; s._vid.pause(); } });
+    document.querySelectorAll('.mute-btn').forEach(syncMuteBtn);
+  };
+  // Tapping the caption expands/collapses it (long descriptions are clamped).
+  const descEl = el.querySelector('.slide-desc');
+  descEl.onpointerdown = (e) => e.stopPropagation();
+  descEl.onclick = (e) => { e.stopPropagation(); descEl.classList.toggle('expanded'); };
+  // Populate creator/description from whatever metadata we already have cached
+  // (from a prior oEmbed thumbnail fetch or resolve); it fills in later otherwise.
+  fillOverlay(el, item.id);
+  return el;
+}
+
+// Metadata store (creator + description), populated as a side effect of the
+// thumbnail oEmbed fetch and the video resolve. Persisted so it accrues across
+// sessions and becomes the searchable index.
+let metaStore = {};
+try { metaStore = JSON.parse(localStorage.getItem('meta') || '{}'); } catch (e) { metaStore = {}; }
+let metaDirty = false;
+setInterval(() => { if (metaDirty) { metaDirty = false; try { localStorage.setItem('meta', JSON.stringify(metaStore)); } catch (e) {} } }, 3000);
+function metaSet(id, m) {
+  const cur = metaStore[id] || {};
+  const next = { author: m.author || cur.author, handle: m.handle || cur.handle, desc: (m.desc != null ? m.desc : cur.desc) };
+  metaStore[id] = next; metaDirty = true;
+  // If this video is on screen, reflect it immediately.
+  document.querySelectorAll('.slide[data-id="' + CSS.escape(id) + '"]').forEach(el => fillOverlay(el, id));
+}
+function fillOverlay(el, id) {
+  const m = metaStore[id]; if (!m) return;
+  const a = el.querySelector('.slide-author'); const d = el.querySelector('.slide-desc');
+  if (a) a.textContent = m.author ? (m.handle ? m.author + '  ·  @' + m.handle : m.author) : (m.handle ? '@' + m.handle : '');
+  if (d) d.textContent = m.desc || '';
+}
+// On-screen fallback for creator + description (the ⓘ rail button). Always
+// accessible even if the on-video overlay is hard to read; if metadata isn't
+// known yet it forces a resolve and fills in.
+function showInfo(id) {
+  const render = () => {
+    const m = metaStore[id] || {};
+    const who = m.author ? (m.handle ? m.author + '  ·  @' + m.handle : m.author) : (m.handle ? '@' + m.handle : '(creator unknown yet)');
+    const desc = m.desc || '(no description available)';
+    infoModal(who, desc);
+  };
+  render();
+  if (!metaStore[id] || !metaStore[id].desc) requestResolve(id, 0).then(() => { render(); }).catch(()=>{});
+}
+function infoModal(title, message) {
+  closeOverlays();
+  const b = document.createElement('div');
+  b.className = 'modal-backdrop';
+  b.innerHTML =
+    '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div>' +
+    '<div class="modal-message" style="max-height:50vh;overflow:auto;white-space:pre-wrap;text-align:left">' + esc(message) + '</div>' +
+    '<div class="modal-actions"><button class="modal-btn primary" id="modalOk">Done</button></div></div>';
+  document.body.appendChild(b);
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelector('#modalOk').onclick = closeOverlays;
+}
+
+// Reflects the REAL current sound state, not just the session preference: when
+// the current video's unmute was rejected and it fell back to muted playback
+// (soundBlocked), show a distinct "blocked" state rather than falsely claiming
+// sound is on — that mismatch was the reported "icon says unmuted but it's
+// silent." A tap on a blocked icon retries with a fresh gesture.
+function syncMuteBtn(b) {
+  const slide = b.closest('.slide');
+  const isCurrent = slide && slotEls['0'] === slide;
+  const blocked = isCurrent && !desiredMuted && (slide._soundBlocked || slide._muted === true);
+  if (desiredMuted) {
+    b.innerHTML = '&#128263;';
+    b.classList.remove('active', 'blocked');
+  } else if (blocked) {
+    b.innerHTML = '&#128263;';
+    b.classList.remove('active');
+    b.classList.add('blocked');
+  } else {
+    b.innerHTML = '&#128266;';
+    b.classList.add('active');
+    b.classList.remove('blocked');
+  }
+}
+function syncCurrentMuteBtn() {
+  const el = slotEls['0'];
+  if (!el) return;
+  const b = el.querySelector('.mute-btn');
+  if (b) syncMuteBtn(b);
+}
+
+// Remove a video from the current feed view (used by delete/restore/purge).
+function feedDropCurrent(id) {
+  const i = feedList.findIndex(x => x.id === id);
+  if (i < 0) return;
+  feedList.splice(i, 1);
+  if (!feedList.length) { document.getElementById('feedBack').onclick(); return; }
+  if (curIndex >= feedList.length) curIndex = feedList.length - 1;
+  else if (i < curIndex) curIndex--;
+  buildAllSlots(); setTrack(0, false); scheduleCurrentPlayer(120);
+}
+
+// keep slot heights correct across rotation / resize
+window.addEventListener('resize', () => {
+  if (document.getElementById('feed').classList.contains('open')) {
+    layoutSlots(); setTrack(0, false);
+  }
+});
+
+
+/* ============================================================
+   PLAYER
+   ============================================================ */
+/* ============================================================
+   PLAYER — native <video> + browser-side resolver.
+
+   Replaces the TikTok player/v1 iframe. Each video ID is resolved to a direct
+   MP4 URL by a free public resolver (called straight from the browser, CORS-
+   open), then played in ONE persistent <video> element reused across slides.
+   Reusing a single, gesture-unlocked element is what lets sound persist across
+   swipes on iOS — a fresh element unmuted outside a gesture gets paused by the
+   platform. el._state mirrors the old iframe states (1 playing / 2 paused /
+   3 buffering / undefined none) so the debug overlay keeps working.
+   ============================================================ */
+const RESOLVER = 'https://www.tikwm.com/api/?url=';
+const RESOLVE_TTL = 2 * 60 * 60 * 1000;
+function cacheGet(id){ try{ const r=JSON.parse(localStorage.getItem('rv:'+id)); if(r && Date.now()-r.ts<RESOLVE_TTL) return r; }catch(e){} return null; }
+function cacheSet(id,d){ try{ localStorage.setItem('rv:'+id, JSON.stringify({play:d.play,ts:Date.now()})); }catch(e){} }
+// The free resolver hard-limits to ~1 request/second: spaced ~1.1s apart every
+// call succeeds, but a burst gets rejected (code -1). So resolution runs through
+// ONE rate-limited priority queue: the current video first, then near neighbours,
+// then a small forward prefetch window; rejections retry with backoff; requests
+// for videos you've scrolled away from are dropped so the ~1/sec budget always
+// goes to what's on screen. Cold videos still cost ~1s each (a third-party
+// ceiling), but nothing floods the resolver, so loads are reliable, not freezy.
+const MIN_GAP = 1150;
+let _queue = [];              // [{id, prio, tries}]
+let _working = false, _lastRes = 0;
+const _waiters = new Map();   // id -> [resolve fns]
+function _emit(id, val, err){ const ws=_waiters.get(id); if(ws){ _waiters.delete(id); ws.forEach(w=> err? w.rej(err): w.res(val)); } }
+
+function requestResolve(id, prio){
+  const c = cacheGet(id); if (c) return Promise.resolve(c);
+  const existing = _queue.find(q => q.id === id);
+  if (existing) { if (prio < existing.prio) existing.prio = prio; }
+  else _queue.push({ id, prio, tries: 0 });
+  const p = new Promise((res, rej) => { const a=_waiters.get(id)||[]; a.push({res,rej}); _waiters.set(id,a); });
+  _pump();
+  return p;
+}
+function _pump(){
+  if (_working || !_queue.length) return;
+  _working = true;
+  const wait = Math.max(0, MIN_GAP - (Date.now() - _lastRes));
+  setTimeout(async () => {
+    _queue.sort((a,b) => a.prio - b.prio);
+    const job = _queue.shift();
+    if (!job) { _working = false; return; }
+    const hit = cacheGet(job.id); if (hit) { _emit(job.id, hit); _working = false; _pump(); return; }
+    _lastRes = Date.now();
+    try {
+      const res = await fetch(RESOLVER + encodeURIComponent('https://www.tiktok.com/@i/video/' + job.id));
+      const j = await res.json();
+      if (j.code !== 0 || !j.data || !j.data.play) throw new Error('code ' + (j.msg||j.code));
+      let play = j.data.play; if (play[0]==='/') play='https://www.tikwm.com'+play;
+      const au = j.data.author || {};
+      metaSet(job.id, { author: au.nickname || '', handle: au.unique_id || '', desc: j.data.title || '' });
+      const out = { play }; cacheSet(job.id, out); _emit(job.id, out);
+    } catch (e) {
+      job.tries++;
+      if (job.tries < 5) _queue.push(job);        // rate-limited/transient — retry later
+      else _emit(job.id, null, e);                 // give up: waiters see rejection
+    }
+    _working = false; _pump();
+  }, wait);
+}
+// Drop pending requests for videos no longer near the current index, so the
+// rate budget isn't spent on things you've already scrolled past.
+function pruneQueue(keepIds){ _queue = _queue.filter(q => keepIds.has(q.id)); }
+function clearResolveQueue(){ _queue = []; _waiters.clear(); }
+
+// resolve(id, prio) — compatibility wrapper used by mountSlot.
+function resolve(id, prio){ return requestResolve(id, prio == null ? 1 : prio); }
+function prefetch(idx, prio){ const it = feedList[idx]; if (it && !cacheGet(it.id)) requestResolve(it.id, prio == null ? 4 : prio); }
+
+/* ---- pool of reusable <video> elements (prev/current/next ring) ----
+   The next clip is preloaded (src set, buffering, paused) so a swipe promotes
+   an already-ready element instead of re-downloading — the fix for slow+freezy.
+   Elements are REUSED (not recreated), so once the first unmute tap unlocks
+   audio on them, sound keeps working across swipes.
+   (audioUnlocked is declared once, up near desiredMuted.) */
+const vpool = [];
+function newVideo(){
+  const v=document.createElement('video');
+  v.playsInline=true; v.loop=true; v.muted=true; v.preload='auto';
+  v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline',''); v.setAttribute('loop',''); v.setAttribute('muted','');
+  const slideOf=()=>v.closest('.slide');
+  v.addEventListener('playing',()=>{ const el=slideOf(); if(!el)return; el._state=1; const m=el.querySelector('.slide-media'); if(m){m.classList.add('is-playing');m.classList.remove('paused','needs-tap');} });
+  v.addEventListener('waiting',()=>{ const el=slideOf(); if(el&&el!==null) el._state=3; });
+  v.addEventListener('pause',()=>{ const el=slideOf(); if(el&&el._state===1) el._state=2; });
+  v.addEventListener('error',()=>{ const el=slideOf(); if(el){ el._state=undefined; el.querySelector('.slide-media').classList.add('needs-tap'); } });
+  return v;
+}
+function acquireVideo(){ return vpool.pop() || newVideo(); }
+function releaseVideo(v){ if(!v) return; try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){} if(v.parentNode) v.parentNode.removeChild(v); if(vpool.length<2) vpool.push(v); }
+
+// Called SYNCHRONOUSLY from the tap that opens the feed (a real user gesture),
+// so the feed can start with sound ON. We pre-create the pooled <video>
+// elements and play a tiny silent primer clip on each right now, inside the
+// gesture — that grants each element audio activation, so when the real videos
+// (which reuse these same elements) play unmuted, iOS allows it. If the platform
+// still refuses, the current video falls back to muted playback (never frozen)
+// and the sound button remains as manual override — so this can only help.
+let audioPrimed = false;
+function primeAudioOnGesture(){
+  desiredMuted = false; audioUnlocked = true;
+  while (vpool.length < 3) vpool.push(newVideo());
+  vpool.forEach(v => { try { v.muted = true; if (!v.src) v.src = 'clips/silent.mp4'; const p = v.play(); if (p) p.catch(()=>{}); } catch(e){} });
+  audioPrimed = true;
+}
+
+// Attach a pooled video to a slide, resolve+set its src (preload), and either
+// play it (active) or leave it buffering+paused (neighbour).
+function mountSlot(el, active){
+  if(!el || el.classList.contains('unavailable-slide')) return;
+  const media=el.querySelector('.slide-media'); if(!media) return;
+  if(!el._vid){ el._vid=acquireVideo(); media.appendChild(el._vid); media.classList.add('has-player'); }
+  const v=el._vid, id=el.dataset.id;
+  const applyState=()=>{
+    media.classList.remove('resolving');
+    if(active){
+      v.muted = desiredMuted || !audioUnlocked;
+      const p=v.play(); if(p)p.catch(()=>{});
+      // Safety: if we asked for SOUND but the platform refused (video still
+      // paused shortly after), fall back to muted playback so it never freezes.
+      if(!v.muted){
+        setTimeout(()=>{ if(slotEls['0']===el && el.dataset.userPaused!=='true' && v.paused){ v.muted=true; const q=v.play(); if(q)q.catch(()=>{}); } }, 900);
+      }
+    } else { v.muted=true; v.pause(); }
+  };
+  if(el._vidId===id && v.src){ applyState(); return; }         // already mounted
+  el._token=(el._token||0)+1; const tok=el._token;
+  // Show the spinner while resolving so a cold video reads as loading, not frozen.
+  if(active && el._state!==1) media.classList.add('resolving');
+  resolve(id, active ? 0 : 1).then(r=>{
+    if(!r) throw new Error('null');
+    if(el._token!==tok || el._vid!==v) return;
+    if(v.src!==r.play){ v.src=r.play; try{v.load();}catch(e){} }
+    el._vidId=id; applyState();
+  }).catch(()=>{ media.classList.remove('resolving'); if(slotEls['0']===el) media.classList.add('needs-tap'); });
+}
+function unmountSlot(el){
+  if(!el) return;
+  if(el._playGrace){ clearTimeout(el._playGrace); el._playGrace=null; }
+  if(el._vid){ releaseVideo(el._vid); el._vid=null; el._vidId=null; }
+  const m=el.querySelector('.slide-media'); if(m) m.classList.remove('has-player','paused','needs-tap','is-playing');
+  delete el.dataset.userPaused; el._state=undefined;
+}
+// Keep the old names the rest of the app calls:
+function destroyPlayer(el){ unmountSlot(el); }
+function createPlayer(el){ mountSlot(el, slotEls['0']===el); return el && el._vid; }
+function pauseSlide(el){ if(el && el._vid){ el._vid.pause(); if(el._state===1) el._state=2; } if(el&&el._playGrace){clearTimeout(el._playGrace);el._playGrace=null;} }
+
+// Mount current (playing) + both neighbours (preloaded, paused), and gently
+// prefetch a few videos AHEAD so normal forward scrolling stays supplied by the
+// ~1/sec resolver. Prune the queue to just this neighbourhood so the rate budget
+// isn't wasted on videos already scrolled past.
+function syncSlots(){
+  if(slotEls['0']) mountSlot(slotEls['0'], true);
+  ['-1','1'].forEach(k=>{ if(slotEls[k]) mountSlot(slotEls[k], false); });
+  const keep = new Set();
+  const cur = slotEls['0']; if(cur) keep.add(cur.dataset.id);
+  ['-1','1'].forEach(k=>{ if(slotEls[k]) keep.add(slotEls[k].dataset.id); });
+  for(let d=2; d<=4; d++){ const it=feedList[curIndex+d]; if(it){ keep.add(it.id); prefetch(curIndex+d, 3+d); } }
+  const back=feedList[curIndex-2]; if(back){ keep.add(back.id); prefetch(curIndex-2, 8); }
+  pruneQueue(keep);
+}
+
+// Native playback needs no polling; just a grace timer that surfaces a
+// tap-to-play prompt if autoplay was genuinely refused.
+function ensurePlaying(el){
+  if(!el || el.classList.contains('unavailable-slide')) return;
+  const media=el.querySelector('.slide-media'); if(media) media.classList.remove('needs-tap','paused');
+  delete el.dataset.userPaused;
+  if(el._playGrace) clearTimeout(el._playGrace);
+  el._playGrace=setTimeout(()=>{
+    if(slotEls['0']!==el || el.dataset.userPaused==='true' || el._state===1) return;
+    const v=el._vid;
+    if(v && v.paused){ v.muted=desiredMuted||!audioUnlocked; const p=v.play(); if(p)p.catch(()=>{}); }
+    if(el._state!==1 && media) media.classList.add('needs-tap');
+  }, 5000);
+}
+
+// Set mute on the current video — called from the mute-button tap (a real
+// gesture) so unmuting sticks on iOS.
+function applySound(el){
+  if(!el || !el._vid) return;
+  el._vid.muted=desiredMuted; el._muted=el._vid.muted;
+  if(!desiredMuted){ const p=el._vid.play(); if(p)p.catch(()=>{}); }
+}
+
+/* ============================================================
+   PER-VIDEO SHEET: categories, delete, restore, purge
+   ============================================================ */
+function openCategorySheet(item) {
+  const list = document.getElementById('sheetCats');
+  list.innerHTML = '';
+  const inTrash = item.category === DELETED;
+
+  if (!inTrash) {
+    state.categories.filter(c => c !== DELETED).forEach(cat => {
+      const r = document.createElement('div');
+      r.className = 'sheet-cat' + (cat === item.category ? ' selected' : '');
+      r.textContent = cat + (cat === item.category ? '  \u2713' : '');
+      r.onclick = () => {
+        item.category = cat; save();
+        const el = slotEls['0'];
+        if (el && el.dataset.id === item.id) el.querySelector('.slide-cat').textContent = cat;
+        closeSheet();
+      };
+      list.appendChild(r);
+    });
+  }
+  const act = (label, cls, fn) => {
+    const r = document.createElement('div');
+    r.className = 'sheet-cat sheet-action' + (cls ? ' ' + cls : '');
+    r.textContent = label; r.onclick = fn; list.appendChild(r);
+  };
+  if (inTrash) {
+    act('Restore to Uncategorized','',() => { restoreVideo(item); closeSheet(); });
+    act('Delete permanently','destructive',() => {
+      closeSheet();
+      confirmModal({ title:'Delete permanently?',
+        message:'This removes the video from your library for good.',
+        confirmLabel:'Delete', destructive:true, onConfirm:() => purgeVideo(item) });
+    });
+  } else {
+    act('Delete','destructive',() => { deleteVideo(item); closeSheet(); });
+  }
+  document.getElementById('sheetBackdrop').classList.add('open');
+  document.getElementById('sheet').classList.add('open');
+}
+function closeSheet() {
+  document.getElementById('sheetBackdrop').classList.remove('open');
+  document.getElementById('sheet').classList.remove('open');
+}
+document.getElementById('sheetBackdrop').onclick = closeSheet;
+document.getElementById('newCatBtn').onclick = () => {
+  const inp = document.getElementById('newCatInput');
+  const name = (inp.value || '').trim();
+  if (!name || name === DELETED) return;
+  if (!state.categories.includes(name)) state.categories.push(name);
+  inp.value = '';
+  save();
+  const el = slotEls['0'];
+  const item = feedList[curIndex];
+  if (item) { item.category = name; if (el) el.querySelector('.slide-cat').textContent = name; }
+  closeSheet();
+};
+
+function deleteVideo(item) {
+  item.category = DELETED;
+  if (!state.categories.includes(DELETED)) state.categories.push(DELETED);
+  save(); dropFromCurrentViews(item); toast('Moved to Deleted');
+}
+function restoreVideo(item) {
+  item.category = 'Uncategorized';
+  if (!state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+  save(); dropFromCurrentViews(item); toast('Restored');
+}
+function purgeVideo(item) {
+  state.items = state.items.filter(i => i.id !== item.id);
+  state.purged = state.purged || [];
+  if (!state.purged.includes(item.id)) state.purged.push(item.id);
+  flushSave();                    // irreversible: never leave it in a debounce window
+  dropFromCurrentViews(item);
+  toast('Deleted permanently');
+}
+function emptyDeleted() {
+  const gone = state.items.filter(i => i.category === DELETED);
+  if (!gone.length) { toast('Nothing to empty'); return; }
+  confirmModal({ title:'Empty Deleted?',
+    message: gone.length + ' video(s) will be removed for good.',
+    confirmLabel:'Empty', destructive:true,
+    onConfirm: () => {
+      state.purged = state.purged || [];
+      gone.forEach(i => { if (!state.purged.includes(i.id)) state.purged.push(i.id); });
+      state.items = state.items.filter(i => i.category !== DELETED);
+      flushSave();
+      if (document.getElementById('gridView').classList.contains('open') && gridLabel === DELETED) {
+        openGrid([], DELETED);
+      }
+      renderHome();
+      toast('Deleted ' + gone.length);
+    }});
+}
+
+// Remove a video from whatever the user is looking at right now.
+function dropFromCurrentViews(item) {
+  const gi = gridList.findIndex(x => x.id === item.id);
+  if (gi >= 0) gridList.splice(gi, 1);
+  if (document.getElementById('feed').classList.contains('open')) {
+    feedDropCurrent(item.id);
+  } else {
+    const fi = feedList.findIndex(x => x.id === item.id);
+    if (fi >= 0) feedList.splice(fi, 1);
+  }
+  if (document.getElementById('gridView').classList.contains('open')) {
+    gridVL.setItems(gridList, gridVL.rowH);
+    document.getElementById('gridEmpty').style.display = gridList.length ? 'none' : 'block';
+  }
+}
+
+/* ============================================================
+   SHARE
+   ============================================================ */
+async function shareVideo(item) {
+  const url = itemUrl(item);
+  if (navigator.share) { try { await navigator.share({ url }); } catch (e) {} return; }
+  try { await navigator.clipboard.writeText(url); toast('Link copied'); }
+  catch (e) { toast('Could not share on this device'); }
+}
+
+/* ============================================================
+   UI PRIMITIVES
+   ============================================================ */
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+function closeOverlays() {
+  document.querySelectorAll('.modal-backdrop, .action-sheet').forEach(e => e.remove());
+}
+function inputModal({ title, placeholder, initialValue, confirmLabel, onSubmit }) {
+  closeOverlays();
+  const b = document.createElement('div');
+  b.className = 'modal-backdrop';
+  b.innerHTML =
+    '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div>' +
+    '<input class="modal-input" id="modalInput" placeholder="' + esc(placeholder || '') +
+    '" value="' + esc(initialValue || '') + '">' +
+    '<div class="modal-error" id="modalError"></div><div class="modal-actions">' +
+    '<button class="modal-btn" id="modalCancel">Cancel</button>' +
+    '<button class="modal-btn primary" id="modalConfirm">' + esc(confirmLabel) + '</button></div></div>';
+  document.body.appendChild(b);
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelector('#modalCancel').onclick = closeOverlays;
+  b.querySelector('#modalConfirm').onclick = () => {
+    const v = (b.querySelector('#modalInput').value || '').trim();
+    if (!v) { b.querySelector('#modalError').textContent = 'Enter a name.'; return; }
+    const err = onSubmit(v);
+    if (err) { b.querySelector('#modalError').textContent = err; return; }
+    closeOverlays();
+  };
+}
+function confirmModal({ title, message, confirmLabel, destructive, onConfirm }) {
+  closeOverlays();
+  const b = document.createElement('div');
+  b.className = 'modal-backdrop';
+  b.innerHTML =
+    '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div>' +
+    '<div class="modal-message">' + esc(message) + '</div><div class="modal-actions">' +
+    '<button class="modal-btn" id="modalCancel">Cancel</button>' +
+    '<button class="modal-btn ' + (destructive ? 'destructive' : 'primary') + '" id="modalConfirm">' +
+    esc(confirmLabel) + '</button></div></div>';
+  document.body.appendChild(b);
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelector('#modalCancel').onclick = closeOverlays;
+  b.querySelector('#modalConfirm').onclick = () => { onConfirm(); closeOverlays(); };
+}
+function actionSheet({ title, rows }) {
+  closeOverlays();
+  const s = document.createElement('div');
+  s.className = 'action-sheet';
+  s.innerHTML = (title ? '<div class="action-sheet-title">' + esc(title) + '</div>' : '') +
+    rows.map((r, i) => '<div class="action-row' + (r.destructive ? ' destructive' : '') +
+                       '" data-idx="' + i + '">' + esc(r.label) + '</div>').join('') +
+    '<div class="action-row cancel" id="sheetCancel">Cancel</div>';
+  document.body.appendChild(s);
+  rows.forEach((r, i) => {
+    s.querySelector('[data-idx="' + i + '"]').onclick = () => { closeOverlays(); r.onClick(); };
+  });
+  s.querySelector('#sheetCancel').onclick = closeOverlays;
+}
+
+/* ---- debug overlay ---- */
+let DEBUG = false;
+const dlines = [];
+function dlog(m) {
+  if (!DEBUG) return;
+  dlines.unshift(m);
+  if (dlines.length > 40) dlines.pop();
+  const el = document.getElementById('debugLog');
+  if (el) el.textContent = dlines.join('\n');
+}
+
+// Per-video lifecycle recorder. Each entry is timestamped from the moment the
+// slide became current, so a single screenshot of the overlay after a failing
+// swipe shows exactly where playback stalled: whether the player never handshook
+// (no "ready"), handshook then got an autoplay error (ERR:3002), or reached
+// buffering (state:3) but never playing (state:1). Always records; the overlay
+// just reveals it.
+function diag(el, msg) {
+  if (!el) return;
+  if (!el._diag) el._diag = [];
+  const t = el._becameCurrentAt ? (Date.now() - el._becameCurrentAt) : 0;
+  el._diag.push(t + 'ms ' + msg);
+  if (el._diag.length > 30) el._diag.shift();
+  renderDiag();
+}
+function renderDiag() {
+  const box = document.getElementById('debugLog');
+  if (!box || !DEBUG) return;
+  const el = slotEls['0'];
+  if (!el) { box.textContent = '(no current video)'; return; }
+  const id = el.dataset.id || '?';
+  const st = el._state === undefined || el._state === null ? '—' : el._state;
+  const stName = ({1:'PLAYING',2:'paused',3:'buffering',0:'ended'})[el._state] || 'no-handshake';
+  const v = el._vid || null;
+  const header =
+    'video …' + id.slice(-8) + '   idx ' + curIndex + '/' + (feedList.length - 1) + '\n' +
+    'state ' + st + ' (' + stName + ')   vid:' + (v ? 'yes' : 'NO') +
+    '   vmuted:' + (v ? v.muted : '?') + '   want:' + (desiredMuted ? 'muted' : 'sound') + '\n' +
+    '─────────────\n';
+  box.textContent = header + (el._diag || []).join('\n');
+}
+document.getElementById('debugToggle').onclick = () => {
+  DEBUG = !DEBUG;
+  document.getElementById('debugLog').classList.toggle('show', DEBUG);
+  if (DEBUG) renderDiag();
+};
+
+/* ---- keep the grid virtual list correct across rotation / resize ---- */
+window.addEventListener('resize', () => {
+  if (document.getElementById('gridView').classList.contains('open')) {
+    gridVL.setItems(gridList, gridRowHeight());
+    gridScroll.scrollTop = gridScrollMemory[gridLabel] || 0;
+    gridVL.update(true);
+  }
+});
+
+boot();
+</script>
+</body>
+</html>
