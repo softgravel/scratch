@@ -27,6 +27,8 @@
 
   /* ===================== HOME ===================== */
   #verBadge { margin-top:22px; text-align:center; font-size:11px; color:#666; letter-spacing:.02em; }
+  #libBtn { display:block; margin:10px auto 0; background:none; border:0; color:#777; font-size:12px; padding:8px 12px; text-decoration:underline; }
+  #filePick { position:fixed; left:-9999px; top:0; width:1px; height:1px; opacity:0; }
   #home { padding:max(18px,env(safe-area-inset-top)) 14px max(24px,env(safe-area-inset-bottom)); }
   #allTile {
     background:var(--panel); border:1px solid var(--line); border-radius:14px;
@@ -304,6 +306,8 @@
   <button id="addLinkBtn">＋ Add a shared link</button>
   <div id="catGrid"></div>
   <div id="verBadge"></div>
+  <button id="libBtn">Library &amp; backup</button>
+  <input type="file" id="filePick">
 </div>
 
 <div id="gridView">
@@ -339,7 +343,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 2, APP_BUILT = 'Nov 14 11:38 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 3, APP_BUILT = 'Nov 14 11:55 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -414,11 +418,16 @@ async function boot() {
     if (state && state.items) state.items.forEach(i => { prev[i.id] = i; });
     const purged = new Set((state && state.purged) || []);
     const cats = ((state && state.categories) || []).slice();
-    const items = raw.filter(e => !purged.has(e.id)).map(e => ({
+    // v3: a rebuild keeps every extra field of a video and every video that is not in
+    // favorites.json (shared links), so nothing organised can be dropped by it.
+    const inRaw = new Set(raw.map(e => e.id));
+    const extra = ((state && state.items) || []).filter(i => i && i.id && !inRaw.has(i.id) && !purged.has(i.id));
+    const items = extra.concat(raw.filter(e => !purged.has(e.id)).map(e => Object.assign({}, prev[e.id] || {}, {
       id: e.id,
       date: e.date,
       category: (prev[e.id] && prev[e.id].category) || 'Uncategorized'
-    }));
+    })));
+    extra.forEach(i => { if (i.category && !cats.includes(i.category)) cats.push(i.category); });
     if (!cats.includes('Uncategorized')) cats.unshift('Uncategorized');
     if (items.some(i => i.category === DELETED) && !cats.includes(DELETED)) cats.push(DELETED);
     state = { categories: cats, items, hydrated: true, version: DATA_VERSION, purged: [...purged] };
@@ -635,8 +644,16 @@ const LIB = (() => {
       t.oncomplete = () => res(true); t.onerror = () => res(false); t.onabort = () => res(false);
     })).catch(() => false);
   }
+  function putCovers(list) {                    // v3: many covers in one transaction (library pack import)
+    return db().then(d => new Promise((res, rej) => {
+      const t = d.transaction('cover', 'readwrite'), os = t.objectStore('cover'), now = Date.now();
+      list.forEach(([id, b]) => os.put({ b, m: 'image/jpeg', t: now }, id));
+      t.oncomplete = () => { list.forEach(([id]) => have.add(id)); res(list.length); }; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+    }));
+  }
+  function putSnapAs(key, json) { return tx('snap', 'readwrite', os => os.put({ json, t: Date.now() }, key)).catch(() => {}); }
   function getSnap(prev) { return tx('snap', 'readonly', os => os.get(prev ? 'gallery-state-prev' : 'gallery-state')).catch(() => null); }
-  return { ready, has: id => have.has(String(id)), coverUrl, saveCover, putSnap, getSnap, count: () => have.size, failed: () => failed };
+  return { ready, has: id => have.has(String(id)), coverUrl, saveCover, putCovers, putSnap, putSnapAs, getSnap, count: () => have.size, failed: () => failed };
 })();
 
 const _thumbTS = trackedStore(legacyLoad('thumb-cache'));
@@ -1453,6 +1470,7 @@ setInterval(() => { metaDirty = false; flushTracked('meta', _metaTS, 'meta'); },
 function metaSet(id, m) {
   const cur = metaStore[id] || {};
   const next = { author: m.author || cur.author, handle: m.handle || cur.handle, desc: (m.desc != null ? m.desc : cur.desc) };
+  if (m.dur || cur.dur) next.dur = m.dur || cur.dur;
   metaStore[id] = next; metaDirty = true;
   // If this video is on screen, reflect it immediately.
   document.querySelectorAll('.slide[data-id="' + CSS.escape(id) + '"]').forEach(el => fillOverlay(el, id));
@@ -2058,6 +2076,109 @@ function actionSheet({ title, rows }) {
   });
   s.querySelector('#sheetCancel').onclick = closeOverlays;
 }
+
+/* ============================================================
+   LIBRARY PACK + BACKUP (v3)
+   A library pack is one file made on the Mac (captions, creators, lengths and cover
+   images for the whole library). Importing it fills this phone's own store, so the grid
+   and search no longer wait on the network. Importing only ADDS: nothing already on the
+   phone is replaced, so a newer pack can be imported any time.
+   Layout: 'FAVPACK1' + uint32 (little-endian) length of the index + index JSON + cover bytes.
+   Index: { v, made, items: [[id, creator, handle, caption, seconds, offset, length, gone], ...] }.
+   ============================================================ */
+function pickFile(cb) {
+  const inp = document.getElementById('filePick');
+  inp.value = ''; inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) cb(f); };
+  inp.click();
+}
+function progressModal(title) {
+  closeOverlays();
+  const b = document.createElement('div'); b.className = 'modal-backdrop'; b.id = 'progModal';
+  b.innerHTML = '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div><div class="modal-message" id="progMsg">Reading the file…</div></div>';
+  document.body.appendChild(b);
+  return { set(t) { const m = b.querySelector('#progMsg'); if (m) m.textContent = t; }, close() { b.remove(); } };
+}
+async function importPack(file, onProgress) {
+  const head = new DataView(await file.slice(0, 12).arrayBuffer());
+  let magic = ''; for (let i = 0; i < 8; i++) magic += String.fromCharCode(head.getUint8(i));
+  if (magic !== 'FAVPACK1') throw new Error('this is not a library pack');
+  const n = head.getUint32(8, true), base = 12 + n;
+  const idx = JSON.parse(await file.slice(12, base).text());
+  const rows = idx.items || []; let metaN = 0, goneN = 0, covN = 0;
+  await Promise.all([metaReady, thumbReady, LIB.ready]);
+  rows.forEach(r => {
+    const id = String(r[0]);
+    if (r[7]) { if (!LIB.has(id) && !cacheGet(id) && !isGone(id)) { thumbCache[id] = { gone: true, t: Date.now() }; goneN++; } return; }
+    const cur = metaStore[id];
+    if (!(r[1] || r[2] || r[3])) return;
+    if (!cur || (!cur.desc && r[3]) || (!cur.author && r[1]) || (r[4] && !cur.dur)) {
+      const next = { author: (cur && cur.author) || r[1] || '', handle: (cur && cur.handle) || r[2] || '', desc: (cur && cur.desc) ? cur.desc : (r[3] || '') };
+      if (r[4]) next.dur = r[4];
+      metaStore[id] = next; metaN++;
+    }
+  });
+  cacheDirty = true; metaDirty = true;
+  const withCover = rows.filter(r => r[6] > 0 && !r[7]);
+  const need = withCover.filter(r => !LIB.has(r[0])).sort((a, b) => a[5] - b[5]);
+  for (let i = 0; i < need.length; i += 150) {
+    const part = need.slice(i, i + 150), from = part[0][5], last = part[part.length - 1];
+    const buf = await file.slice(base + from, base + last[5] + last[6]).arrayBuffer();
+    await LIB.putCovers(part.map(r => [String(r[0]), buf.slice(r[5] - from, r[5] - from + r[6])]));
+    covN += part.length; if (onProgress) onProgress(covN, need.length);
+    await new Promise(r => setTimeout(r, 0));
+  }
+  await flushTracked('meta', _metaTS, 'meta'); await flushTracked('thumb', _thumbTS, 'thumb-cache');
+  return { videos: rows.length, captions: metaN, covers: covN, coversAlready: withCover.length - need.length, gone: goneN, made: idx.made || 0 };
+}
+function runPackImport(file) {
+  const pm = progressModal('Importing library pack');
+  importPack(file, (a, b) => pm.set('Cover images: ' + a + ' of ' + b)).then(r => {
+    pm.close();
+    infoModal('Library pack imported', r.videos + ' videos in the pack\n' + r.covers + ' cover images added (' + r.coversAlready + ' were already here)\n' +
+      r.captions + ' captions added\n' + r.gone + ' marked unavailable');
+    if (document.getElementById('gridView').classList.contains('open')) gridVL.setItems(gridList, gridVL.rowH);
+  }).catch(e => { pm.close(); toast('Import failed: ' + ((e && e.message) || 'could not read the file')); });
+}
+// Backup file = the organizing work only (categories, which video is where, deletions).
+async function exportBackup() {
+  flushSave(true);
+  const name = 'favorites-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  const file = new File([JSON.stringify({ kind: 'favorites-backup', v: 1, at: new Date().toISOString(), app: APP_VERSION, state })], name, { type: 'application/json' });
+  try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; } }
+  catch (e) { if (e && e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  toast('Backup file saved');
+}
+function readBackup(text) {
+  let j = null; try { j = JSON.parse(text); } catch (e) {}
+  const st = j && j.kind === 'favorites-backup' ? j.state : null;
+  if (!st || !Array.isArray(st.items) || !Array.isArray(st.categories) || !st.items.every(i => i && i.id)) return null;
+  return { at: j.at, state: st };
+}
+function applyBackup(st) {
+  LIB.putSnapAs('before-import', JSON.stringify(state));      // undo copy of what was here
+  st.version = DATA_VERSION; st.hydrated = true; st.purged = st.purged || [];
+  state = st; flushSave(true); renderHome();
+}
+function importBackup(file) {
+  file.text().then(t => {
+    const b = readBackup(t);
+    if (!b) { toast('That is not a Favorites backup file'); return; }
+    const st = b.state;
+    const cats = st.categories.filter(c => c !== DELETED && c !== 'Uncategorized').length;
+    const filed = st.items.filter(i => i.category && i.category !== 'Uncategorized' && i.category !== DELETED).length;
+    confirmModal({ title: 'Replace with this backup?', confirmLabel: 'Replace', destructive: true,
+      message: 'Backup from ' + formatDate(b.at) + ': ' + st.items.length + ' videos, ' + cats + ' categories, ' + filed + ' videos filed. What is on this phone now is kept as an undo copy.',
+      onConfirm: () => { applyBackup(st); toast('Backup restored'); } });
+  }).catch(() => toast('Could not read that file'));
+}
+document.getElementById('libBtn').onclick = () => {
+  actionSheet({ title: 'On this phone: ' + LIB.count() + ' cover images, ' + Object.keys(_metaTS.target).length + ' captions', rows: [
+    { label: 'Import library pack', onClick: () => pickFile(runPackImport) },
+    { label: 'Save a backup of my categories', onClick: exportBackup },
+    { label: 'Restore categories from a backup', onClick: () => pickFile(importBackup) }
+  ]});
+};
 
 /* ---- debug overlay ---- */
 let DEBUG = false;
