@@ -162,6 +162,15 @@
   /* v4: the stored grid thumbnail is a small 3:4 crop; as a full-screen start frame it is shown
      blurred until the full-frame poster (or the video itself) takes over */
   .slide-media img.lowres { filter:blur(14px); transform:scale(1.12); }
+  /* v6: photo posts (slideshows): pictures side by side, swiped sideways, with the post's sound */
+  .photos { position:absolute; inset:0; z-index:2; display:flex; overflow-x:auto; overflow-y:hidden; scroll-snap-type:x mandatory;
+    touch-action:pan-x; -webkit-overflow-scrolling:touch; scrollbar-width:none; background:#000; }
+  .photos::-webkit-scrollbar { display:none; }
+  .slide-media .photos img { position:relative; inset:auto; flex:0 0 100%; width:100%; height:100%; object-fit:contain; opacity:1 !important;
+    scroll-snap-align:center; scroll-snap-stop:always; filter:none; transform:none; transition:none; }
+  .photo-count { position:absolute; top:calc(env(safe-area-inset-top) + 54px); left:50%; transform:translateX(-50%); z-index:6; font-size:12px; font-weight:600;
+    background:rgba(0,0,0,.45); padding:3px 10px; border-radius:12px; pointer-events:none; }
+  .thumb-photos { position:absolute; right:4px; top:4px; font-size:9px; color:#fff; background:rgba(0,0,0,.55); padding:1px 5px; border-radius:3px; }
   /* v4: progress / scrub bar along the bottom of every video */
   .scrub { position:absolute; left:0; right:0; bottom:max(2px,calc(env(safe-area-inset-bottom) - 12px)); height:30px; z-index:8; touch-action:none; }
   .scrub-track { position:absolute; left:10px; right:10px; bottom:9px; height:2px; border-radius:3px; background:rgba(255,255,255,.26); overflow:hidden; transition:height .12s ease, bottom .12s ease; }
@@ -366,7 +375,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 5, APP_BUILT = 'Nov 15 4:29 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 6, APP_BUILT = 'Nov 15 4:33 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -999,7 +1008,8 @@ const gridVL = VirtualList({
     const t = document.createElement('div');
     t.className = 'thumb-tile';
     t.dataset.id = item.id;
-    t.innerHTML = '<img alt="" decoding="async"><div class="thumb-date">' + esc(itemLabel(item)) + '</div>';
+    const pm = metaStore[item.id];
+    t.innerHTML = '<img alt="" decoding="async"><div class="thumb-date">' + esc(itemLabel(item)) + '</div>' + (pm && pm.img ? '<div class="thumb-photos">&#9635; ' + pm.img + '</div>' : '');
     t.onclick = () => { primeAudioOnGesture(); openFeed(gridList, gridLabel, i); };
     const prio = () => Math.abs(Math.floor(i / 3) * gridVL.rowH - gridScroll.scrollTop);
     bindThumb(t.querySelector('img'), item.id, prio, () => t.classList.add('unavailable'));
@@ -1574,6 +1584,7 @@ function metaSet(id, m) {
   const cur = metaStore[id] || {};
   const next = { author: m.author || cur.author || '', handle: m.handle || cur.handle || '', desc: (m.desc != null ? m.desc : (cur.desc || '')) };
   if (m.dur || cur.dur) next.dur = m.dur || cur.dur;
+  if (m.img || cur.img) next.img = m.img || cur.img;
   metaStore[id] = next; metaDirty = true;
   // If this video is on screen, reflect it immediately.
   document.querySelectorAll('.slide[data-id="' + CSS.escape(id) + '"]').forEach(el => fillOverlay(el, id));
@@ -1726,7 +1737,9 @@ function playExpiry(u){
 }
 function rvFresh(r){ return !!r && Date.now() < (r.exp ? r.exp - 900000 : r.ts + RESOLVE_TTL); }
 function cacheGet(id){ const r=_rvMem.get(String(id)); return rvFresh(r) ? r : null; }
-function cacheSet(id,d){ const r={play:d.play,ts:Date.now(),exp:playExpiry(d.play)}; if (d.poster) r.poster=d.poster; _rvMem.set(String(id),r); if (KV.ok) KV.write('rv', [[String(id), r]], []).catch(()=>{}); }
+function cacheSet(id,d){ const r={play:d.play,ts:Date.now(),exp:playExpiry(d.play)}; if (d.poster) r.poster=d.poster;
+  if (d.images && d.images.length) { r.images = d.images; const x = coverExpiry(d.images[0]); if (x) r.exp = r.exp ? Math.min(r.exp, x) : x; }   // picture links expire too
+  _rvMem.set(String(id),r); if (KV.ok) KV.write('rv', [[String(id), r]], []).catch(()=>{}); }
 function cacheDrop(id){ _rvMem.delete(String(id)); if (KV.ok) KV.write('rv', [], [String(id)]).catch(()=>{}); }
 // Load fresh resolved URLs; move any old per-video localStorage keys over and delete them.
 (async () => {
@@ -1820,8 +1833,10 @@ async function _run(job){
     metaSet(job.id, { author: au.nickname || '', handle: au.unique_id || '', desc: j.data.title || '' });
     // v4: origin_cover is the whole frame (360x640, ~12 KB): right framing for the start frame, fine for the grid
     let cover = j.data.origin_cover || j.data.cover || ''; if (cover && cover[0]==='/') cover='https://www.tikwm.com'+cover;
-    const out = { play, poster: cover }; cacheSet(job.id, out); _emit(job.id, cacheGet(job.id) || out);
-    if (j.data.duration) metaSet(job.id, { dur: j.data.duration });
+    const imgs = Array.isArray(j.data.images) ? j.data.images.filter(u => typeof u === 'string' && u) : [];
+    const out = { play, poster: cover }; if (imgs.length) out.images = imgs;
+    cacheSet(job.id, out); _emit(job.id, cacheGet(job.id) || out);
+    if (j.data.duration || imgs.length) metaSet(job.id, { dur: j.data.duration || 0, img: imgs.length });
     if (cover && !_thumbWaiters.has(job.id) && !LIB.has(job.id)) LIB.saveCover(job.id, cover);   // keep the image even when only the video was wanted
     _emitThumb(job.id, { cover });
     _lastOk = Date.now();
@@ -1927,6 +1942,27 @@ function upgradePoster(el, url) {
   hi.onload = () => { if (!el.isConnected || img.dataset.hi) return; img.dataset.hi = '1'; img.onerror = null; img.src = url; img.classList.add('loaded'); img.classList.remove('lowres'); };
   hi.src = url;
 }
+// v6: photo posts. The pictures sit side by side in a sideways-scrolling strip above the
+// (audio-only) player; only the picture on screen and its neighbours are loaded, because the
+// originals are large (about 3 MB each). It moves on by itself every few seconds while the
+// sound plays, unless the strip was touched recently.
+function mountPhotos(el, urls) {
+  const media = el.querySelector('.slide-media'); if (!media || media.querySelector('.photos')) return;
+  const box = document.createElement('div'); box.className = 'photos';
+  const imgs = urls.map(u => { const im = document.createElement('img'); im.alt = ''; im.decoding = 'async'; im.dataset.src = u; box.appendChild(im); return im; });
+  const count = document.createElement('div'); count.className = 'photo-count';
+  let idx = 0, touched = 0, auto = false;
+  const show = (i) => { idx = i; count.textContent = (i + 1) + ' / ' + imgs.length;
+    imgs.forEach((im, k) => { if (Math.abs(k - i) <= 1) { if (!im.getAttribute('src')) im.src = im.dataset.src; } else if (Math.abs(k - i) > 2 && im.getAttribute('src')) im.removeAttribute('src'); }); };
+  box.addEventListener('scroll', () => { const i = Math.round(box.scrollLeft / Math.max(1, box.clientWidth)); if (!auto) touched = Date.now(); if (i !== idx && i >= 0 && i < imgs.length) show(i); }, { passive: true });
+  media.appendChild(box); if (imgs.length > 1) media.appendChild(count); show(0);
+  el._photoGo = (i) => { auto = true; box.scrollTo({ left: i * box.clientWidth, behavior: 'smooth' }); setTimeout(() => { auto = false; }, 700); };
+  if (imgs.length > 1) el._photoTimer = setInterval(() => {
+    if (slotEls['0'] !== el || el.dataset.userPaused === 'true' || el._scrubbing || holding || Date.now() - touched < 6000) return;
+    if (!el._vid || el._vid.paused) return;
+    el._photoGo((idx + 1) % imgs.length);
+  }, 3500);
+}
 function fmtTime(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 // v4: scrub bar. Drag anywhere along the bottom edge to move through the video; the picture
 // follows the finger, and playback continues from there on release.
@@ -1999,7 +2035,7 @@ function mountSlot(el, active){
       }
     } else { v.muted=true; primeFrame(el, v); }
   };
-  if(el._vidId===id && v.src){ const c=cacheGet(id); if(c) upgradePoster(el, c.poster); applyState(); return; }         // already mounted
+  if(el._vidId===id && v.src){ const c=cacheGet(id); if(c){ upgradePoster(el, c.poster); if(c.images) mountPhotos(el, c.images); } applyState(); return; }         // already mounted
   el._token=(el._token||0)+1; const tok=el._token;
   // Show the spinner while resolving so a cold video reads as loading, not frozen.
   if(active && el._state!==1) media.classList.add('resolving');
@@ -2007,6 +2043,7 @@ function mountSlot(el, active){
     if(!r) throw new Error('null');
     if(el._token!==tok || el._vid!==v) return;
     upgradePoster(el, r.poster);
+    if (r.images) mountPhotos(el, r.images);
     if(v.src!==r.play){ media.classList.remove('is-playing'); el._revealTok=(el._revealTok||0)+1; v.src=r.play; try{v.load(); v.playbackRate=1;}catch(e){} }
     el._vidId=id; applyState();
   }).catch((e)=>{ media.classList.remove('resolving');
@@ -2021,6 +2058,8 @@ function unmountSlot(el){
   if(!el) return;
   if(el._playGrace){ clearTimeout(el._playGrace); el._playGrace=null; }
   if(el._vid){ releaseVideo(el._vid); el._vid=null; el._vidId=null; }
+  if(el._photoTimer){ clearInterval(el._photoTimer); el._photoTimer=null; }
+  el.querySelectorAll('.photos, .photo-count').forEach(n => n.remove());
   const m=el.querySelector('.slide-media'); if(m) m.classList.remove('has-player','paused','needs-tap','is-playing','buffering');
   delete el.dataset.userPaused; el._state=undefined;
 }
@@ -2288,9 +2327,10 @@ async function importPack(file, onProgress) {
     if (r[7]) { if (!LIB.has(id) && !cacheGet(id) && !isGone(id)) { thumbCache[id] = { gone: true, t: Date.now() }; goneN++; } return; }
     const cur = metaStore[id];
     if (!(r[1] || r[2] || r[3])) return;
-    if (!cur || (!cur.desc && r[3]) || (!cur.author && r[1]) || (r[4] && !cur.dur)) {
+    if (!cur || (!cur.desc && r[3]) || (!cur.author && r[1]) || (r[4] && !cur.dur) || (r[8] && !cur.img)) {
       const next = { author: (cur && cur.author) || r[1] || '', handle: (cur && cur.handle) || r[2] || '', desc: (cur && cur.desc) ? cur.desc : (r[3] || '') };
       if (r[4]) next.dur = r[4];
+      if (r[8] || (cur && cur.img)) next.img = r[8] || cur.img;
       metaStore[id] = next; metaN++;
     }
   });
