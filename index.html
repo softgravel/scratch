@@ -24,6 +24,11 @@
     overscroll-behavior:none;
   }
   button { font:inherit; color:inherit; }
+  /* v4: a long press must never start text selection, the magnifier or the image menu */
+  #home, #gridView, #feed { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+  #gridView img, #feed img { -webkit-user-drag:none; }
+  #verTag { position:fixed; right:6px; bottom:calc(env(safe-area-inset-bottom) + 2px); z-index:60; font-size:9px;
+    color:rgba(255,255,255,.4); pointer-events:none; letter-spacing:.03em; text-shadow:0 0 2px rgba(0,0,0,.8); }
 
   /* ===================== HOME ===================== */
   #verBadge { margin-top:22px; text-align:center; font-size:11px; color:#666; letter-spacing:.02em; }
@@ -151,21 +156,38 @@
      fades the thumbnail out to reveal the video underneath. */
   .slide-media img {
     position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
-    opacity:0; transition:opacity .2s ease; z-index:2;
+    opacity:0; transition:opacity .06s linear; z-index:2;
   }
   .slide-media img.loaded { opacity:1; }
+  /* v4: the stored grid thumbnail is a small 3:4 crop; as a full-screen start frame it is shown
+     blurred until the full-frame poster (or the video itself) takes over */
+  .slide-media img.lowres { filter:blur(14px); transform:scale(1.12); }
+  /* v4: progress / scrub bar along the bottom of every video */
+  .scrub { position:absolute; left:0; right:0; bottom:max(2px,calc(env(safe-area-inset-bottom) - 12px)); height:30px; z-index:8; touch-action:none; }
+  .scrub-track { position:absolute; left:10px; right:10px; bottom:9px; height:2px; border-radius:3px; background:rgba(255,255,255,.26); overflow:hidden; transition:height .12s ease, bottom .12s ease; }
+  .scrub-fill { height:100%; width:0; background:rgba(255,255,255,.9); border-radius:3px; }
+  .scrub.active .scrub-track { height:8px; bottom:6px; }
+  .scrub-time { display:none; position:absolute; left:0; right:0; bottom:54px; text-align:center; font-size:24px; font-weight:700; text-shadow:0 1px 6px rgba(0,0,0,.8); pointer-events:none; }
+  .scrub-time span { opacity:.6; font-weight:600; }
+  .scrub.active .scrub-time { display:block; }
+  .slide.scrubbing .slide-overlay, .slide.scrubbing .rail { opacity:0; }
+  .slide-media.resolving ~ .scrub .scrub-track, .slide-media.buffering ~ .scrub .scrub-track {
+    background:linear-gradient(90deg,rgba(255,255,255,.18) 0%,rgba(255,255,255,.75) 50%,rgba(255,255,255,.18) 100%); background-size:50% 100%; background-repeat:no-repeat;
+    animation:scrubwait .9s linear infinite; }
+  @keyframes scrubwait { from { background-position:-60% 0; } to { background-position:160% 0; } }
+  @keyframes fadein { from { opacity:0; } to { opacity:1; } }
   .slide-media.is-playing img { opacity:0; pointer-events:none; }
   .slide-media iframe { position:absolute; inset:0; width:100%; height:100%; border:0; z-index:1; }
   .slide-media video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#0b0b0b; z-index:1; pointer-events:none; }
 
   /* scrims hiding TikTok's own chrome; taps can't reach it regardless */
   .mask-bottom {
-    position:absolute; left:0; right:0; bottom:0; height:96px; z-index:3;
-    background:linear-gradient(to top,#000 0%,rgba(0,0,0,.9) 42%,rgba(0,0,0,0) 100%);
+    position:absolute; left:0; right:0; bottom:0; height:200px; z-index:3;
+    background:linear-gradient(to top,rgba(0,0,0,.6) 0%,rgba(0,0,0,.28) 45%,rgba(0,0,0,0) 100%);
     pointer-events:none;
   }
   .mask-rail {
-    position:absolute; right:0; bottom:96px; width:64px; height:250px; z-index:3;
+    display:none; position:absolute; right:0; bottom:96px; width:64px; height:250px; z-index:3;
     background:linear-gradient(to left,rgba(0,0,0,.82) 0%,rgba(0,0,0,.5) 55%,rgba(0,0,0,0) 100%);
     pointer-events:none;
   }
@@ -185,7 +207,7 @@
   .slide-media.has-player .status-badge { display:none; }
   /* While a cold video is being resolved/buffered, keep the spinner up over the
      thumbnail so it reads as loading rather than frozen. */
-  .slide-media.has-player.resolving .status-badge { display:block; }
+  .slide-media.has-player.resolving .status-badge { display:block; animation:fadein .2s .9s both; }   /* v4: the bottom bar shows waiting first; the spinner only after ~1 s */
   .slide-media.is-playing .status-badge { display:none; }
   .slide-media.paused .pause-icon,
   .slide-media.needs-tap .tap-icon { display:flex; }
@@ -206,17 +228,17 @@
     pointer-events:none;
   }
   .slide-media.ffwd::after {
-    content:'\26A1 2\00D7'; position:absolute; top:50%; left:50%;
-    transform:translate(-50%,-50%); z-index:7; font-size:19px; font-weight:700;
-    color:#fff; background:rgba(0,0,0,.5); padding:6px 14px; border-radius:20px;
+    content:'2\00D7  \25B8\25B8'; position:absolute; top:calc(env(safe-area-inset-top) + 58px); left:50%;
+    transform:translateX(-50%); z-index:7; font-size:14px; font-weight:700; letter-spacing:.02em;
+    color:#fff; background:rgba(0,0,0,.45); padding:5px 13px; border-radius:16px;
     pointer-events:none;
   }
   .slide-overlay {
-    position:absolute; left:0; right:74px; bottom:max(26px,env(safe-area-inset-bottom));
+    position:absolute; left:0; right:74px; bottom:calc(max(26px,env(safe-area-inset-bottom)) + 14px); transition:opacity .12s;
     padding:0 16px; z-index:6; pointer-events:none;
     text-shadow:0 1px 4px rgba(0,0,0,.65);
   }
-  .slide-author { font-size:15px; font-weight:700; margin-bottom:3px; }
+  .slide-author { font-size:15px; font-weight:700; margin-bottom:3px; pointer-events:auto; display:inline-block; }
   .slide-desc {
     font-size:13px; line-height:1.35; color:rgba(255,255,255,.95); margin-bottom:5px;
     display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
@@ -339,11 +361,12 @@
   <div class="sheet-new"><input id="newCatInput" placeholder="New category"><button id="newCatBtn">Add</button></div>
 </div>
 
+<div id="verTag"></div>
 <div id="toast"></div>
 
 <script>
 'use strict';
-var APP_VERSION = 3, APP_BUILT = 'Nov 14 11:55 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 4, APP_BUILT = 'Nov 15 4:24 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -410,7 +433,7 @@ async function boot() {
   }
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
   const fresh = !state || state.version !== DATA_VERSION || !state.hydrated;
-  if (!fresh) { handleIncomingAdd(); renderHome(); return; }
+  if (!fresh) { handleIncomingAdd(); renderHome(); resumeAfterUpdate(); return; }
   document.getElementById('allCount').textContent = 'Loading…';
   try {
     const raw = await (await fetch('favorites.json')).json();
@@ -441,6 +464,14 @@ async function boot() {
   startHarvest();   // begin filling search metadata for the whole library
 }
 
+// v4: an automatic update reloads the page; put the grid back where it was.
+function resumeAfterUpdate() {
+  let r = null; try { r = JSON.parse(sessionStorage.getItem('resume-grid') || 'null'); sessionStorage.removeItem('resume-grid'); } catch (e) {}
+  if (!r || !r.label) return;
+  const list = r.label === 'All Videos' ? liveItems() : (state.categories.includes(r.label) ? state.items.filter(i => i.category === r.label) : null);
+  if (!list) return;
+  openGrid(list, r.label); gridScroll.scrollTop = r.scroll || 0; gridVL.update(true);
+}
 const SHARED_CAT = 'Shared with me';
 // Add a video (by id) into the "Shared with me" category. Returns true if it
 // resulted in a change worth re-rendering.
@@ -795,6 +826,7 @@ function bindThumb(imgEl, id, priority, onGone) {
                  Math.min(20000, 700 * Math.pow(2, attempts)));
       return;
     }
+    if (imgEl.dataset.hi) return;               // v4: a full-frame poster is already showing
     imgEl.onerror = () => {
       if (urlRetried) return;
       urlRetried = true;
@@ -962,7 +994,7 @@ const thumbGrid  = document.getElementById('thumbGrid');
 let gridList = [], gridLabel = '', gridScrollMemory = {};
 
 const gridVL = VirtualList({
-  scroller: gridScroll, content: thumbGrid, perRow: 3, overscan: 3,
+  scroller: gridScroll, content: thumbGrid, perRow: 3, overscan: 5,
   render: (item, i) => {
     const t = document.createElement('div');
     t.className = 'thumb-tile';
@@ -1038,7 +1070,10 @@ gridScroll.addEventListener('scroll', () => {
   gridVL.update();
 }, { passive:true });
 
+// v4: grids opened from inside another view (a creator's videos) go back to where they came from
+let gridStack = [];
 document.getElementById('gridBack').onclick = () => {
+  if (gridStack.length) { const g = gridStack.pop(); openGrid(g.list, g.label); gridScroll.scrollTop = g.scroll; gridVL.update(true); return; }
   document.getElementById('gridView').classList.remove('open');
   document.getElementById('datePanel').classList.remove('open');
   gridVL.setItems([], gridVL.rowH);
@@ -1110,8 +1145,8 @@ let holdTimer = null, ffTimer = null, holding = false;
 
 function stageHeight() { return stage.clientHeight || window.innerHeight || 700; }
 
-function setTrack(y, animate) {
-  track.style.transition = animate ? 'transform .26s cubic-bezier(.22,.61,.36,1)' : 'none';
+function setTrack(y, animate, ms) {
+  track.style.transition = animate ? 'transform ' + (ms || 260) + 'ms cubic-bezier(.2,.8,.25,1)' : 'none';
   track.style.transform = 'translate3d(0,' + y + 'px,0)';
 }
 
@@ -1138,10 +1173,10 @@ function openFeed(list, label, startIndex) {
   setTrack(0, false);
   // Opening the feed is a deliberate tap on a specific video, so load it
   // promptly — only a short settle, unlike the longer dwell used for swipes.
-  scheduleCurrentPlayer(120);
+  scheduleCurrentPlayer(0);   // v4: no built-in wait before the tapped video starts loading
 }
 
-document.getElementById('feedBack').onclick = () => {
+function closeFeed() {
   if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; }
   clearResolveQueue();   // stop resolver work so it doesn't compete with the library's thumbnail loading
   ['-1','0','1'].forEach(k => { if (slotEls[k]) destroyPlayer(slotEls[k]); });
@@ -1149,8 +1184,20 @@ document.getElementById('feedBack').onclick = () => {
   slotEls = { '-1': null, '0': null, '1': null };
   document.getElementById('feed').classList.remove('open');
   curIndex = -1;
-  openGrid(gridList, gridLabel);
-};
+}
+document.getElementById('feedBack').onclick = () => { closeFeed(); openGrid(gridList, gridLabel); };
+// v4: tap a creator's name on a video to see everything saved from them
+function openCreator(id) {
+  const m = metaStore[id];
+  if (!m || !(m.handle || m.author)) { toast('Creator not known yet for this video'); return; }
+  const key = (m.handle || '').toLowerCase(), name = m.author || '';
+  const list = liveItems().filter(i => { const x = metaStore[i.id]; return !!x && (key ? (x.handle || '').toLowerCase() === key : x.author === name); });
+  const back = { list: gridBaseList, label: gridLabel, scroll: gridScrollMemory[gridLabel] || 0 };
+  closeFeed();
+  gridStack.push(back);
+  openGrid(list, m.handle ? '@' + m.handle : name);
+  gridScroll.scrollTop = 0; gridVL.update(true);
+}
 
 function indexForOffset(off) { return curIndex + off; }
 
@@ -1206,6 +1253,9 @@ function commitAdvance(dir) {
   }
 
   slotEls = next;
+  // v4: a video you swipe back to starts from the beginning, as on TikTok
+  const left = slotEls[dir === 1 ? '-1' : '1'];
+  if (left && left._vid) { try { left._vid.pause(); left._vid.currentTime = 0; } catch (e) {} }
   ['-1','0','1'].forEach(k => { if (slotEls[k]) slotEls[k].dataset.slot = k; });
   layoutSlots();
   setTrack(0, false);
@@ -1221,12 +1271,15 @@ function promoteCurrent() {
   const it = feedList[curIndex];
   if (it) { const c = el.querySelector('.slide-cat'); if (c) c.textContent = it.category; }
   fillOverlay(el, el.dataset.id);   // refresh creator/description from cache on activate
-  el._becameCurrentAt = Date.now(); el._diag = [];
+  el._becameCurrentAt = Date.now(); el._diag = []; el._wantPlay = true; el._resumes = 0;
   if (el._vid && el._vidId === el.dataset.id) {
-    // preloaded neighbour promoted — just play it
+    // preloaded neighbour promoted — just play it (usually already started when the finger lifted)
     delete el.dataset.userPaused;
-    el._vid.muted = desiredMuted || !audioUnlocked;
-    const p = el._vid.play(); if (p) p.catch(()=>{});
+    const v = el._vid;
+    v.muted = desiredMuted || !audioUnlocked;
+    const p = v.play(); if (p) p.catch(()=>{});
+    // if sound was refused, play muted rather than sit frozen
+    if (!v.muted) setTimeout(() => { if (slotEls['0'] === el && el._vid === v && el.dataset.userPaused !== 'true' && v.paused) { v.muted = true; const q = v.play(); if (q) q.catch(()=>{}); } }, 900);
   } else {
     mountSlot(el, true);
   }
@@ -1294,21 +1347,30 @@ function playCurrent() {
 }
 
 /* ---------- gestures on the stage ---------- */
+// v4 swipe handling. Three changes from before: (1) the incoming video starts the moment
+// the finger lifts, not after the slide animation; (2) a touch during the animation
+// finishes it at once and starts the next drag, so a quick second swipe is never dropped;
+// (3) flicks are judged by finger speed, and a faster flick gets a shorter animation.
+let dragVel = 0, lastMoveY = 0, lastMoveT = 0, _animDone = null;
 stage.addEventListener('pointerdown', (e) => {
+  if (animating && _animDone) _animDone();
   if (animating) return;
   dragging = true; dragMoved = false;
   dragStartY = e.clientY; dragDY = 0; dragStartT = Date.now();
+  dragVel = 0; lastMoveY = e.clientY; lastMoveT = performance.now();
   setTrack(0, false);
   clearTimeout(holdTimer);
-  holdTimer = setTimeout(() => { if (!dragMoved) startFF(); }, 350);
+  holdTimer = setTimeout(() => { if (!dragMoved && dragging) startFF(); }, 350);
   try { stage.setPointerCapture(e.pointerId); } catch (err) {}
 });
 
 stage.addEventListener('pointermove', (e) => {
   if (!dragging) return;
+  if (holding) return;                       // while holding for 2x the finger may wander
   dragDY = e.clientY - dragStartY;
-  if (Math.abs(dragDY) > 8) { dragMoved = true; clearTimeout(holdTimer); if (holding) stopFF(); }
-  if (holding) return;
+  const now = performance.now(), dtm = now - lastMoveT;
+  if (dtm > 0) { dragVel = dragVel * 0.5 + ((e.clientY - lastMoveY) / dtm) * 0.5; lastMoveY = e.clientY; lastMoveT = now; }
+  if (Math.abs(dragDY) > 8) { dragMoved = true; clearTimeout(holdTimer); }
   let dy = dragDY;
   // resist at the ends (no prev before 0, no next after last)
   if (curIndex === 0 && dy > 0) dy *= 0.3;
@@ -1316,37 +1378,51 @@ stage.addEventListener('pointermove', (e) => {
   setTrack(dy, false);
 });
 
+// Start the video being swiped to (and stop the one leaving) as soon as the swipe is decided.
+function startIncoming(dir) {
+  const inc = slotEls[String(dir)], out = slotEls['0'];
+  if (out) { out._wantPlay = false; pauseSlide(out); }
+  if (!inc) return;
+  inc._wantPlay = true; delete inc.dataset.userPaused;
+  if (inc._vid && inc._vidId === inc.dataset.id) {
+    inc._vid.muted = desiredMuted || !audioUnlocked;
+    const p = inc._vid.play(); if (p) p.catch(()=>{});
+  }
+}
+function slideTo(dir) {
+  const H = stageHeight();
+  const remaining = Math.max(0, H - Math.abs(dragDY));
+  const ms = Math.round(Math.max(130, Math.min(260, remaining / Math.max(Math.abs(dragVel), 2.4))));
+  animating = true;
+  startIncoming(dir);
+  setTrack(dir > 0 ? -H : H, true, ms);
+  afterTransition(() => { animating = false; commitAdvance(dir); }, ms);
+}
 function endDrag(e) {
   if (!dragging) return;
   dragging = false;
   clearTimeout(holdTimer);
-  if (holding) { stopFF(); return; }
+  if (holding) { stopFF(); setTrack(0, false); return; }
   const dt = Date.now() - dragStartT;
   const H = stageHeight();
   // a tap: little movement, short time → toggle play/pause
   if (!dragMoved && dt < 400) { toggleCurrent(); setTrack(0, false); return; }
-  const threshold = H * 0.18;
-  const fast = Math.abs(dragDY) > 60 && dt < 250;
-  if (dragDY < 0 && (Math.abs(dragDY) > threshold || fast) && curIndex < feedList.length - 1) {
-    animating = true;
-    setTrack(-H, true);
-    afterTransition(() => { animating = false; commitAdvance(1); });
-  } else if (dragDY > 0 && (Math.abs(dragDY) > threshold || fast) && curIndex > 0) {
-    animating = true;
-    setTrack(H, true);
-    afterTransition(() => { animating = false; commitAdvance(-1); });
-  } else {
-    setTrack(0, true);   // snap back
-  }
+  if (performance.now() - lastMoveT > 90) dragVel = 0;          // the finger stopped before lifting
+  const far = Math.abs(dragDY) > H * 0.18;
+  const flick = Math.abs(dragVel) > 0.35 && Math.abs(dragDY) > 24 && (dragVel < 0) === (dragDY < 0);
+  if (dragDY < 0 && (far || flick) && curIndex < feedList.length - 1) slideTo(1);
+  else if (dragDY > 0 && (far || flick) && curIndex > 0) slideTo(-1);
+  else setTrack(0, true, 180);   // snap back
 }
 stage.addEventListener('pointerup', endDrag);
-stage.addEventListener('pointercancel', () => { dragging = false; clearTimeout(holdTimer); if (holding) stopFF(); setTrack(0, true); });
+stage.addEventListener('pointercancel', () => { dragging = false; clearTimeout(holdTimer); if (holding) stopFF(); setTrack(0, true, 180); });
 
-function afterTransition(fn) {
+function afterTransition(fn, ms) {
   let done = false;
-  const h = () => { if (done) return; done = true; track.removeEventListener('transitionend', h); fn(); };
+  const h = () => { if (done) return; done = true; _animDone = null; track.removeEventListener('transitionend', h); fn(); };
+  _animDone = h;
   track.addEventListener('transitionend', h);
-  setTimeout(h, 360);   // fallback in case transitionend doesn't fire
+  setTimeout(h, (ms || 260) + 100);   // fallback in case transitionend doesn't fire
 }
 
 /* ---------- tap play/pause + hold fast-forward ---------- */
@@ -1377,19 +1453,35 @@ function toggleCurrent() {
   }
 }
 
+// v4: hold = real 2x playback (native playbackRate, sound included), the way TikTok does it.
+// Before, this nudged the playhead forward every 200 ms, which stuttered.
+let _ffCheck = null;
+function ffNudge(v) { try { v.currentTime = v.currentTime + 0.02; const p = v.play(); if (p) p.catch(()=>{}); } catch (e) {} }
 function startFF() {
-  const el = slotEls['0']; if (!el) return;
-  holding = true;
+  const el = slotEls['0']; if (!el || !el._vid) return;
+  const v = el._vid; holding = true;
   el.querySelector('.slide-media').classList.add('ffwd');
-  ffTimer = setInterval(() => {
-    const v = el._vid;
-    if (v && v.duration) v.currentTime = Math.min(v.duration - 0.1, v.currentTime + 0.5);
-  }, 200);
+  if (v.paused && el.dataset.userPaused !== 'true') { const p = v.play(); if (p) p.catch(()=>{}); }
+  const t0 = v.currentTime;
+  try { v.playbackRate = 2; } catch (e) {}
+  // Some WebKit builds freeze at 2x while pitch correction is on (seen in desktop test WebKit,
+  // Nov 15 2026). If the picture has not moved shortly after, retry without pitch correction.
+  clearTimeout(_ffCheck);
+  _ffCheck = setTimeout(() => {
+    if (!holding || el._vid !== v || v.paused || v.currentTime - t0 > 0.08 || v.currentTime < t0) return;
+    try { v.preservesPitch = false; v.webkitPreservesPitch = false; v.playbackRate = 1; v.playbackRate = 2; } catch (e) {}
+    ffNudge(v);
+  }, 300);
 }
 function stopFF() {
-  holding = false;
+  holding = false; clearTimeout(_ffCheck);
   if (ffTimer) { clearInterval(ffTimer); ffTimer = null; }
-  const el = slotEls['0']; if (el) el.querySelector('.slide-media').classList.remove('ffwd');
+  const el = slotEls['0']; if (!el) return;
+  el.querySelector('.slide-media').classList.remove('ffwd');
+  const v = el._vid; if (!v) return;
+  try { v.playbackRate = 1; } catch (e) {}
+  const t1 = v.currentTime;
+  setTimeout(() => { if (el._vid === v && !v.paused && slotEls['0'] === el && Math.abs(v.currentTime - t1) < 0.03) ffNudge(v); }, 350);
 }
 
 /* ---------- slide construction ---------- */
@@ -1416,8 +1508,16 @@ function buildSlide(item, i) {
       '<button class="rail-btn info-btn" aria-label="Info">&#8505;</button>' +
       '<button class="rail-btn share-btn" aria-label="Share">&#10148;</button>' +
       '<button class="rail-btn tag-btn2" aria-label="Organise">&#127991;</button>' +
-    '</div>';
+    '</div>' +
+    '<div class="scrub"><div class="scrub-track"><div class="scrub-fill"></div></div><div class="scrub-time"></div></div>';
   const media = el.querySelector('.slide-media');
+  const pimg = el.querySelector('img');
+  pimg.addEventListener('load', () => {   // blur only the small 3:4 crops; full-frame posters are shown as they are
+    const r = pimg.naturalWidth / Math.max(1, pimg.naturalHeight);
+    pimg.classList.toggle('lowres', !pimg.dataset.hi && r > 0.66 && r < 0.9);
+    if (pimg.dataset.hi || r <= 0.66) pimg.style.objectFit = fitFor(r);
+  });
+  bindScrub(el);
   bindThumb(el.querySelector('img'), item.id,
     () => Math.abs(i - curIndex),
     () => { el.classList.add('unavailable-slide');
@@ -1430,6 +1530,9 @@ function buildSlide(item, i) {
   el.querySelector('.tag-btn2').onclick = (e) => { e.stopPropagation(); openCategorySheet(item); };
   el.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
   el.querySelector('.info-btn').onclick = (e) => { e.stopPropagation(); showInfo(item.id); };
+  const authEl = el.querySelector('.slide-author');
+  authEl.onpointerdown = (e) => e.stopPropagation();
+  authEl.onclick = (e) => { e.stopPropagation(); openCreator(item.id); };
   const mb = el.querySelector('.mute-btn');
   syncMuteBtn(mb);
   mb.onclick = (e) => {
@@ -1469,7 +1572,7 @@ let metaDirty = false;
 setInterval(() => { metaDirty = false; flushTracked('meta', _metaTS, 'meta'); }, 3000);
 function metaSet(id, m) {
   const cur = metaStore[id] || {};
-  const next = { author: m.author || cur.author, handle: m.handle || cur.handle, desc: (m.desc != null ? m.desc : cur.desc) };
+  const next = { author: m.author || cur.author || '', handle: m.handle || cur.handle || '', desc: (m.desc != null ? m.desc : (cur.desc || '')) };
   if (m.dur || cur.dur) next.dur = m.dur || cur.dur;
   metaStore[id] = next; metaDirty = true;
   // If this video is on screen, reflect it immediately.
@@ -1623,7 +1726,7 @@ function playExpiry(u){
 }
 function rvFresh(r){ return !!r && Date.now() < (r.exp ? r.exp - 900000 : r.ts + RESOLVE_TTL); }
 function cacheGet(id){ const r=_rvMem.get(String(id)); return rvFresh(r) ? r : null; }
-function cacheSet(id,d){ const r={play:d.play,ts:Date.now(),exp:playExpiry(d.play)}; _rvMem.set(String(id),r); if (KV.ok) KV.write('rv', [[String(id), r]], []).catch(()=>{}); }
+function cacheSet(id,d){ const r={play:d.play,ts:Date.now(),exp:playExpiry(d.play)}; if (d.poster) r.poster=d.poster; _rvMem.set(String(id),r); if (KV.ok) KV.write('rv', [[String(id), r]], []).catch(()=>{}); }
 function cacheDrop(id){ _rvMem.delete(String(id)); if (KV.ok) KV.write('rv', [], [String(id)]).catch(()=>{}); }
 // Load fresh resolved URLs; move any old per-video localStorage keys over and delete them.
 (async () => {
@@ -1715,8 +1818,10 @@ async function _run(job){
     let play = j.data.play; if (play[0]==='/') play='https://www.tikwm.com'+play;
     const au = j.data.author || {};
     metaSet(job.id, { author: au.nickname || '', handle: au.unique_id || '', desc: j.data.title || '' });
-    const out = { play }; cacheSet(job.id, out); _emit(job.id, out);
-    let cover = j.data.cover || j.data.origin_cover || ''; if (cover && cover[0]==='/') cover='https://www.tikwm.com'+cover;
+    // v4: origin_cover is the whole frame (360x640, ~12 KB): right framing for the start frame, fine for the grid
+    let cover = j.data.origin_cover || j.data.cover || ''; if (cover && cover[0]==='/') cover='https://www.tikwm.com'+cover;
+    const out = { play, poster: cover }; cacheSet(job.id, out); _emit(job.id, cacheGet(job.id) || out);
+    if (j.data.duration) metaSet(job.id, { dur: j.data.duration });
     if (cover && !_thumbWaiters.has(job.id) && !LIB.has(job.id)) LIB.saveCover(job.id, cover);   // keep the image even when only the video was wanted
     _emitThumb(job.id, { cover });
     _lastOk = Date.now();
@@ -1760,9 +1865,17 @@ function newVideo(){
   // event can fire before an actual frame is painted, especially right after a
   // src swap, which showed as audio-over-black. Revealing is gated on a real
   // painted frame instead (see revealWhenPainted).
-  v.addEventListener('playing',()=>{ const el=slideOf(); if(!el)return; el._state=1; const m=el.querySelector('.slide-media'); if(m) m.classList.remove('paused','needs-tap'); revealWhenPainted(el, v); });
-  v.addEventListener('waiting',()=>{ const el=slideOf(); if(el&&el!==null) el._state=3; });
-  v.addEventListener('pause',()=>{ const el=slideOf(); if(el&&el._state===1) el._state=2; });
+  v.addEventListener('playing',()=>{ const el=slideOf(); if(!el)return; el._state=1; const m=el.querySelector('.slide-media'); if(m) m.classList.remove('paused','needs-tap','buffering'); revealWhenPainted(el, v); });
+  v.addEventListener('waiting',()=>{ const el=slideOf(); if(el){ el._state=3; const m=el.querySelector('.slide-media'); if(m) m.classList.add('buffering'); } });
+  v.addEventListener('loadedmetadata',()=>{ if(v.videoWidth>0 && v.videoHeight>0) v.style.objectFit = fitFor(v.videoWidth / v.videoHeight); });
+  v.addEventListener('pause',()=>{ const el=slideOf(); if(el&&el._state===1) el._state=2;
+    // v4: if the system pauses the video on screen (not the user, not us), resume it. If that happens
+    // right after a neighbour was primed, stop priming for this session: this phone doesn't tolerate it.
+    if (el && slotEls['0']===el && el._wantPlay && !el._scrubbing && el.dataset.userPaused!=='true' && !document.hidden && !v.ended && (el._resumes||0) < 3) {
+      el._resumes = (el._resumes||0) + 1;
+      if (Date.now() - _lastPrimeAt < 1500) _primeOff = true;
+      setTimeout(()=>{ if (slotEls['0']===el && el._vid===v && v.paused && el.dataset.userPaused!=='true') { const p=v.play(); if(p)p.catch(()=>{}); } }, 60);
+    } });
   v.addEventListener('error',()=>{ const el=slideOf(); if(!el) return; el._state=undefined;
     // v2: links are now trusted for hours, so one that died early gets one fresh resolve before asking for a tap
     if (el._vidId && !el._retried) { el._retried = true; cacheDrop(el._vidId); el._vidId = null; mountSlot(el, slotEls['0']===el); return; }
@@ -1787,7 +1900,7 @@ function revealWhenPainted(el, v){
   }
 }
 function acquireVideo(){ return vpool.pop() || newVideo(); }
-function releaseVideo(v){ if(!v) return; try{ v.pause(); v.removeAttribute('src'); v.load(); }catch(e){} if(v.parentNode) v.parentNode.removeChild(v); if(vpool.length<2) vpool.push(v); }
+function releaseVideo(v){ if(!v) return; try{ v.pause(); v.playbackRate=1; v.removeAttribute('src'); v.load(); }catch(e){} if(v.parentNode) v.parentNode.removeChild(v); if(vpool.length<2) vpool.push(v); }
 
 // Called SYNCHRONOUSLY from the tap that opens the feed (a real user gesture),
 // so the feed can start with sound ON. We pre-create the pooled <video>
@@ -1804,6 +1917,68 @@ function primeAudioOnGesture(){
   audioPrimed = true;
 }
 
+// v4: videos close to phone-shaped fill the screen (as before); anything else (landscape, square)
+// is shown whole instead of being cropped to a sliver.
+function fitFor(ratio) { return (ratio > 0.5 && ratio < 0.66) ? 'cover' : 'contain'; }
+// v4: swap the blurred thumbnail for the full-frame poster as soon as the resolver has named it.
+function upgradePoster(el, url) {
+  const img = el.querySelector('.slide-media img'); if (!img || !url || img.dataset.hi) return;
+  const hi = new Image(); hi.decoding = 'async';
+  hi.onload = () => { if (!el.isConnected || img.dataset.hi) return; img.dataset.hi = '1'; img.onerror = null; img.src = url; img.classList.add('loaded'); img.classList.remove('lowres'); };
+  hi.src = url;
+}
+function fmtTime(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+// v4: scrub bar. Drag anywhere along the bottom edge to move through the video; the picture
+// follows the finger, and playback continues from there on release.
+function bindScrub(el) {
+  const bar = el.querySelector('.scrub'), fill = el.querySelector('.scrub-fill'), time = el.querySelector('.scrub-time');
+  let raf = 0, want = -1, wasPlaying = false;
+  const ratioAt = (e) => { const r = el.querySelector('.scrub-track').getBoundingClientRect(); return Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(1, r.width))); };
+  const apply = () => { raf = 0; const v = el._vid; if (!v || !(v.duration > 0) || want < 0) return;
+    const t = want * v.duration; try { if (v.fastSeek && Math.abs(t - v.currentTime) > 2) v.fastSeek(t); else v.currentTime = t; } catch (e) {}
+    fill.style.width = (want * 100) + '%'; time.innerHTML = fmtTime(t) + ' <span>/ ' + fmtTime(v.duration) + '</span>'; };
+  const move = (e) => { want = ratioAt(e); if (!raf) raf = requestAnimationFrame(apply); };
+  bar.addEventListener('pointerdown', (e) => {
+    e.stopPropagation(); const v = el._vid; if (!v || !(v.duration > 0)) return;
+    el._scrubbing = true; el.classList.add('scrubbing'); bar.classList.add('active'); wasPlaying = !v.paused; v.pause();
+    try { bar.setPointerCapture(e.pointerId); } catch (err) {}
+    move(e);
+  });
+  bar.addEventListener('pointermove', (e) => { if (el._scrubbing) { e.stopPropagation(); move(e); } });
+  const end = (e) => { if (!el._scrubbing) return; e.stopPropagation(); el._scrubbing = false; want = -1; el.classList.remove('scrubbing'); bar.classList.remove('active');
+    const v = el._vid; if (v && wasPlaying && slotEls['0'] === el) { const p = v.play(); if (p) p.catch(()=>{}); } };
+  bar.addEventListener('pointerup', end); bar.addEventListener('pointercancel', end);
+}
+// One light loop moves the bar of the video on screen.
+(function scrubLoop() {
+  const el = slotEls['0'];
+  if (el && el._vid && !el._scrubbing && el._vid.duration > 0) { const f = el._scrubFill || (el._scrubFill = el.querySelector('.scrub-fill')); if (f) f.style.width = (el._vid.currentTime / el._vid.duration * 100) + '%'; }
+  requestAnimationFrame(scrubLoop);
+})();
+// v4: coming back to the app resumes the video (if the phone refuses, the pause icon shows so a tap is obviously needed).
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return; const el = slotEls['0'];
+  if (!el || !el._vid || el.dataset.userPaused === 'true' || !document.getElementById('feed').classList.contains('open')) return;
+  const v = el._vid; if (!v.paused) return;
+  const p = v.play(); if (p) p.catch(()=>{});
+  setTimeout(() => { if (slotEls['0'] === el && el._vid === v && v.paused) { el.dataset.userPaused = 'true'; el.querySelector('.slide-media').classList.add('paused'); } }, 800);
+});
+
+// v4: a waiting neighbour shows its real first frame (not only the cover) and has data
+// buffered: play it muted until one frame has been presented, then pause it. An iPhone shows
+// nothing for a video that has never played. Skipped once it is the video being swiped to.
+let _primeOff = false, _lastPrimeAt = 0;
+function primeFrame(el, v) {
+  const src = v.src;
+  const settle = () => { if (v.src !== src || el._vid !== v) return; if (el._wantPlay || slotEls['0'] === el) return; v.pause(); };
+  if (!src || _primeOff || el._primedSrc === src) { settle(); return; }
+  el._primedSrc = src; _lastPrimeAt = Date.now();
+  const p = v.play(); if (p) p.catch(()=>{});
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) { try { v.requestVideoFrameCallback(settle); } catch (e) { setTimeout(settle, 400); } }
+  else { const onT = () => { v.removeEventListener('timeupdate', onT); settle(); }; v.addEventListener('timeupdate', onT); }
+  setTimeout(settle, 2500);                 // never leave a neighbour running
+}
+
 // Attach a pooled video to a slide, resolve+set its src (preload), and either
 // play it (active) or leave it buffering+paused (neighbour).
 function mountSlot(el, active){
@@ -1814,6 +1989,7 @@ function mountSlot(el, active){
   const applyState=()=>{
     media.classList.remove('resolving');
     if(active){
+      el._wantPlay = true;
       v.muted = desiredMuted || !audioUnlocked;
       const p=v.play(); if(p)p.catch(()=>{});
       // Safety: if we asked for SOUND but the platform refused (video still
@@ -1821,16 +1997,17 @@ function mountSlot(el, active){
       if(!v.muted){
         setTimeout(()=>{ if(slotEls['0']===el && el.dataset.userPaused!=='true' && v.paused){ v.muted=true; const q=v.play(); if(q)q.catch(()=>{}); } }, 900);
       }
-    } else { v.muted=true; v.pause(); }
+    } else { v.muted=true; primeFrame(el, v); }
   };
-  if(el._vidId===id && v.src){ applyState(); return; }         // already mounted
+  if(el._vidId===id && v.src){ const c=cacheGet(id); if(c) upgradePoster(el, c.poster); applyState(); return; }         // already mounted
   el._token=(el._token||0)+1; const tok=el._token;
   // Show the spinner while resolving so a cold video reads as loading, not frozen.
   if(active && el._state!==1) media.classList.add('resolving');
   resolve(id, active ? 0 : 1).then(r=>{
     if(!r) throw new Error('null');
     if(el._token!==tok || el._vid!==v) return;
-    if(v.src!==r.play){ media.classList.remove('is-playing'); el._revealTok=(el._revealTok||0)+1; v.src=r.play; try{v.load();}catch(e){} }
+    upgradePoster(el, r.poster);
+    if(v.src!==r.play){ media.classList.remove('is-playing'); el._revealTok=(el._revealTok||0)+1; v.src=r.play; try{v.load(); v.playbackRate=1;}catch(e){} }
     el._vidId=id; applyState();
   }).catch((e)=>{ media.classList.remove('resolving');
     if (e && e.gone) {                       // v2: remembered as unavailable; a tap re-checks
@@ -1844,7 +2021,7 @@ function unmountSlot(el){
   if(!el) return;
   if(el._playGrace){ clearTimeout(el._playGrace); el._playGrace=null; }
   if(el._vid){ releaseVideo(el._vid); el._vid=null; el._vidId=null; }
-  const m=el.querySelector('.slide-media'); if(m) m.classList.remove('has-player','paused','needs-tap','is-playing');
+  const m=el.querySelector('.slide-media'); if(m) m.classList.remove('has-player','paused','needs-tap','is-playing','buffering');
   delete el.dataset.userPaused; el._state=undefined;
 }
 // Keep the old names the rest of the app calls:
@@ -1862,7 +2039,7 @@ function syncSlots(){
   const keep = new Set();
   const cur = slotEls['0']; if(cur) keep.add(cur.dataset.id);
   ['-1','1'].forEach(k=>{ if(slotEls[k]) keep.add(slotEls[k].dataset.id); });
-  for(let d=2; d<=4; d++){ const it=feedList[curIndex+d]; if(it){ keep.add(it.id); prefetch(curIndex+d, 3+d); } }
+  for(let d=2; d<=8; d++){ const it=feedList[curIndex+d]; if(it){ keep.add(it.id); prefetch(curIndex+d, 3+d); } }   // v4: links live 6 h, so look further ahead
   const back=feedList[curIndex-2]; if(back){ keep.add(back.id); prefetch(curIndex-2, 8); }
   pruneQueue(keep);
 }
@@ -1875,7 +2052,7 @@ function ensurePlaying(el){
   delete el.dataset.userPaused;
   if(el._playGrace) clearTimeout(el._playGrace);
   el._playGrace=setTimeout(()=>{
-    if(slotEls['0']!==el || el.dataset.userPaused==='true' || el._state===1) return;
+    if(slotEls['0']!==el || el.dataset.userPaused==='true' || el._state===1 || el._scrubbing) return;
     const v=el._vid;
     if(v && v.paused){ v.muted=desiredMuted||!audioUnlocked; const p=v.play(); if(p)p.catch(()=>{}); }
     if(el._state!==1 && media) media.classList.add('needs-tap');
@@ -2268,7 +2445,7 @@ window.__fav = {
   go(dir) {
     if (animating || dragging) return false;
     const ni = curIndex + dir; if (ni < 0 || ni >= feedList.length) return false;
-    animating = true; setTrack(dir > 0 ? -stageHeight() : stageHeight(), true);
+    animating = true; startIncoming(dir); setTrack(dir > 0 ? -stageHeight() : stageHeight(), true);
     afterTransition(() => { animating = false; commitAdvance(dir); tlog('commit', { dir, to: curIndex }); });
     return true;
   },
@@ -2304,7 +2481,8 @@ boot();
    serves the old page. APP_VERSION / APP_BUILT are stamped by _dev/tools/release.py. */
 (function () {
   const badge = document.getElementById('verBadge');
-  const show = (extra) => { if (badge) badge.textContent = 'v' + APP_VERSION + ' · ' + APP_BUILT + (extra || ''); };
+  const tag = document.getElementById('verTag');
+  const show = (extra) => { if (badge) badge.textContent = 'v' + APP_VERSION + ' · ' + APP_BUILT + (extra || ''); if (tag) tag.textContent = 'v' + APP_VERSION + (extra ? ' *' : ''); };
   show();
   let pendingV = null;
   const feedOpen = () => { const f = document.getElementById('feed'); return !!(f && f.classList.contains('open')); };
@@ -2313,6 +2491,7 @@ boot();
     if (tried === String(v)) { show(' · v' + v + ' pending'); return; }
     try { sessionStorage.setItem('upd-tried', String(v)); } catch (e) {}
     try { if (typeof flushSave === 'function') flushSave(); } catch (e) {}
+    try { if (document.getElementById('gridView').classList.contains('open')) sessionStorage.setItem('resume-grid', JSON.stringify({ label: gridLabel, scroll: gridScroll.scrollTop })); } catch (e) {}
     const q = new URLSearchParams(location.search); q.set('v', v);
     location.replace(location.pathname + '?' + q.toString());
   }
