@@ -392,7 +392,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 9, APP_BUILT = 'Nov 15 4:55 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 10, APP_BUILT = 'Nov 15 9:15 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -507,11 +507,11 @@ const SHARED_CAT = 'Shared with me';
    releases never read or write this key, so rolling back cannot damage it, and gallery-state
    keeps its format. Mirrored to IndexedDB like the main state, and included in backup files. */
 let X = (() => { try { return JSON.parse(localStorage.getItem('gallery-x') || 'null'); } catch (e) { return null; } })() || {};
-function normX() { if (!X || typeof X !== 'object') X = {}; X.from = X.from || {}; X.parents = X.parents || {}; }
+function normX() { if (!X || typeof X !== 'object') X = {}; X.from = X.from || {}; X.parents = X.parents || {}; X.saved = X.saved || {}; }
 normX();
 function saveX() { const j = JSON.stringify(X); try { localStorage.setItem('gallery-x', j); } catch (e) {} LIB.putSnapAs('gallery-x', j); }
 function senderOf(id) { return X.from[id] || ''; }
-function catLine(item) { const p = senderOf(item.id); return item.category + (p ? '  ·  from ' + p : ''); }
+function catLine(item) { const p = senderOf(item.id); return item.category + (p ? '  ·  from ' + p : '') + (X.saved[item.id] ? '  ·  saved' : ''); }
 function people() {              // [{name, n}] among videos not deleted, most videos first
   const c = {}; liveItems().forEach(i => { const p = X.from[i.id]; if (p) c[p] = (c[p] || 0) + 1; });
   return Object.keys(c).map(name => ({ name, n: c[name] })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
@@ -2284,6 +2284,7 @@ function openCategorySheet(item) {
         confirmLabel:'Delete', destructive:true, onConfirm:() => purgeVideo(item) });
     });
   } else {
+    act(X.saved[item.id] ? 'Save a copy again (saved ' + formatDate(new Date(X.saved[item.id]).toISOString()) + ')' : 'Save a copy to keep', '', () => { closeSheet(); saveCopy(item); });
     if (senderOf(item.id) || item.category === SHARED_CAT) act(senderOf(item.id) ? 'Sent by ' + senderOf(item.id) + ' (change)' : 'Set who sent it', '', () => { closeSheet(); senderModal(item.id, false); });
     act('Delete','destructive',() => { deleteVideo(item); closeSheet(); });
   }
@@ -2608,6 +2609,46 @@ document.getElementById('libBtn').onclick = () => {
     { label: 'App status', onClick: appStatus }
   ]});
 };
+
+/* ---- v10: keep a copy (Ian, Nov 15 2026: for videos he wants to preserve long term) ----
+   Only ever on his explicit action for one video: the app never downloads video by itself.
+   Step 1 fetches the file (video, or every picture of a photo post) into memory with a
+   progress line. Step 2 is a second tap, because iOS opens its share sheet only straight
+   from a tap: from there "Save Video" puts it in Photos, "Save to Files" in Files. */
+async function saveCopy(item) {
+  const id = item.id, pm = progressModal('Saving a copy'); pm.set('Getting the video…');
+  try {
+    const r = await requestResolve(id, 0); const m = metaStore[id] || {};
+    const base = ((m.handle || 'video') + '-' + id).replace(/[^\w.-]+/g, '_'); let files = [], bytes = 0;
+    const pull = async (url, label) => {
+      const res = await fetch(url, { referrerPolicy: 'no-referrer', credentials: 'omit' }); if (!res.ok) throw new Error('the server refused');
+      const total = Number(res.headers.get('content-length')) || 0;
+      if (!(res.body && res.body.getReader)) { const b = await res.blob(); bytes += b.size; return b; }
+      const rd = res.body.getReader(), parts = []; let got = 0;
+      for (;;) { const x = await rd.read(); if (x.done) break; parts.push(x.value); got += x.value.length; pm.set(label + (total ? Math.round(got / total * 100) + '% of ' + (total / 1e6).toFixed(1) + ' MB' : (got / 1e6).toFixed(1) + ' MB')); }
+      bytes += got; return new Blob(parts);
+    };
+    if (r.images && r.images.length) {
+      for (let i = 0; i < r.images.length; i++) files.push(new File([await pull(r.images[i], 'Picture ' + (i + 1) + ' of ' + r.images.length + ': ')], base + '-' + String(i + 1).padStart(2, '0') + '.jpg', { type: 'image/jpeg' }));
+    } else files.push(new File([await pull(r.play, '')], base + '.mp4', { type: 'video/mp4' }));
+    pm.close(); saveReady(item, files, bytes);
+  } catch (e) { pm.close(); toast('Could not save a copy: ' + ((e && e.message) || 'no connection')); }
+}
+function saveReady(item, files, bytes) {
+  closeOverlays();
+  const b = document.createElement('div'); b.className = 'modal-backdrop'; b.id = 'saveModal';
+  b.innerHTML = '<div class="modal-card"><div class="modal-title">Copy ready</div><div class="modal-message">' + (files.length > 1 ? files.length + ' pictures' : 'Video') + ', ' + (bytes / 1e6).toFixed(1) +
+    ' MB. Tap Save, then choose “Save Video” (Photos) or “Save to Files”.</div><div class="modal-actions"><button class="modal-btn" id="modalCancel">Cancel</button><button class="modal-btn primary" id="saveGo">Save</button></div></div>';
+  document.body.appendChild(b);
+  b.querySelector('#modalCancel').onclick = closeOverlays;
+  const done = () => { X.saved[item.id] = Date.now(); saveX(); closeOverlays(); toast('Saved');
+    document.querySelectorAll('.slide[data-id="' + CSS.escape(item.id) + '"] .slide-cat').forEach(c => { c.textContent = catLine(item); }); };
+  b.querySelector('#saveGo').onclick = () => {
+    if (navigator.canShare && navigator.canShare({ files })) { navigator.share({ files }).then(done).catch(e => { if (!e || e.name !== 'AbortError') toast('The phone did not open the save sheet'); }); return; }
+    files.forEach(f => { const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); });   // browsers without file sharing (a computer)
+    done();
+  };
+}
 
 /* ---- debug overlay ---- */
 let DEBUG = false;
