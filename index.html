@@ -402,7 +402,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 12, APP_BUILT = 'Nov 15 9:56 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 13, APP_BUILT = 'Nov 15 10:18 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2688,6 +2688,57 @@ function importBackup(file) {
       onConfirm: () => { applyBackup(st, b.x, b.shuffle); toast('Backup restored'); } });
   }).catch(() => toast('Could not read that file'));
 }
+/* ---- v13: import a list of links (a whole message thread gathered on the Mac, or pasted text) ----
+   File made by _dev/tools/thread_import.py: { kind:'favorites-import', from:'Sam', items:[{url}] };
+   plain text with links in it works too. Rules (SPEC): videos already here are skipped (they only
+   get the sender label if they had none), videos deleted for good are never brought back, short
+   links are expanded through the resolver one at a time, Instagram links are counted and left out. */
+function parseImport(text) {
+  let from = '', raw = [];
+  try { const j = JSON.parse(text); const arr = Array.isArray(j) ? j : (j && Array.isArray(j.items) ? j.items : null);
+    if (arr) { from = (j && typeof j.from === 'string') ? j.from.trim().slice(0, 40) : ''; raw = arr.map(e => typeof e === 'string' ? e : String((e && (e.url || e.id)) || '')); } } catch (e) {}
+  if (!raw.length) { const m = /^\s*from:\s*(.+)$/im.exec(text); if (m) from = m[1].trim().slice(0, 40); raw = text.match(/https?:\/\/[^\s"'<>]+|\b\d{17,20}\b/g) || []; }
+  const ids = [], shorts = []; let ig = 0, bad = 0; const seen = new Set();
+  raw.forEach(u => {
+    u = String(u).trim(); if (!u || seen.has(u)) return; seen.add(u);
+    let m = /(?:\/video\/|\/photo\/|\/v\/)(\d{15,20})/.exec(u) || /^(\d{15,20})$/.exec(u);
+    if (m) { if (!ids.includes(m[1])) ids.push(m[1]); return; }
+    if (/^https?:\/\/(vm|vt)\.tiktok\.com\/\w+|^https?:\/\/(www\.)?tiktok\.com\/t\/\w+/i.test(u)) { shorts.push(u.replace(/[).,]+$/, '')); return; }
+    if (/instagram\.com\/(reel|reels|p|tv)\//i.test(u)) { ig++; return; }
+    if (/tiktok/i.test(u)) bad++;
+  });
+  return { from, ids, shorts, ig, bad };
+}
+async function runImport(p, onProgress) {
+  const res = { added: 0, already: 0, deletedForGood: 0, unreadable: p.bad, instagram: p.ig, labelled: 0, from: p.from };
+  const ids = p.ids.slice();
+  for (let i = 0; i < p.shorts.length; i++) {                 // short links: ask the resolver, politely
+    if (onProgress) onProgress('Reading short link ' + (i + 1) + ' of ' + p.shorts.length);
+    const wait = MIN_GAP - (Date.now() - _lastRes); if (wait > 0) await new Promise(r => setTimeout(r, wait)); _lastRes = Date.now();
+    try { const j = await (await fetch(RESOLVER + encodeURIComponent(p.shorts[i]))).json(); const vid = j && j.code === 0 && j.data && j.data.id ? String(j.data.id) : '';
+      if (vid) { if (j.data.author) metaSet(vid, { author: j.data.author.nickname || '', handle: j.data.author.unique_id || '', desc: j.data.title || '' }); if (!ids.includes(vid)) ids.push(vid); } else res.unreadable++; }
+    catch (e) { res.unreadable++; }
+  }
+  const have = new Map(state.items.map(i => [i.id, i])), purged = new Set(state.purged || []), now = new Date().toISOString().replace('T', ' ').slice(0, 19), fresh = [];
+  ids.forEach(id => {
+    if (purged.has(id)) { res.deletedForGood++; return; }
+    if (have.has(id)) { res.already++; if (p.from && !X.from[id]) { X.from[id] = p.from; res.labelled++; } return; }
+    fresh.push({ id, date: now, category: SHARED_CAT }); if (p.from) X.from[id] = p.from; res.added++;
+  });
+  if (fresh.length) { state.items = fresh.concat(state.items); if (!state.categories.includes(SHARED_CAT)) state.categories.unshift(SHARED_CAT); }
+  if (res.added || res.labelled) { flushSave(true); saveX(); renderHome(); }
+  return res;
+}
+function importList(text) {
+  const p = parseImport(text);
+  if (!p.ids.length && !p.shorts.length) { toast(p.ig ? 'Only Instagram links in there; those are not supported yet' : 'No TikTok links found in that'); return; }
+  const pm = progressModal('Importing links'); pm.set((p.ids.length + p.shorts.length) + ' links found…');
+  runImport(p, t => pm.set(t)).then(r => { pm.close();
+    infoModal('Links imported' + (r.from ? ' from ' + r.from : ''), 'Added to “Shared with me”: ' + r.added + '\nAlready in your library: ' + r.already + (r.labelled ? ' (' + r.labelled + ' now marked as sent by ' + r.from + ')' : '') +
+      (r.deletedForGood ? '\nDeleted for good earlier, left out: ' + r.deletedForGood : '') + (r.instagram ? '\nInstagram links, not supported yet: ' + r.instagram : '') + (r.unreadable ? '\nCould not be read: ' + r.unreadable : '')); })
+    .catch(() => { pm.close(); toast('Import failed'); });
+}
+
 /* ---- v5: automatic library ----
    The Mac publishes the harvested library on the site as ENCRYPTED parts (lib/manifest.json +
    lib/*.bin, AES-256-GCM). The key comes from a 16-digit code typed here once. With a key, the
@@ -2755,6 +2806,8 @@ document.getElementById('libBtn').onclick = () => {
     st.key ? { label: 'Automatic library: on (' + st.parts + ' parts loaded)', onClick: () => { LIBSYNC.run(); toast('Checking for new library parts'); } }
            : { label: 'Turn on automatic library (enter code)', onClick: askLibraryCode },
     { label: 'Import library pack', onClick: () => pickFile(runPackImport) },
+    { label: 'Import a list of links (file)', onClick: () => pickFile(f => f.text().then(importList).catch(() => toast('Could not read that file'))) },
+    { label: 'Paste links', onClick: () => inputModal({ title: 'Paste links', placeholder: 'One or many TikTok links', confirmLabel: 'Import', onSubmit: (v) => { setTimeout(() => importList(v), 60); } }) },
     { label: 'Save a backup of my categories', onClick: exportBackup },
     { label: 'Restore categories from a backup', onClick: () => pickFile(importBackup) },
     { label: 'App status', onClick: appStatus }
