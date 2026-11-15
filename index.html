@@ -360,6 +360,7 @@
   <div class="grid-top">
     <button class="icon-btn" id="gridBack">&lsaquo;</button>
     <div class="grid-title" id="gridTitle">All Videos</div>
+    <button class="icon-btn" id="gridManage" aria-label="Manage category" style="display:none">&#8942;</button>
     <button class="icon-btn" id="searchBtn" aria-label="Search">&#128269;</button>
     <button class="icon-btn" id="dateJumpBtn" style="display:none">&#128197;</button>
   </div>
@@ -392,7 +393,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 10, APP_BUILT = 'Nov 15 9:15 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 11, APP_BUILT = 'Nov 15 9:34 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -497,7 +498,7 @@ async function boot() {
 function resumeAfterUpdate() {
   let r = null; try { r = JSON.parse(sessionStorage.getItem('resume-grid') || 'null'); sessionStorage.removeItem('resume-grid'); } catch (e) {}
   if (!r || !r.label) return;
-  const list = r.label === 'All Videos' ? liveItems() : (state.categories.includes(r.label) ? state.items.filter(i => i.category === r.label) : null);
+  const list = r.label === 'All Videos' ? liveItems() : (state.categories.includes(r.label) ? itemsOfTree(r.label) : null);
   if (!list) return;
   openGrid(list, r.label); gridScroll.scrollTop = r.scroll || 0; gridVL.update(true);
 }
@@ -510,6 +511,28 @@ let X = (() => { try { return JSON.parse(localStorage.getItem('gallery-x') || 'n
 function normX() { if (!X || typeof X !== 'object') X = {}; X.from = X.from || {}; X.parents = X.parents || {}; X.saved = X.saved || {}; }
 normX();
 function saveX() { const j = JSON.stringify(X); try { localStorage.setItem('gallery-x', j); } catch (e) {} LIB.putSnapAs('gallery-x', j); }
+// v11: subcategories. Categories stay a flat list of unique names in gallery-state (older
+// releases simply see them all as ordinary categories); who sits under whom is X.parents.
+function cleanParents() {
+  let ch = false;
+  for (const c in X.parents) { const p = X.parents[c];
+    if (!state.categories.includes(c) || !state.categories.includes(p) || c === p || c === DELETED || p === DELETED || treeOf(c).includes(p)) { delete X.parents[c]; ch = true; } }
+  if (ch) saveX();
+}
+function childrenOf(cat) { return state.categories.filter(c => X.parents[c] === cat && c !== cat); }
+function treeOf(cat) { const out = [cat]; for (let i = 0; i < out.length && i < 400; i++) childrenOf(out[i]).forEach(c => { if (!out.includes(c)) out.push(c); }); return out; }
+function itemsOfTree(cat) { const set = new Set(treeOf(cat)); return state.items.filter(i => set.has(i.category)); }
+function orderedCats() {         // [{name, depth}] in tree order, Deleted left out
+  const out = [], seen = new Set();
+  const walk = (c, d) => { if (seen.has(c)) return; seen.add(c); out.push({ name: c, depth: d }); if (d < 8) childrenOf(c).forEach(k => walk(k, d + 1)); };
+  state.categories.filter(c => c !== DELETED && !X.parents[c]).forEach(c => walk(c, 0));
+  state.categories.filter(c => c !== DELETED && !seen.has(c)).forEach(c => walk(c, 0));
+  return out;
+}
+function refreshViews() {
+  renderHome();
+  if (document.getElementById('gridView').classList.contains('open') && !document.getElementById('feed').classList.contains('open') && state.categories.includes(gridLabel)) openGrid(itemsOfTree(gridLabel), gridLabel, true);
+}
 function senderOf(id) { return X.from[id] || ''; }
 function catLine(item) { const p = senderOf(item.id); return item.category + (p ? '  ·  from ' + p : '') + (X.saved[item.id] ? '  ·  saved' : ''); }
 function people() {              // [{name, n}] among videos not deleted, most videos first
@@ -985,16 +1008,17 @@ function renderHome() {
   document.getElementById('allCount').textContent = liveItems().length + ' saved';
   const grid = document.getElementById('catGrid');
   grid.innerHTML = '';
-  const ordered = state.categories.filter(c => c !== DELETED);
+  cleanParents();
+  const ordered = state.categories.filter(c => c !== DELETED && !X.parents[c]);     // v11: top level only
   if (state.categories.includes(DELETED)) ordered.push(DELETED);
   ordered.forEach(cat => {
-    const n = state.items.filter(i => i.category === cat).length;
+    const n = itemsOfTree(cat).length, kids = treeOf(cat).length - 1;
     const t = document.createElement('div');
     t.className = 'cat-tile' + (cat === DELETED ? ' trash' : '');
     t.innerHTML = '<button class="cat-manage">&#8942;</button>' +
                   '<div class="name">' + esc(cat) + '</div>' +
-                  '<div class="count">' + n + ' saved</div>';
-    t.onclick = () => openGrid(state.items.filter(i => i.category === cat), cat);
+                  '<div class="count">' + n + ' saved' + (kids ? '  ·  ' + kids + ' inside' : '') + '</div>';
+    t.onclick = () => { gridStack = []; openGrid(itemsOfTree(cat), cat); };
     t.querySelector('.cat-manage').onclick = (e) => { e.stopPropagation(); manageCategory(cat); };
     grid.appendChild(t);
   });
@@ -1030,8 +1054,25 @@ function manageCategory(cat) {
   }
   actionSheet({ title: cat, rows: [
     { label:'Rename', onClick: () => renameCategory(cat) },
+    { label:'Add a subcategory', onClick: () => addSubcategory(cat) },
+    { label: X.parents[cat] ? 'Move (now inside ' + X.parents[cat] + ')' : 'Move inside another category', onClick: () => moveCategory(cat) },
     { label:'Delete category', destructive:true, onClick: () => confirmDeleteCategory(cat) }
   ]});
+}
+function addSubcategory(cat) {
+  inputModal({ title:'New subcategory in "' + cat + '"', placeholder:'Name', confirmLabel:'Add',
+    onSubmit: (name) => {
+      if (name === DELETED) return 'That name is reserved.';
+      if (state.categories.includes(name)) return 'A category with that name already exists.';
+      state.categories.push(name); X.parents[name] = cat; save(); saveX(); refreshViews();
+    }});
+}
+function moveCategory(cat) {
+  const mine = treeOf(cat);
+  const rows = [{ label: 'Top level' + (X.parents[cat] ? '' : '  \u2713'), onClick: () => { delete X.parents[cat]; saveX(); refreshViews(); } }];
+  orderedCats().filter(c => !mine.includes(c.name)).forEach(c => rows.push({ label: '\u2003'.repeat(c.depth) + c.name + (X.parents[cat] === c.name ? '  \u2713' : ''),
+    onClick: () => { X.parents[cat] = c.name; saveX(); refreshViews(); } }));
+  actionSheet({ title: 'Put "' + cat + '" inside…', rows });
 }
 function renameCategory(cat) {
   inputModal({ title:'Rename "' + cat + '"', placeholder:'New name', initialValue:cat, confirmLabel:'Save',
@@ -1040,20 +1081,31 @@ function renameCategory(cat) {
       if (name !== cat && state.categories.includes(name)) return 'That category already exists.';
       state.categories = state.categories.map(c => c === cat ? name : c);
       state.items.forEach(i => { if (i.category === cat) i.category = name; });
-      save(); renderHome();
+      if (name !== cat) {                                   // v11: keep the tree attached to the new name
+        if (X.parents[cat]) { X.parents[name] = X.parents[cat]; delete X.parents[cat]; }
+        for (const c in X.parents) if (X.parents[c] === cat) X.parents[c] = name;
+        saveX(); if (gridLabel === cat) { gridLabel = name; document.getElementById('gridTitle').textContent = name; }
+        gridStack.forEach(g => { if (g.label === cat) g.label = name; });
+      }
+      save(); refreshViews();
     }});
 }
 function confirmDeleteCategory(cat) {
   const n = state.items.filter(i => i.category === cat).length;
   confirmModal({
     title:'Delete "' + cat + '"?',
-    message: n ? n + ' video(s) move to Uncategorized. The videos are not deleted.' : 'This category is empty.',
+    message: n ? n + ' video(s) move to ' + (X.parents[cat] || 'Uncategorized') + '. The videos are not deleted.' : 'This category is empty.',
     confirmLabel:'Delete', destructive:true,
     onConfirm: () => {
+      const up = X.parents[cat];                            // v11: its subcategories move up one level, with their videos
+      childrenOf(cat).forEach(c => { if (up) X.parents[c] = up; else delete X.parents[c]; });
+      delete X.parents[cat]; saveX();
       state.categories = state.categories.filter(c => c !== cat);
-      state.items.forEach(i => { if (i.category === cat) i.category = 'Uncategorized'; });
-      if (n && !state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
-      save(); renderHome();
+      state.items.forEach(i => { if (i.category === cat) i.category = up || 'Uncategorized'; });   // a subcategory's videos go to its parent
+      if (n && !up && !state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+      save();
+      if (gridLabel === cat && document.getElementById('gridView').classList.contains('open')) { gridStack = gridStack.filter(g => g.label !== cat); document.getElementById('gridBack').onclick(); }
+      else refreshViews();
     }});
 }
 
@@ -1093,13 +1145,20 @@ let chipSel = '';
 function chipList() {
   if (chipSel === 'u') return state.items.filter(i => i.category === SHARED_CAT && !X.from[i.id]);
   if (chipSel.indexOf('p:') === 0) { const n = chipSel.slice(2); return liveItems().filter(i => X.from[i.id] === n); }
-  return state.items.filter(i => i.category === SHARED_CAT);
+  return itemsOfTree(SHARED_CAT);
 }
 function setupChips(label, keep) {
   const row = document.getElementById('chipRow'); row.innerHTML = ''; row.classList.remove('open');
-  if (!keep) chipSel = '';
-  if (label !== SHARED_CAT) { chipSel = ''; return; }
-  const ppl = people(); if (!ppl.length) { chipSel = ''; return; }
+  if (!keep || label !== SHARED_CAT) chipSel = '';
+  const mb = document.getElementById('gridManage'); if (mb) mb.style.display = (state.categories.includes(label) && label !== DELETED) ? '' : 'none';
+  const kids = state.categories.includes(label) ? childrenOf(label) : [];
+  const ppl = label === SHARED_CAT ? people() : [];
+  if (!kids.length && !ppl.length) { chipSel = ''; return; }
+  // v11: subcategories first; tapping one goes into it (Back returns here)
+  kids.forEach(k => { const c = document.createElement('button'); c.className = 'chip'; c.textContent = '\u25B8 ' + k + '  ' + itemsOfTree(k).length;
+    c.onclick = () => { gridStack.push({ list: gridBaseList, label: gridLabel, scroll: gridScroll.scrollTop }); openGrid(itemsOfTree(k), k); gridScroll.scrollTop = 0; gridVL.update(true); };
+    row.appendChild(c); });
+  if (!ppl.length) { row.classList.add('open'); return; }
   if (chipSel.indexOf('p:') === 0 && !ppl.some(p => 'p:' + p.name === chipSel)) chipSel = '';
   const mk = (text, key) => { const c = document.createElement('button'); c.className = 'chip' + (key === chipSel ? ' on' : ''); c.textContent = text;
     c.onclick = () => { chipSel = key; [...row.children].forEach(x => x.classList.toggle('on', x === c)); gridBaseList = chipList(); runSearch(document.getElementById('searchInput').value); };
@@ -1151,6 +1210,7 @@ function runSearch(qRaw) {
   gridScroll.scrollTop = 0;
   gridVL.update(true);
 }
+document.getElementById('gridManage').onclick = () => manageCategory(gridLabel);
 document.getElementById('searchBtn').onclick = () => {
   const row = document.getElementById('searchRow');
   const open = row.classList.toggle('open');
@@ -2257,10 +2317,11 @@ function openCategorySheet(item) {
   const inTrash = item.category === DELETED;
 
   if (!inTrash) {
-    state.categories.filter(c => c !== DELETED).forEach(cat => {
+    orderedCats().forEach(oc => {
+      const cat = oc.name;
       const r = document.createElement('div');
       r.className = 'sheet-cat' + (cat === item.category ? ' selected' : '');
-      r.textContent = cat + (cat === item.category ? '  \u2713' : '');
+      r.textContent = '\u2003'.repeat(oc.depth) + cat + (cat === item.category ? '  \u2713' : '');
       r.onclick = () => {
         item.category = cat; save();
         const el = slotEls['0'];
