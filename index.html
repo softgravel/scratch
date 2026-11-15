@@ -43,6 +43,13 @@
     background:var(--panel); border:1px solid var(--line); border-radius:14px;
     padding:18px 16px; margin-bottom:14px;
   }
+  #shuffleTile { background:linear-gradient(135deg,#1d2f4d,#16202f); border:1px solid #2b4168; border-radius:14px; padding:18px 16px; margin-bottom:14px; }
+  #shuffleTile .name { font-size:17px; font-weight:600; }
+  #shuffleTile .count { font-size:13px; color:#9fb4d6; margin-top:3px; }
+  #shuffleBar { display:none; flex:1; justify-content:center; gap:6px; }
+  #shuffleBar.open { display:flex; }
+  #shuffleBar button { font-size:12px; font-weight:600; padding:6px 11px; border-radius:14px; border:0; background:rgba(0,0,0,.4); color:rgba(255,255,255,.8); }
+  #shuffleBar button.on { background:rgba(255,255,255,.92); color:#000; }
   #allTile .name { font-size:17px; font-weight:600; }
   #allTile .count { font-size:13px; color:var(--dim); margin-top:3px; }
   #addLinkBtn {
@@ -348,6 +355,7 @@
 <body>
 
 <div id="home">
+  <div id="shuffleTile"><div class="name">Shuffle</div><div class="count" id="shuffleCount"></div></div>
   <div id="allTile"><div class="name">All Videos</div><div class="count" id="allCount">Loading…</div></div>
   <button id="addLinkBtn">＋ Add a shared link</button>
   <div id="catGrid"></div>
@@ -374,6 +382,7 @@
   <div class="feed-top">
     <button class="icon-btn" id="feedBack">&lsaquo;</button>
     <div class="feed-label" id="feedLabel">All Videos</div>
+    <div id="shuffleBar"><button id="shufUnseen">Unseen only</button><button id="shufFresh">Fresh shuffle</button></div>
     <button class="icon-btn" id="debugToggle">&#128027;</button>
   </div>
   <div id="stage"><div id="track"></div></div>
@@ -393,7 +402,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 11, APP_BUILT = 'Nov 15 9:34 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 12, APP_BUILT = 'Nov 15 9:56 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -458,6 +467,8 @@ async function boot() {
       }
     } catch (e) {}
   }
+  try { if (localStorage.getItem('gallery-shuffle') == null) { const ss = await LIB.getSnapAs('gallery-shuffle'); const v = ss && ss.json ? JSON.parse(ss.json) : null;
+    if (v && typeof v === 'object') { SH = v; normSH(); try { localStorage.setItem('gallery-shuffle', ss.json); } catch (e) {} } } } catch (e) {}
   // v9: the same safety net for the extra organizing data (who sent what, subcategories)
   try { if (localStorage.getItem('gallery-x') == null) { const sx = await LIB.getSnapAs('gallery-x'); const x = sx && sx.json ? JSON.parse(sx.json) : null;
     if (x && typeof x === 'object') { X = x; normX(); try { localStorage.setItem('gallery-x', sx.json); } catch (e) {} } } } catch (e) {}
@@ -502,6 +513,76 @@ function resumeAfterUpdate() {
   if (!list) return;
   openGrid(list, r.label); gridScroll.scrollTop = r.scroll || 0; gridVL.update(true);
 }
+/* ---- v12: Shuffle feed (SPEC -> Shuffle feed) ----
+   A feed like a For You page, drawn only from this library. Stored apart from everything
+   else in localStorage 'gallery-shuffle' (mirrored, in backups):
+     s: { id: time last WATCHED IN THE SHUFFLE FEED }   a: { id: time last watched anywhere else }
+     mode: 'fresh' | 'unseen'      fresh / unseen: { served: [ids in the order shown], pos }
+   Watched = about 2 s played. Fresh shuffle: weighted draw without repeats, weight = days since
+   the last shuffle view (never seen = 365, capped there). Unseen only: random among never-seen;
+   when none are left, least recently seen first. A session lasts until Fresh shuffle is tapped
+   again and survives leaving the feed and closing the app. Videos known to be gone are left out.
+   The order is drawn 12 ahead, so the resolver can prepare what is coming. */
+let SH = (() => { try { return JSON.parse(localStorage.getItem('gallery-shuffle') || 'null'); } catch (e) { return null; } })() || {};
+function normSH() {
+  if (!SH || typeof SH !== 'object') SH = {};
+  SH.s = SH.s || {}; SH.a = SH.a || {}; SH.mode = SH.mode === 'unseen' ? 'unseen' : 'fresh';
+  ['fresh', 'unseen'].forEach(m => { const x = SH[m] = (SH[m] && typeof SH[m] === 'object') ? SH[m] : {}; x.served = Array.isArray(x.served) ? x.served : []; x.pos = x.pos | 0; });
+}
+normSH();
+let _shTimer = null, _shMirrorAt = 0, feedMode = 'list';
+function saveSH(now) {
+  const w = () => { _shTimer = null; const j = JSON.stringify(SH); try { localStorage.setItem('gallery-shuffle', j); } catch (e) {}
+    if (now || Date.now() - _shMirrorAt > 60000) { _shMirrorAt = Date.now(); LIB.putSnapAs('gallery-shuffle', j); } };
+  if (now) { clearTimeout(_shTimer); w(); } else if (!_shTimer) _shTimer = setTimeout(w, 1500);
+}
+window.addEventListener('pagehide', () => { if (_shTimer) saveSH(true); });
+function shuffleEligible() { return state.items.filter(i => i.category !== DELETED && !isGone(i.id)); }
+function shuffleDraw(sess, mode, n) {
+  const served = new Set(sess.served), pool = shuffleEligible().filter(i => !served.has(i.id)), out = [], now = Date.now();
+  if (mode === 'unseen') {
+    const unseen = pool.filter(i => !SH.s[i.id]);
+    while (out.length < n && unseen.length) out.push(unseen.splice(Math.floor(Math.random() * unseen.length), 1)[0]);
+    if (out.length < n) { const got = new Set(out.map(i => i.id)); out.push(...pool.filter(i => SH.s[i.id] && !got.has(i.id)).sort((a, b) => SH.s[a.id] - SH.s[b.id]).slice(0, n - out.length)); }
+    return out;
+  }
+  const w = pool.map(i => { const t = SH.s[i.id]; return t ? Math.min(365, Math.max(0, now - t) / 86400000) + 0.05 : 365; });
+  let total = w.reduce((x, y) => x + y, 0);
+  while (out.length < n && pool.length) { let r = Math.random() * total, k = 0; while (k < w.length - 1 && r >= w[k]) { r -= w[k]; k++; } out.push(pool[k]); total -= w[k]; pool.splice(k, 1); w.splice(k, 1); }
+  return out;
+}
+function shuffleTopUp(list, sess, from) {         // keep 12 drawn beyond the current position
+  let need = from + 13 - list.length; if (need <= 0) return;
+  let more = shuffleDraw(sess, SH.mode, need);
+  if (more.length < need && SH.mode === 'unseen' && sess.served.length > 60) {     // everything left was skipped earlier: let the skipped ones come round again
+    sess.served = sess.served.slice(-50).filter(id => list.some(i => i.id === id)); more = shuffleDraw(sess, SH.mode, need); sess.served = list.map(i => i.id);
+  }
+  more.forEach(i => { list.push(i); sess.served.push(i.id); });
+}
+function openShuffle(mode) {
+  if (mode) SH.mode = mode; const sess = SH[SH.mode];
+  const byId = new Map(state.items.map(i => [i.id, i]));
+  const list = sess.served.map(id => byId.get(id)).filter(i => i && i.category !== DELETED);
+  sess.served = list.map(i => i.id); sess.pos = Math.max(0, Math.min(sess.pos, Math.max(0, list.length - 1)));
+  shuffleTopUp(list, sess, sess.pos);
+  if (!list.length) { toast('Nothing to shuffle yet'); return; }
+  openFeed(list, 'Shuffle', sess.pos); feedMode = 'shuffle'; paintShuffleBar(); saveSH();
+}
+function shuffleMoved() { const sess = SH[SH.mode]; sess.pos = curIndex; shuffleTopUp(feedList, sess, curIndex); saveSH(); }
+function paintShuffleBar() {
+  const bar = document.getElementById('shuffleBar'), lab = document.getElementById('feedLabel'); if (!bar || !lab) return;
+  const on = feedMode === 'shuffle'; bar.classList.toggle('open', on); lab.style.display = on ? 'none' : '';
+  document.getElementById('shufUnseen').classList.toggle('on', on && SH.mode === 'unseen'); document.getElementById('shufFresh').classList.toggle('on', on && SH.mode === 'fresh');
+}
+document.getElementById('shufFresh').onclick = () => { SH.fresh = { served: [], pos: 0 }; openShuffle('fresh'); toast('Fresh shuffle'); };     // always a new session (Ian, Nov 15)
+document.getElementById('shufUnseen').onclick = () => { if (SH.mode === 'unseen') SH.unseen = { served: [], pos: 0 }; openShuffle('unseen'); };
+// "Watched" = about 2 s of play. Shuffle views and other views are recorded separately.
+setInterval(() => {
+  const el = slotEls['0']; if (!el || !el._vid || el._vid.paused || document.hidden || el._seenMarked) return;
+  el._played = (el._played || 0) + 0.5;
+  if (el._played >= 2) { el._seenMarked = true; (feedMode === 'shuffle' ? SH.s : SH.a)[el.dataset.id] = Date.now(); saveSH(); }
+}, 500);
+
 const SHARED_CAT = 'Shared with me';
 /* ---- v9: extra organizing data, kept APART from gallery-state ----
    localStorage 'gallery-x' = { from: { videoId: person }, parents: { child: parent } }. Older
@@ -1006,6 +1087,8 @@ function VirtualList(opts) {
    ============================================================ */
 function renderHome() {
   document.getElementById('allCount').textContent = liveItems().length + ' saved';
+  { const el = shuffleEligible(), un = el.filter(i => !SH.s[i.id]).length, sc = document.getElementById('shuffleCount');
+    if (sc) sc.textContent = el.length ? (un ? un + ' not seen yet' : 'all seen; oldest views first') + (SH[SH.mode].served.length ? '  ·  continues where you left off' : '') : 'nothing to shuffle yet'; }
   const grid = document.getElementById('catGrid');
   grid.innerHTML = '';
   cleanParents();
@@ -1028,7 +1111,8 @@ function renderHome() {
   add.onclick = promptNewCategory;
   grid.appendChild(add);
 }
-document.getElementById('allTile').onclick = () => openGrid(liveItems(), 'All Videos');
+document.getElementById('allTile').onclick = () => { gridStack = []; openGrid(liveItems(), 'All Videos'); };
+document.getElementById('shuffleTile').onclick = () => { primeAudioOnGesture(); openShuffle(); };
 document.getElementById('addLinkBtn').onclick = () => {
   inputModal({
     title: 'Add a shared link',
@@ -1319,6 +1403,7 @@ function layoutSlots() {
 }
 
 function openFeed(list, label, startIndex) {
+  feedMode = 'list'; paintShuffleBar();
   feedList = list.slice(); feedLabel = label;
   document.getElementById('feedLabel').textContent = label;
   document.getElementById('feed').classList.add('open');
@@ -1339,8 +1424,10 @@ function closeFeed() {
   slotEls = { '-1': null, '0': null, '1': null };
   document.getElementById('feed').classList.remove('open');
   curIndex = -1;
+  if (feedMode === 'shuffle') saveSH(true);
+  feedMode = 'list'; paintShuffleBar();
 }
-document.getElementById('feedBack').onclick = () => { closeFeed(); openGrid(gridList, gridLabel, true); };
+document.getElementById('feedBack').onclick = () => { const wasShuffle = feedMode === 'shuffle'; closeFeed(); if (wasShuffle) renderHome(); else openGrid(gridList, gridLabel, true); };
 // v4: tap a creator's name on a video to see everything saved from them
 function openCreator(id) {
   const m = metaStore[id];
@@ -1419,6 +1506,7 @@ function commitAdvance(dir) {
   // don't fire a burst of resolves.
   promoteCurrent();
   scheduleCurrentPlayer(DWELL_MS);
+  if (feedMode === 'shuffle') shuffleMoved();
 }
 
 function promoteCurrent() {
@@ -1846,6 +1934,7 @@ function feedDropCurrent(id) {
   if (!feedList.length) { document.getElementById('feedBack').onclick(); return; }
   if (curIndex >= feedList.length) curIndex = feedList.length - 1;
   else if (i < curIndex) curIndex--;
+  if (feedMode === 'shuffle') { const ss = SH[SH.mode]; ss.served = feedList.map(x => x.id); ss.pos = curIndex; saveSH(); }
   buildAllSlots(); setTrack(0, false); scheduleCurrentPlayer(120);
 }
 
@@ -2566,7 +2655,7 @@ function runPackImport(file) {
 async function exportBackup() {
   flushSave(true);
   const name = 'favorites-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-  const file = new File([JSON.stringify({ kind: 'favorites-backup', v: 1, at: new Date().toISOString(), app: APP_VERSION, state, x: X })], name, { type: 'application/json' });
+  const file = new File([JSON.stringify({ kind: 'favorites-backup', v: 1, at: new Date().toISOString(), app: APP_VERSION, state, x: X, shuffle: SH })], name, { type: 'application/json' });
   try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; } }
   catch (e) { if (e && e.name === 'AbortError') return; }
   const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); a.remove();
@@ -2576,14 +2665,15 @@ function readBackup(text) {
   let j = null; try { j = JSON.parse(text); } catch (e) {}
   const st = j && j.kind === 'favorites-backup' ? j.state : null;
   if (!st || !Array.isArray(st.items) || !Array.isArray(st.categories) || !st.items.every(i => i && i.id)) return null;
-  return { at: j.at, state: st, x: (j.x && typeof j.x === 'object') ? j.x : null };
+  return { at: j.at, state: st, x: (j.x && typeof j.x === 'object') ? j.x : null, shuffle: (j.shuffle && typeof j.shuffle === 'object') ? j.shuffle : null };
 }
-function applyBackup(st, x) {
+function applyBackup(st, x, sh) {
   LIB.putSnapAs('before-import', JSON.stringify(state));      // undo copy of what was here
   LIB.putSnapAs('before-import-x', JSON.stringify(X));
   st.version = DATA_VERSION; st.hydrated = true; st.purged = st.purged || [];
   state = st; flushSave(true);
   if (x) { X = x; normX(); saveX(); }                         // a backup from before v9 has none: keep what is here
+  if (sh) { SH = sh; normSH(); saveSH(true); }
   renderHome();
 }
 function importBackup(file) {
@@ -2595,7 +2685,7 @@ function importBackup(file) {
     const filed = st.items.filter(i => i.category && i.category !== 'Uncategorized' && i.category !== DELETED).length;
     confirmModal({ title: 'Replace with this backup?', confirmLabel: 'Replace', destructive: true,
       message: 'Backup from ' + formatDate(b.at) + ': ' + st.items.length + ' videos, ' + cats + ' categories, ' + filed + ' videos filed. What is on this phone now is kept as an undo copy.',
-      onConfirm: () => { applyBackup(st, b.x); toast('Backup restored'); } });
+      onConfirm: () => { applyBackup(st, b.x, b.shuffle); toast('Backup restored'); } });
   }).catch(() => toast('Could not read that file'));
 }
 /* ---- v5: automatic library ----
