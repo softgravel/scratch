@@ -50,6 +50,10 @@
   #shuffleBar.open { display:flex; }
   #shuffleBar button { font-size:12px; font-weight:600; padding:6px 11px; border-radius:14px; border:0; background:rgba(0,0,0,.4); color:rgba(255,255,255,.8); }
   #shuffleBar button.on { background:rgba(255,255,255,.92); color:#000; }
+  #homeSearch { display:flex; align-items:center; gap:8px; width:100%; margin-bottom:14px; padding:11px 14px; border-radius:12px; border:1px solid var(--line);
+    background:var(--panel); color:var(--dim); font-size:15px; text-align:left; }
+  .cat-cover { position:absolute; right:8px; bottom:8px; width:34px; height:52px; border-radius:6px; object-fit:cover; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .cat-cover.loaded { opacity:.85; }
   #allTile .name { font-size:17px; font-weight:600; }
   #allTile .count { font-size:13px; color:var(--dim); margin-top:3px; }
   #addLinkBtn {
@@ -356,6 +360,7 @@
 
 <div id="home">
   <div id="shuffleTile"><div class="name">Shuffle</div><div class="count" id="shuffleCount"></div></div>
+  <button id="homeSearch">&#128269;&nbsp; Search your videos</button>
   <div id="allTile"><div class="name">All Videos</div><div class="count" id="allCount">Loading…</div></div>
   <button id="addLinkBtn">＋ Add a shared link</button>
   <div id="catGrid"></div>
@@ -402,7 +407,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 13, APP_BUILT = 'Nov 15 10:18 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 14, APP_BUILT = 'Nov 15 10:54 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1102,6 +1107,10 @@ function renderHome() {
                   '<div class="name">' + esc(cat) + '</div>' +
                   '<div class="count">' + n + ' saved' + (kids ? '  ·  ' + kids + ' inside' : '') + '</div>';
     t.onclick = () => { gridStack = []; openGrid(itemsOfTree(cat), cat); };
+    if (cat !== DELETED) {                                    // v14: a small cover from the category, if one is on the phone
+      const first = itemsOfTree(cat).find(i => LIB.has(i.id));
+      if (first) LIB.coverUrl(first.id).then(u => { if (!u || !t.isConnected) return; const im = document.createElement('img'); im.className = 'cat-cover'; im.alt = ''; im.onload = () => im.classList.add('loaded'); im.src = u; t.appendChild(im); });
+    }
     t.querySelector('.cat-manage').onclick = (e) => { e.stopPropagation(); manageCategory(cat); };
     grid.appendChild(t);
   });
@@ -1113,6 +1122,8 @@ function renderHome() {
 }
 document.getElementById('allTile').onclick = () => { gridStack = []; openGrid(liveItems(), 'All Videos'); };
 document.getElementById('shuffleTile').onclick = () => { primeAudioOnGesture(); openShuffle(); };
+// v14: search straight from Home (opens All Videos with the search field ready)
+document.getElementById('homeSearch').onclick = () => { gridStack = []; openGrid(liveItems(), 'All Videos'); document.getElementById('searchRow').classList.add('open'); document.getElementById('searchInput').focus(); };
 document.getElementById('addLinkBtn').onclick = () => {
   inputModal({
     title: 'Add a shared link',
