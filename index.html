@@ -366,7 +366,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 4, APP_BUILT = 'Nov 15 4:24 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 5, APP_BUILT = 'Nov 15 4:29 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2349,8 +2349,72 @@ function importBackup(file) {
       onConfirm: () => { applyBackup(st); toast('Backup restored'); } });
   }).catch(() => toast('Could not read that file'));
 }
+/* ---- v5: automatic library ----
+   The Mac publishes the harvested library on the site as ENCRYPTED parts (lib/manifest.json +
+   lib/*.bin, AES-256-GCM). The key comes from a 16-digit code typed here once. With a key, the
+   app fetches any part it has not imported yet, unlocks it and feeds it to importPack(), in
+   the background, never while a video is on screen, and again whenever new parts appear. */
+const LIBSYNC = (() => {
+  const KEY = 'lib-key', DONE = 'lib-parts';
+  let running = false, status = '', lastRun = 0, available = false;
+  const b64 = (t) => Uint8Array.from(atob(t), c => c.charCodeAt(0));
+  const doneList = () => { try { return JSON.parse(localStorage.getItem(DONE) || '[]'); } catch (e) { return []; } };
+  const hasKey = () => { try { return !!localStorage.getItem(KEY); } catch (e) { return false; } };
+  const feedOpen = () => document.getElementById('feed').classList.contains('open');
+  function paint() {
+    const b = document.getElementById('libBtn'); if (!b) return;
+    b.textContent = 'Library & backup' + (status ? '  ·  ' + status : (available && !hasKey() ? '  ·  enter code to load every thumbnail' : ''));
+  }
+  async function manifest() { const r = await fetch('lib/manifest.json?t=' + Date.now(), { cache: 'no-store' }); return r.ok ? r.json() : null; }
+  const importKey = (raw) => crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+  const unlock = (key, buf) => { const u = new Uint8Array(buf); return crypto.subtle.decrypt({ name: 'AES-GCM', iv: u.subarray(0, 12) }, key, u.subarray(12)); };
+  async function setCode(code) {                // '' when accepted, otherwise what went wrong
+    code = String(code).replace(/\D/g, ''); if (code.length < 12) return 'Enter the whole code.';
+    if (!(window.crypto && crypto.subtle)) return 'This page cannot unlock the library here.';
+    const m = await manifest().catch(() => null); if (!m) return 'No library is published yet.';
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(code), 'PBKDF2', false, ['deriveBits']);
+    const raw = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: b64(m.salt), iterations: m.iter }, base, 256));
+    try { const t = await unlock(await importKey(raw), b64(m.check).buffer); if (new TextDecoder().decode(t) !== 'favlib-ok') throw 0; } catch (e) { return 'That code does not match.'; }
+    localStorage.setItem(KEY, btoa(String.fromCharCode.apply(null, raw)));
+    run(); return '';
+  }
+  async function run() {
+    if (running || !hasKey() || !(window.crypto && crypto.subtle)) return;
+    running = true; lastRun = Date.now();
+    try {
+      const m = await manifest(); if (!m) return;
+      const key = await importKey(b64(localStorage.getItem(KEY)));
+      let have = doneList(); const todo = m.parts.filter(p => !have.includes(p.f));
+      for (let i = 0; i < todo.length; i++) {
+        while (feedOpen()) await new Promise(r => setTimeout(r, 2000));       // never compete with a video on screen
+        status = 'loading library, part ' + (m.parts.length - todo.length + i + 1) + ' of ' + m.parts.length; paint();
+        const r = await fetch('lib/' + todo[i].f); if (!r.ok) throw new Error('part unavailable');
+        await importPack(new Blob([await unlock(key, await r.arrayBuffer())]));
+        have = doneList(); have.push(todo[i].f); localStorage.setItem(DONE, JSON.stringify(have));
+        if (document.getElementById('gridView').classList.contains('open') && !feedOpen()) gridVL.setItems(gridList, gridVL.rowH);
+      }
+      status = '';
+    } catch (e) { status = 'library paused, will retry'; setTimeout(run, 60000); }
+    finally { running = false; paint(); }
+  }
+  async function start() {
+    if (hasKey()) { run(); return; }
+    try { available = !!(await manifest()); } catch (e) {} paint();
+  }
+  setTimeout(start, 2500);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && hasKey() && Date.now() - lastRun > 600000) run(); });
+  return { setCode, run, hasKey, state: () => ({ running, status, parts: doneList().length, key: hasKey(), available }) };
+})();
+function askLibraryCode() {
+  inputModal({ title: 'Library code', placeholder: '16 digits', confirmLabel: 'Load',
+    onSubmit: (val) => { toast('Checking the code…'); LIBSYNC.setCode(val).then(err => toast(err || 'Library is loading in the background')); } });
+  const inp = document.getElementById('modalInput'); if (inp) { inp.setAttribute('inputmode', 'numeric'); inp.setAttribute('autocomplete', 'off'); }
+}
 document.getElementById('libBtn').onclick = () => {
+  const st = LIBSYNC.state();
   actionSheet({ title: 'On this phone: ' + LIB.count() + ' cover images, ' + Object.keys(_metaTS.target).length + ' captions', rows: [
+    st.key ? { label: 'Automatic library: on (' + st.parts + ' parts loaded)', onClick: () => { LIBSYNC.run(); toast('Checking for new library parts'); } }
+           : { label: 'Turn on automatic library (enter code)', onClick: askLibraryCode },
     { label: 'Import library pack', onClick: () => pickFile(runPackImport) },
     { label: 'Save a backup of my categories', onClick: exportBackup },
     { label: 'Restore categories from a backup', onClick: () => pickFile(importBackup) }
@@ -2467,7 +2531,8 @@ window.__fav = {
     if (KV.ok) for (const s of ['thumb', 'meta', 'rv']) { try { out['idb_' + s] = await KV.count(s); } catch (e) { out['idb_' + s] = -1; } }
     return out;
   },
-  ready() { return Promise.all([metaReady, thumbReady]); }
+  ready() { return Promise.all([metaReady, thumbReady]); },
+  libsync: LIBSYNC
 };
 
 boot();
