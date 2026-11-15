@@ -79,6 +79,17 @@
   }
   #searchRow { display:none; align-items:center; gap:8px; padding:0 12px 8px; }
   #searchRow.open { display:flex; }
+  /* v9: chips (people under "Shared with me"; the who-sent-it picker) */
+  .chip { flex:0 0 auto; border:1px solid var(--line); background:var(--panel); color:var(--text); border-radius:16px; padding:7px 13px; font-size:14px; }
+  .chip.on { background:var(--accent); border-color:var(--accent); }
+  .chip-row { display:none; gap:8px; padding:0 12px 8px; overflow-x:auto; white-space:nowrap; scrollbar-width:none; }
+  .chip-row::-webkit-scrollbar { display:none; }
+  .chip-row.open { display:flex; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 6px; max-height:36vh; overflow-y:auto; }
+  .sender-top { display:flex; gap:12px; align-items:center; }
+  .sender-thumb { position:relative; flex:0 0 54px; height:84px; border-radius:8px; overflow:hidden; background:linear-gradient(160deg,#232323,#111); }
+  .sender-thumb img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .15s; }
+  .sender-thumb img.loaded { opacity:1; }
   #searchInput {
     flex:1; height:38px; border-radius:10px; border:1px solid var(--line);
     background:var(--panel); color:var(--text); font-size:15px; padding:0 12px; outline:none;
@@ -353,6 +364,7 @@
     <button class="icon-btn" id="dateJumpBtn" style="display:none">&#128197;</button>
   </div>
   <div id="searchRow"><input id="searchInput" type="search" autocomplete="off" autocapitalize="off" placeholder="Search creator or description…"><button id="searchClear" aria-label="Clear">&times;</button></div>
+  <div id="chipRow" class="chip-row"></div>
   <div id="gridScroll"><div id="thumbGrid"></div><div id="gridEmpty">Nothing here yet.</div></div>
   <div id="datePanel"><div class="date-panel-inner" id="datePanelInner"></div></div>
 </div>
@@ -380,7 +392,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 8, APP_BUILT = 'Nov 15 4:45 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 9, APP_BUILT = 'Nov 15 4:55 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -445,6 +457,9 @@ async function boot() {
       }
     } catch (e) {}
   }
+  // v9: the same safety net for the extra organizing data (who sent what, subcategories)
+  try { if (localStorage.getItem('gallery-x') == null) { const sx = await LIB.getSnapAs('gallery-x'); const x = sx && sx.json ? JSON.parse(sx.json) : null;
+    if (x && typeof x === 'object') { X = x; normX(); try { localStorage.setItem('gallery-x', sx.json); } catch (e) {} } } } catch (e) {}
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
   const fresh = !state || state.version !== DATA_VERSION || !state.hydrated;
   if (!fresh) { handleIncomingAdd(); renderHome(); resumeAfterUpdate(); return; }
@@ -487,6 +502,45 @@ function resumeAfterUpdate() {
   openGrid(list, r.label); gridScroll.scrollTop = r.scroll || 0; gridVL.update(true);
 }
 const SHARED_CAT = 'Shared with me';
+/* ---- v9: extra organizing data, kept APART from gallery-state ----
+   localStorage 'gallery-x' = { from: { videoId: person }, parents: { child: parent } }. Older
+   releases never read or write this key, so rolling back cannot damage it, and gallery-state
+   keeps its format. Mirrored to IndexedDB like the main state, and included in backup files. */
+let X = (() => { try { return JSON.parse(localStorage.getItem('gallery-x') || 'null'); } catch (e) { return null; } })() || {};
+function normX() { if (!X || typeof X !== 'object') X = {}; X.from = X.from || {}; X.parents = X.parents || {}; }
+normX();
+function saveX() { const j = JSON.stringify(X); try { localStorage.setItem('gallery-x', j); } catch (e) {} LIB.putSnapAs('gallery-x', j); }
+function senderOf(id) { return X.from[id] || ''; }
+function catLine(item) { const p = senderOf(item.id); return item.category + (p ? '  ·  from ' + p : ''); }
+function people() {              // [{name, n}] among videos not deleted, most videos first
+  const c = {}; liveItems().forEach(i => { const p = X.from[i.id]; if (p) c[p] = (c[p] || 0) + 1; });
+  return Object.keys(c).map(name => ({ name, n: c[name] })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+}
+function setSender(id, name) {
+  if (name) X.from[id] = name; else delete X.from[id];
+  saveX();
+  document.querySelectorAll('.slide[data-id="' + CSS.escape(id) + '"] .slide-cat').forEach(c => { const it = state.items.find(i => i.id === id); if (it) c.textContent = catLine(it); });
+  if (document.getElementById('gridView').classList.contains('open') && gridLabel === SHARED_CAT) setupChips(gridLabel, true);
+}
+// "Who sent it?": the people already used, New person, Skip. Shown right after a shared link is
+// added (with the video's thumbnail as confirmation) and from the organize sheet to change it.
+function senderModal(id, justAdded) {
+  closeOverlays();
+  const cur = senderOf(id), ppl = people();
+  const b = document.createElement('div'); b.className = 'modal-backdrop'; b.id = 'senderModal';
+  b.innerHTML = '<div class="modal-card"><div class="sender-top"><div class="sender-thumb"><img alt=""></div><div>' +
+    '<div class="modal-title">' + (justAdded ? 'Added to “Shared with me”' : 'Who sent it?') + '</div>' +
+    '<div class="modal-message" style="margin:0">' + (justAdded ? 'Who sent it?' : (cur ? 'Now: ' + esc(cur) : 'Not set')) + '</div></div></div>' +
+    '<div class="chips">' + ppl.map((p, i) => '<button class="chip' + (p.name === cur ? ' on' : '') + '" data-i="' + i + '">' + esc(p.name) + '</button>').join('') + '</div>' +
+    '<div class="modal-actions"><button class="modal-btn" id="sndSkip">' + (cur && !justAdded ? 'No one' : 'Skip') + '</button><button class="modal-btn primary" id="sndNew">New person</button></div></div>';
+  document.body.appendChild(b);
+  bindThumb(b.querySelector('img'), id, () => 0, () => {});
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelectorAll('.chip').forEach(c => { c.onclick = () => { setSender(id, ppl[+c.dataset.i].name); closeOverlays(); toast('From ' + ppl[+c.dataset.i].name); }; });
+  b.querySelector('#sndSkip').onclick = () => { if (cur && !justAdded) setSender(id, ''); closeOverlays(); };
+  b.querySelector('#sndNew').onclick = () => inputModal({ title: 'Who sent it?', placeholder: 'Name', confirmLabel: 'Save',
+    onSubmit: (name) => { if (name.length > 40) return 'That name is too long.'; setSender(id, name); toast('From ' + name); } });
+}
 // Add a video (by id) into the "Shared with me" category. Returns true if it
 // resulted in a change worth re-rendering.
 function addSharedVideo(id) {
@@ -497,11 +551,13 @@ function addSharedVideo(id) {
     if (existing.category === DELETED || existing.category === 'Uncategorized') existing.category = SHARED_CAT;
     else { toast('Already in your library'); return true; }
   } else {
+    if ((state.purged || []).includes(id)) state.purged = state.purged.filter(x => x !== id);   // adding it again by hand is a deliberate undo
     state.items.unshift({ id, date: new Date().toISOString().replace('T',' ').slice(0,19), category: SHARED_CAT });
   }
   if (!state.categories.includes(SHARED_CAT)) state.categories.unshift(SHARED_CAT);
   flushSave();
   toast('Added to “Shared with me”');
+  setTimeout(() => senderModal(id, true), 60);      // after the paste dialog has closed itself
   return true;
 }
 // Accepts any TikTok link the user pastes/shares. If the numeric id is in the
@@ -697,8 +753,9 @@ const LIB = (() => {
     }));
   }
   function putSnapAs(key, json) { return tx('snap', 'readwrite', os => os.put({ json, t: Date.now() }, key)).catch(() => {}); }
+  function getSnapAs(key) { return tx('snap', 'readonly', os => os.get(key)).catch(() => null); }
   function getSnap(prev) { return tx('snap', 'readonly', os => os.get(prev ? 'gallery-state-prev' : 'gallery-state')).catch(() => null); }
-  return { ready, has: id => have.has(String(id)), coverUrl, saveCover, putCovers, putSnap, putSnapAs, getSnap, count: () => have.size, failed: () => failed };
+  return { ready, has: id => have.has(String(id)), coverUrl, saveCover, putCovers, putSnap, putSnapAs, getSnapAs, getSnap, count: () => have.size, failed: () => failed };
 })();
 
 const _thumbTS = trackedStore(legacyLoad('thumb-cache'));
@@ -1030,7 +1087,29 @@ function gridRowHeight() {
 }
 
 let gridBaseList = [];        // unfiltered list for the current grid (search filters this)
-function openGrid(list, label) {
+// v9: under "Shared with me", a row of people. A person's chip lists every video that person
+// sent, wherever it has been filed since (a view, not a category).
+let chipSel = '';
+function chipList() {
+  if (chipSel === 'u') return state.items.filter(i => i.category === SHARED_CAT && !X.from[i.id]);
+  if (chipSel.indexOf('p:') === 0) { const n = chipSel.slice(2); return liveItems().filter(i => X.from[i.id] === n); }
+  return state.items.filter(i => i.category === SHARED_CAT);
+}
+function setupChips(label, keep) {
+  const row = document.getElementById('chipRow'); row.innerHTML = ''; row.classList.remove('open');
+  if (!keep) chipSel = '';
+  if (label !== SHARED_CAT) { chipSel = ''; return; }
+  const ppl = people(); if (!ppl.length) { chipSel = ''; return; }
+  if (chipSel.indexOf('p:') === 0 && !ppl.some(p => 'p:' + p.name === chipSel)) chipSel = '';
+  const mk = (text, key) => { const c = document.createElement('button'); c.className = 'chip' + (key === chipSel ? ' on' : ''); c.textContent = text;
+    c.onclick = () => { chipSel = key; [...row.children].forEach(x => x.classList.toggle('on', x === c)); gridBaseList = chipList(); runSearch(document.getElementById('searchInput').value); };
+    row.appendChild(c); };
+  mk('All', ''); ppl.forEach(p => mk(p.name + '  ' + p.n, 'p:' + p.name));
+  const uns = state.items.filter(i => i.category === SHARED_CAT && !X.from[i.id]).length; if (uns) mk('Unsorted  ' + uns, 'u');
+  row.classList.add('open');
+}
+function openGrid(list, label, keepChips) {
+  setupChips(label, !!keepChips && label === gridLabel);
   gridBaseList = list;
   // reset any active search when (re)opening a grid
   const sr = document.getElementById('searchRow'); if (sr) sr.classList.remove('open');
@@ -1055,6 +1134,7 @@ function openGrid(list, label) {
 function matchSearch(item, q) {
   if (item.category && item.category.toLowerCase().includes(q)) return true;
   const lbl = itemLabel(item); if (lbl && lbl.toLowerCase().includes(q)) return true;
+  const fr = X.from[item.id]; if (fr && fr.toLowerCase().includes(q)) return true;
   const m = metaStore[item.id]; if (!m) return false;
   return (m.author && m.author.toLowerCase().includes(q)) ||
          (m.handle && m.handle.toLowerCase().includes(q)) ||
@@ -1200,7 +1280,7 @@ function closeFeed() {
   document.getElementById('feed').classList.remove('open');
   curIndex = -1;
 }
-document.getElementById('feedBack').onclick = () => { closeFeed(); openGrid(gridList, gridLabel); };
+document.getElementById('feedBack').onclick = () => { closeFeed(); openGrid(gridList, gridLabel, true); };
 // v4: tap a creator's name on a video to see everything saved from them
 function openCreator(id) {
   const m = metaStore[id];
@@ -1284,7 +1364,7 @@ function commitAdvance(dir) {
 function promoteCurrent() {
   const el = slotEls['0']; if (!el) return;
   const it = feedList[curIndex];
-  if (it) { const c = el.querySelector('.slide-cat'); if (c) c.textContent = it.category; }
+  if (it) { const c = el.querySelector('.slide-cat'); if (c) c.textContent = catLine(it); }
   fillOverlay(el, el.dataset.id);   // refresh creator/description from cache on activate
   el._becameCurrentAt = Date.now(); el._diag = []; el._wantPlay = true; el._resumes = 0;
   if (el._vid && el._vidId === el.dataset.id) {
@@ -1348,7 +1428,7 @@ function playCurrent() {
   if (!el) return;
   // Update the caption immediately (cheap, and it should never wait for a paint).
   const it = feedList[curIndex];
-  if (it) { const c = el.querySelector('.slide-cat'); if (c) c.textContent = it.category; }
+  if (it) { const c = el.querySelector('.slide-cat'); if (c) c.textContent = catLine(it); }
 
   // After a paint, mount current (playing) + both neighbours (preloaded, paused)
   // so the next swipe in either direction promotes an already-buffered element.
@@ -1516,7 +1596,7 @@ function buildSlide(item, i) {
       '<div class="slide-author"></div>' +
       '<div class="slide-desc"></div>' +
       '<div class="slide-title">' + esc(itemLabel(item)) + '</div>' +
-      '<div class="slide-cat">' + esc(item.category) + '</div>' +
+      '<div class="slide-cat">' + esc(catLine(item)) + '</div>' +
     '</div>' +
     '<div class="rail">' +
       '<button class="rail-btn mute-btn" aria-label="Sound">&#128263;</button>' +
@@ -1650,7 +1730,7 @@ function showInfo(id) {
   const render = () => {
     const m = metaStore[id] || {};
     const who = m.author ? (m.handle ? m.author + '  ·  @' + m.handle : m.author) : (m.handle ? '@' + m.handle : '(creator unknown yet)');
-    const desc = m.desc || '(no description available)';
+    const desc = (m.desc || '(no description available)') + (senderOf(id) ? '\n\nSent by ' + senderOf(id) : '');
     infoModal(who, desc);
   };
   render();
@@ -2184,7 +2264,7 @@ function openCategorySheet(item) {
       r.onclick = () => {
         item.category = cat; save();
         const el = slotEls['0'];
-        if (el && el.dataset.id === item.id) el.querySelector('.slide-cat').textContent = cat;
+        if (el && el.dataset.id === item.id) el.querySelector('.slide-cat').textContent = catLine(item);
         closeSheet();
       };
       list.appendChild(r);
@@ -2204,6 +2284,7 @@ function openCategorySheet(item) {
         confirmLabel:'Delete', destructive:true, onConfirm:() => purgeVideo(item) });
     });
   } else {
+    if (senderOf(item.id) || item.category === SHARED_CAT) act(senderOf(item.id) ? 'Sent by ' + senderOf(item.id) + ' (change)' : 'Set who sent it', '', () => { closeSheet(); senderModal(item.id, false); });
     act('Delete','destructive',() => { deleteVideo(item); closeSheet(); });
   }
   document.getElementById('sheetBackdrop').classList.add('open');
@@ -2223,7 +2304,7 @@ document.getElementById('newCatBtn').onclick = () => {
   save();
   const el = slotEls['0'];
   const item = feedList[curIndex];
-  if (item) { item.category = name; if (el) el.querySelector('.slide-cat').textContent = name; }
+  if (item) { item.category = name; if (el) el.querySelector('.slide-cat').textContent = catLine(item); }
   closeSheet();
 };
 
@@ -2241,6 +2322,7 @@ function purgeVideo(item) {
   state.items = state.items.filter(i => i.id !== item.id);
   state.purged = state.purged || [];
   if (!state.purged.includes(item.id)) state.purged.push(item.id);
+  if (X.from[item.id]) { delete X.from[item.id]; saveX(); }
   flushSave();                    // irreversible: never leave it in a debounce window
   dropFromCurrentViews(item);
   toast('Deleted permanently');
@@ -2422,7 +2504,7 @@ function runPackImport(file) {
 async function exportBackup() {
   flushSave(true);
   const name = 'favorites-backup-' + new Date().toISOString().slice(0, 10) + '.json';
-  const file = new File([JSON.stringify({ kind: 'favorites-backup', v: 1, at: new Date().toISOString(), app: APP_VERSION, state })], name, { type: 'application/json' });
+  const file = new File([JSON.stringify({ kind: 'favorites-backup', v: 1, at: new Date().toISOString(), app: APP_VERSION, state, x: X })], name, { type: 'application/json' });
   try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; } }
   catch (e) { if (e && e.name === 'AbortError') return; }
   const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); a.remove();
@@ -2432,12 +2514,15 @@ function readBackup(text) {
   let j = null; try { j = JSON.parse(text); } catch (e) {}
   const st = j && j.kind === 'favorites-backup' ? j.state : null;
   if (!st || !Array.isArray(st.items) || !Array.isArray(st.categories) || !st.items.every(i => i && i.id)) return null;
-  return { at: j.at, state: st };
+  return { at: j.at, state: st, x: (j.x && typeof j.x === 'object') ? j.x : null };
 }
-function applyBackup(st) {
+function applyBackup(st, x) {
   LIB.putSnapAs('before-import', JSON.stringify(state));      // undo copy of what was here
+  LIB.putSnapAs('before-import-x', JSON.stringify(X));
   st.version = DATA_VERSION; st.hydrated = true; st.purged = st.purged || [];
-  state = st; flushSave(true); renderHome();
+  state = st; flushSave(true);
+  if (x) { X = x; normX(); saveX(); }                         // a backup from before v9 has none: keep what is here
+  renderHome();
 }
 function importBackup(file) {
   file.text().then(t => {
@@ -2448,7 +2533,7 @@ function importBackup(file) {
     const filed = st.items.filter(i => i.category && i.category !== 'Uncategorized' && i.category !== DELETED).length;
     confirmModal({ title: 'Replace with this backup?', confirmLabel: 'Replace', destructive: true,
       message: 'Backup from ' + formatDate(b.at) + ': ' + st.items.length + ' videos, ' + cats + ' categories, ' + filed + ' videos filed. What is on this phone now is kept as an undo copy.',
-      onConfirm: () => { applyBackup(st); toast('Backup restored'); } });
+      onConfirm: () => { applyBackup(st, b.x); toast('Backup restored'); } });
   }).catch(() => toast('Could not read that file'));
 }
 /* ---- v5: automatic library ----
