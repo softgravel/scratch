@@ -27,6 +27,10 @@
   /* v4: a long press must never start text selection, the magnifier or the image menu */
   #home, #gridView, #feed { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
   #gridView img, #feed img { -webkit-user-drag:none; }
+  /* v7: one-line notice when something outside the app is broken (tap to dismiss) */
+  #notice { position:fixed; left:10px; right:10px; top:calc(env(safe-area-inset-top) + 6px); z-index:58; display:none; background:#3a2c10; color:#ffd78a;
+    border:1px solid #6b5220; border-radius:10px; padding:8px 12px; font-size:12px; line-height:1.35; box-shadow:0 2px 10px rgba(0,0,0,.5); }
+  #notice.show { display:block; }
   #verTag { position:fixed; right:6px; bottom:calc(env(safe-area-inset-bottom) + 2px); z-index:60; font-size:9px;
     color:rgba(255,255,255,.4); pointer-events:none; letter-spacing:.03em; text-shadow:0 0 2px rgba(0,0,0,.8); }
 
@@ -370,12 +374,13 @@
   <div class="sheet-new"><input id="newCatInput" placeholder="New category"><button id="newCatBtn">Add</button></div>
 </div>
 
+<div id="notice"></div>
 <div id="verTag"></div>
 <div id="toast"></div>
 
 <script>
 'use strict';
-var APP_VERSION = 6, APP_BUILT = 'Nov 15 4:33 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 7, APP_BUILT = 'Nov 15 4:40 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -803,7 +808,7 @@ function startFetch(req) {
         thumbCache[req.id] = { u: r.cover, t: Date.now(), x: coverExpiry(r.cover) };
         cacheDirty = true; failStreak = 0;
         // v2: keep the bytes; show the stored copy (falls back to the link if storing failed)
-        return LIB.saveCover(req.id, r.cover).then(u => ({ url: u || r.cover }));
+        return LIB.saveCover(req.id, r.cover).then(u => { healthCover(!!u); return { url: u || r.cover }; });
       }
       return null;                                            // resolver couldn't: leave the date tile
     })
@@ -1726,6 +1731,53 @@ window.addEventListener('resize', () => {
    platform. el._state mirrors the old iframe states (1 playing / 2 paused /
    3 buffering / undefined none) so the debug overlay keeps working.
    ============================================================ */
+/* ---- v7: source health and notices ----
+   The app depends on things it does not control (the resolver, TikTok's image and video
+   servers). When one of them stops behaving as expected, say so in one plain line instead of
+   silently showing blanks; clear the line by itself when things recover. Counters are also
+   shown under Library & backup -> App status. */
+const HEALTH = { ok: 0, fail: 0, failRun: 0, lastOkAt: 0, lastFail: '', shapeRun: 0, shapeMissing: '', coverOk: 0, coverFail: 0, notFoundRun: 0, linkHours: 0 };
+const _notices = new Map(), _dismissed = new Map();
+function paintNotice() {
+  const n = document.getElementById('notice'); if (!n) return;
+  const live = [..._notices.entries()].filter(([k]) => !(Date.now() - (_dismissed.get(k) || 0) < 600000));
+  n.textContent = live.length ? live[live.length - 1][1] : ''; n.dataset.key = live.length ? live[live.length - 1][0] : '';
+  n.classList.toggle('show', live.length > 0);
+}
+function showNotice(key, text) { if (_notices.get(key) === text) return; _notices.set(key, text); paintNotice(); }
+function clearNotice(key) { if (_notices.delete(key)) paintNotice(); }
+document.getElementById('notice').onclick = () => { const k = document.getElementById('notice').dataset.key; if (k) { _dismissed.set(k, Date.now()); paintNotice(); } };
+window.addEventListener('offline', () => showNotice('offline', 'No internet connection. Videos already loaded keep playing.'));
+window.addEventListener('online', () => clearNotice('offline'));
+function healthOk(d, play, cover, nImages) {            // a resolver answer arrived: is it shaped as expected?
+  HEALTH.ok++; HEALTH.failRun = 0; HEALTH.notFoundRun = 0; HEALTH.lastOkAt = Date.now(); clearNotice('resolver');
+  const au = d.author || {}, miss = [];
+  if (!cover) miss.push('cover image'); if (!('title' in d)) miss.push('caption'); if (!au.unique_id && !au.nickname) miss.push('creator');
+  const x = playExpiry(play); if (x) HEALTH.linkHours = Math.round((x - Date.now()) / 360000) / 10;
+  if (miss.length) { HEALTH.shapeRun++; HEALTH.shapeMissing = miss.join(', ');
+    if (HEALTH.shapeRun >= 3) showNotice('shape', 'TikTok changed something: new videos arrive without ' + HEALTH.shapeMissing + '. Everything already on the phone is unaffected.'); }
+  else { HEALTH.shapeRun = 0; clearNotice('shape'); }
+}
+function healthFail(msg, notFound) {
+  if (notFound) { if (++HEALTH.notFoundRun >= 6) showNotice('resolver', 'The video source cannot find any videos right now. It may be broken; nothing is being marked unavailable.'); return; }
+  HEALTH.fail++; HEALTH.failRun++; HEALTH.lastFail = String(msg || '').slice(0, 80);
+  if (HEALTH.failRun >= 4 && navigator.onLine !== false) showNotice('resolver', 'The video source is not answering. Videos already prepared still play; others have to wait.');
+}
+function healthCover(ok) {
+  if (ok) { HEALTH.coverOk++; clearNotice('covers'); return; }
+  if (++HEALTH.coverFail >= 5 && HEALTH.coverOk === 0) showNotice('covers', 'Cover images cannot be saved on the phone right now (TikTok may have changed something). Thumbnails still show while online.');
+}
+function appStatus() {
+  const ago = (t) => t ? Math.round((Date.now() - t) / 1000) + ' s ago' : 'not yet this session';
+  const ls = LIBSYNC.state();
+  infoModal('App status · v' + APP_VERSION,
+    'Video source: ' + HEALTH.ok + ' answers, ' + HEALTH.fail + ' failures this session; last good answer ' + ago(HEALTH.lastOkAt) + (HEALTH.lastFail ? '\nLast failure: ' + HEALTH.lastFail : '') +
+    '\nVideo links currently last: ' + (HEALTH.linkHours ? HEALTH.linkHours + ' h' : 'unknown') +
+    '\nCovers saved this session: ' + HEALTH.coverOk + (HEALTH.coverFail ? ' (' + HEALTH.coverFail + ' could not be saved)' : '') +
+    '\nOn this phone: ' + LIB.count() + ' cover images, ' + Object.keys(_metaTS.target).length + ' captions, ' + state.items.length + ' videos in the list' +
+    '\nAutomatic library: ' + (ls.key ? 'on, ' + ls.parts + ' parts loaded' : (ls.available ? 'available, no code entered' : 'not published')) +
+    (_notices.size ? '\n\nCurrent notices:\n' + [..._notices.values()].join('\n') : '\n\nNo problems detected.'));
+}
 const RESOLVER = 'https://www.tikwm.com/api/?url=';
 const RESOLVE_TTL = 2 * 60 * 60 * 1000;   // fallback lifetime when a link's own expiry can't be read
 const _rvMem = new Map();
@@ -1815,11 +1867,19 @@ function _fire(){
   _run(job).then(() => { _flying.delete(job.id); _pump(); });
 }
 // A video the resolver says it can't find is remembered as gone only when (a) it said so
-// twice and (b) the resolver was demonstrably working around then (another video succeeded
-// within 2 minutes, before or after). A resolver outage must never brand the library.
+// twice, (b) ANOTHER video then succeeds within 2 minutes (the resolver demonstrably works),
+// and (c) that success did not come after a run of not-found answers (v7: more than 4 in a
+// row is treated as the resolver being broken, and every pending verdict is thrown away).
+// A resolver outage must never brand the library, not even its first or last minutes.
 function markGone(id){
   thumbCache[id] = { gone: true, t: Date.now() }; cacheDirty = true;
   _emit(id, null, goneError()); _emitThumb(id, { gone: true });
+  document.querySelectorAll('.thumb-tile[data-id="' + CSS.escape(id) + '"]').forEach(t => t.classList.add('unavailable'));
+  document.querySelectorAll('.slide[data-id="' + CSS.escape(id) + '"]').forEach(el => {
+    if (el._state === 1) return; unmountSlot(el); el.classList.add('unavailable-slide');
+    const sb = el.querySelector('.status-badge'); if (sb) sb.textContent = 'Video unavailable';
+    const m = el.querySelector('.slide-media'); if (m) m.classList.remove('needs-tap', 'resolving');
+  });
 }
 async function _run(job){
   const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
@@ -1839,15 +1899,17 @@ async function _run(job){
     if (j.data.duration || imgs.length) metaSet(job.id, { dur: j.data.duration || 0, img: imgs.length });
     if (cover && !_thumbWaiters.has(job.id) && !LIB.has(job.id)) LIB.saveCover(job.id, cover);   // keep the image even when only the video was wanted
     _emitThumb(job.id, { cover });
-    _lastOk = Date.now();
-    _suspect.forEach((t, id) => { if (_lastOk - t < 120000) markGone(id); }); _suspect.clear();
+    const storm = HEALTH.notFoundRun > 4;
+    _lastOk = Date.now(); healthOk(j.data, play, cover, imgs.length);
+    if (!storm) _suspect.forEach((t, id) => { if (_lastOk - t < 120000) markGone(id); });
+    _suspect.clear();
   } catch (e) {
     const msg = e && e.msg || '';
     if (/limit/i.test(msg)) { _lastRes = Date.now(); job.tries += 0.34; }   // refused for pace (something else on this network is calling too): wait a full gap
     else job.tries++;
+    if (!/limit/i.test(msg)) healthFail(msg || (e && e.message), /parsing is failed/i.test(msg));
     if (/parsing is failed/i.test(msg) && job.tries >= 2) {
-      if (Date.now() - _lastOk < 120000) markGone(job.id);
-      else { _suspect.set(job.id, Date.now()); _emit(job.id, null, e); _emitThumb(job.id, null); }
+      _suspect.set(job.id, Date.now()); _emit(job.id, null, e); _emitThumb(job.id, null);   // verdict waits for the next success
     } else {
       const thumbOnly = job.prio >= THUMB_PRIO && !_waiters.has(job.id);
       if (job.tries < (thumbOnly ? 2 : 5)) _queue.push(job);        // rate-limited/transient — retry later
@@ -2457,7 +2519,8 @@ document.getElementById('libBtn').onclick = () => {
            : { label: 'Turn on automatic library (enter code)', onClick: askLibraryCode },
     { label: 'Import library pack', onClick: () => pickFile(runPackImport) },
     { label: 'Save a backup of my categories', onClick: exportBackup },
-    { label: 'Restore categories from a backup', onClick: () => pickFile(importBackup) }
+    { label: 'Restore categories from a backup', onClick: () => pickFile(importBackup) },
+    { label: 'App status', onClick: appStatus }
   ]});
 };
 
@@ -2572,7 +2635,7 @@ window.__fav = {
     return out;
   },
   ready() { return Promise.all([metaReady, thumbReady]); },
-  libsync: LIBSYNC
+  libsync: LIBSYNC, health: HEALTH
 };
 
 boot();
