@@ -7,9 +7,10 @@
 <meta name="apple-mobile-web-app-title" content="Favorites">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="robots" content="noindex, nofollow">
-<link rel="preconnect" href="https://www.tiktok.com" crossorigin>
-<link rel="dns-prefetch" href="https://www.tiktok.com">
-<link rel="dns-prefetch" href="https://p16-sign-va.tiktokcdn.com">
+<meta name="referrer" content="no-referrer">
+<link rel="preconnect" href="https://www.tikwm.com" crossorigin>
+<link rel="dns-prefetch" href="https://v16m.tiktokcdn-us.com">
+<link rel="dns-prefetch" href="https://p16-common-sign.tiktokcdn-us.com">
 <title>Favorites</title>
 <style>
   :root {
@@ -338,7 +339,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 1, APP_BUILT = 'Nov 14 10:49 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 2, APP_BUILT = 'Nov 14 11:38 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -346,7 +347,8 @@ var APP_VERSION = 1, APP_BUILT = 'Nov 14 10:49 PM';   // stamped by _dev/tools/r
 const DELETED = 'Deleted';
 const DATA_VERSION = 5;
 
-let state = JSON.parse(localStorage.getItem('gallery-state') || 'null');
+let state = null;
+try { state = JSON.parse(localStorage.getItem('gallery-state') || 'null'); } catch (e) { state = null; }
 
 function esc(v) {
   return String(v == null ? '' : v)
@@ -363,20 +365,46 @@ function liveItems() { return state.items.filter(i => i.category !== DELETED); }
 
 let saveTimer = null;
 function save() { if (!saveTimer) saveTimer = setTimeout(flushSave, 400); }
-function flushSave() {
+function flushSave(now) {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-  try { localStorage.setItem('gallery-state', JSON.stringify(state)); }
+  let json = '';
+  try { json = JSON.stringify(state); localStorage.setItem('gallery-state', json); }
   catch (e) {
     // The thumbnail cache is rebuildable; drop it to make room for real data.
     try { freeLegacyStorage();
-          localStorage.setItem('gallery-state', JSON.stringify(state)); }
+          localStorage.setItem('gallery-state', json); }
     catch (e2) { toast('Storage full — change may not be saved'); }
   }
+  mirrorState(now === true);
 }
-window.addEventListener('pagehide', flushSave);
-window.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(); });
+// v2: a second copy of the organizing work, kept outside localStorage (IndexedDB). If
+// localStorage ever comes back empty, boot() restores from it instead of rebuilding
+// from favorites.json and silently losing every category. Written at most every 15 s
+// and when the app is hidden; never written from an empty or half-built state.
+let _mirrorAt = 0, _mirrorTimer = null;
+function mirrorState(now) {
+  const write = () => {
+    _mirrorTimer = null; _mirrorAt = Date.now();
+    if (state && state.hydrated && state.items && state.items.length) { try { LIB.putSnap(JSON.stringify(state)); } catch (e) {} }
+  };
+  if (now) { if (_mirrorTimer) clearTimeout(_mirrorTimer); write(); return; }
+  if (!_mirrorTimer) _mirrorTimer = setTimeout(write, Math.max(0, 15000 - (Date.now() - _mirrorAt)));
+}
+window.addEventListener('pagehide', () => flushSave(true));
+window.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(true); });
 
 async function boot() {
+  if (!state) {
+    try {
+      const s = await LIB.getSnap(); const st = s && s.json ? JSON.parse(s.json) : null;
+      if (st && st.items && st.items.length) {
+        state = st;
+        try { localStorage.setItem('gallery-state', s.json); } catch (e) {}
+        toast('Restored your categories from the backup copy');
+      }
+    } catch (e) {}
+  }
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
   const fresh = !state || state.version !== DATA_VERSION || !state.hydrated;
   if (!fresh) { handleIncomingAdd(); renderHome(); return; }
   document.getElementById('allCount').textContent = 'Loading…';
@@ -456,9 +484,15 @@ function handleIncomingAdd() {
    Only an explicit "this video is gone" response is treated as final,
    and even that is re-checked after a day.
    ============================================================ */
-const THUMB_TTL   = 6 * 60 * 60 * 1000;   // refresh a URL after 6h (they expire)
-const GONE_TTL    = 24 * 60 * 60 * 1000;  // re-check "gone" verdicts after a day
-const MAX_INFLIGHT = 2;                   // xray: thumbnails now come from the ~1/s resolver, so keep only 2 queued there
+const THUMB_TTL   = 6 * 60 * 60 * 1000;   // fallback lifetime for a cover URL whose own expiry can't be read
+const GONE_TTL    = 7 * 24 * 60 * 60 * 1000;  // v2: re-check "gone" verdicts after a week (a tap re-checks at once)
+const MAX_INFLIGHT = 3;                   // thumbnails come from the ~1/s resolver, so keep only a few queued there
+// v2: cover links carry their own expiry (x-expires, about 24 h, measured Nov 14 2026).
+function coverExpiry(u) {
+  const m = /[?&]x-expires=(\d{9,11})/.exec(u || ''); const x = m ? Number(m[1]) * 1000 : 0;
+  return (x > Date.now() && x < Date.now() + 72 * 3600e3) ? x : 0;
+}
+function isGone(id) { const e = thumbCache[id]; return !!(e && e.gone && Date.now() - e.t < GONE_TTL); }
 
 /* ---- persistent caches (victor): IndexedDB instead of localStorage ----
    localStorage is capped at ~5 MB per site and the caption index alone outgrows
@@ -542,6 +576,69 @@ function freeLegacyStorage() {
     for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith('rv:')) localStorage.removeItem(k); }
   } catch (e) {}
 }
+/* ---- v2 library store: whatever is fetched once is kept ----
+   Cover images are stored as bytes (about 20 KB each), so a thumbnail costs one resolver
+   call ever instead of one every few hours, and the grid reads from the phone. Also holds
+   the mirror of the organizing state. A separate database on purpose: 'favorites-kv'
+   stays at version 1, so an older release (rollback) still opens it. */
+const LIB = (() => {
+  let dbp = null; const have = new Set(), urls = new Map(), saving = new Map(); let failed = 0;
+  function db() {
+    if (!dbp) dbp = new Promise((res, rej) => {
+      let r; try { r = indexedDB.open('favorites-lib', 1); } catch (e) { rej(e); return; }
+      r.onupgradeneeded = () => { const d = r.result; ['cover', 'snap'].forEach(s => { if (!d.objectStoreNames.contains(s)) d.createObjectStore(s); }); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); r.onblocked = () => rej(new Error('blocked'));
+    });
+    return dbp;
+  }
+  function tx(store, mode, fn) {
+    return db().then(d => new Promise((res, rej) => {
+      const t = d.transaction(store, mode); const r = fn(t.objectStore(store));
+      t.oncomplete = () => res(r ? r.result : undefined); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+    }));
+  }
+  const ready = tx('cover', 'readonly', os => os.getAllKeys()).then(keys => { (keys || []).forEach(k => have.add(String(k))); }).catch(() => {});
+  function remember(id, buf, type) {            // small LRU of object URLs for images on screen
+    const u = URL.createObjectURL(new Blob([buf], { type: type || 'image/jpeg' }));
+    urls.set(id, u);
+    if (urls.size > 240) { const old = urls.keys().next().value; URL.revokeObjectURL(urls.get(old)); urls.delete(old); }
+    return u;
+  }
+  async function coverUrl(id) {                 // object URL of a stored cover, or null
+    id = String(id);
+    if (urls.has(id)) { const u = urls.get(id); urls.delete(id); urls.set(id, u); return u; }
+    if (!have.has(id)) return null;
+    try { const v = await tx('cover', 'readonly', os => os.get(id)); return v && v.b ? remember(id, v.b, v.m) : null; } catch (e) { return null; }
+  }
+  function saveCover(id, url) {                 // download the image once and keep it; object URL, or null if that failed
+    id = String(id);
+    if (have.has(id)) return coverUrl(id);
+    if (saving.has(id)) return saving.get(id);
+    const p = (async () => {
+      try {
+        const r = await fetch(url, { referrerPolicy: 'no-referrer', credentials: 'omit' });
+        if (!r.ok) { failed++; return null; }
+        const m = r.headers.get('content-type') || 'image/jpeg', b = await r.arrayBuffer();
+        if (b.byteLength < 200 || !/^image\//.test(m)) { failed++; return null; }
+        await tx('cover', 'readwrite', os => os.put({ b, m, t: Date.now() }, id));
+        have.add(id); return remember(id, b, m);
+      } catch (e) { failed++; return null; } finally { saving.delete(id); }
+    })();
+    saving.set(id, p); return p;
+  }
+  // State mirror: today's copy under 'gallery-state'; the last copy from an earlier day under 'gallery-state-prev'.
+  function putSnap(json) {
+    const day = new Date().toISOString().slice(0, 10);
+    return db().then(d => new Promise(res => {
+      const t = d.transaction('snap', 'readwrite'), os = t.objectStore('snap'), g = os.get('gallery-state');
+      g.onsuccess = () => { const cur = g.result; if (cur && cur.day && cur.day !== day) os.put(cur, 'gallery-state-prev'); os.put({ json, t: Date.now(), day }, 'gallery-state'); };
+      t.oncomplete = () => res(true); t.onerror = () => res(false); t.onabort = () => res(false);
+    })).catch(() => false);
+  }
+  function getSnap(prev) { return tx('snap', 'readonly', os => os.get(prev ? 'gallery-state-prev' : 'gallery-state')).catch(() => null); }
+  return { ready, has: id => have.has(String(id)), coverUrl, saveCover, putSnap, getSnap, count: () => have.size, failed: () => failed };
+})();
+
 const _thumbTS = trackedStore(legacyLoad('thumb-cache'));
 let thumbCache = _thumbTS.obj;
 const thumbReady = hydrateTracked('thumb', _thumbTS, 'thumb-cache');
@@ -562,17 +659,43 @@ function cachedThumb(id) {
   const e = thumbCache[id];
   if (!e) return null;
   if (e.gone) return (Date.now() - e.t < GONE_TTL) ? { gone: true } : null;
-  if (Date.now() - e.t > THUMB_TTL) return null;      // stale URL, refetch
+  if (Date.now() > (e.x ? e.x - 300000 : e.t + THUMB_TTL)) return null;      // stale URL, refetch
   return { url: e.u };
 }
 
+let _libLoaded = false; LIB.ready.then(() => { _libLoaded = true; });
 function requestThumb(id, cb, priority) {
+  if (!_libLoaded) { LIB.ready.then(() => requestThumb(id, cb, priority)); return; }
+  if (LIB.has(id)) {                       // v2: the image is already on the phone, no network
+    LIB.coverUrl(id).then(u => {
+      if (!u) { requestThumbRemote(id, cb, priority); return; }
+      cb({ url: u });
+      if (isGone(id)) cb({ gone: true });
+    });
+    return;
+  }
+  requestThumbRemote(id, cb, priority);
+}
+function requestThumbRemote(id, cb, priority) {
   const hit = cachedThumb(id);
-  if (hit) { cb(hit); return; }
+  if (hit && hit.gone) { cb(hit); return; }
+  // a still-valid link from an earlier visit: fetch it once, keep the bytes, show the stored copy
+  if (hit) { LIB.saveCover(id, hit.url).then(u => cb({ url: u || hit.url })); return; }
   const ex = pending.get(id);
-  if (ex) { ex.cbs.push(cb); return; }
+  if (ex) { ex.cbs.push(cb); ex.warm = false; return; }
   pending.set(id, { id, cbs: [cb], priority: priority || (() => 0) });
   schedulePump();
+}
+// v2: covers no longer need the resolver once stored, so nothing else would get the
+// videos on screen ready to play. While a grid is showing, quietly resolve the ones
+// whose cover is local but whose video link is missing or expired (closest first,
+// dropped when the tile scrolls away, paused while the feed is open).
+function warmPlay(id, priority) {
+  LIB.ready.then(() => {
+    if (!LIB.has(id) || cacheGet(id) || pending.has(id) || isGone(id)) return;
+    pending.set(id, { id, cbs: [], priority: priority || (() => 0), warm: true });
+    schedulePump();
+  });
 }
 
 function dropThumbRequest(id) {
@@ -612,15 +735,18 @@ function startFetch(req) {
   // (it now answers with only the id), so thumbnails and captions come from the
   // resolver's cover + metadata instead, at low priority behind the feed. Bonus: the
   // video URL gets cached too, so a tapped thumbnail plays at once.
+  if (req.warm && cacheGet(req.id)) { schedulePump(); return; }   // already playable
   activeFetches++;
   inflight.set(req.id, { abort() { cancelThumbResolve(req.id); } });
   resolveForThumb(req.id)
     .then(r => {
       if (r === 'dropped') return { retry: true };            // pruned for the feed; try again later
+      if (r && r.gone) return { gone: true };                 // remembered by markGone()
       if (r && r.cover) {
-        thumbCache[req.id] = { u: r.cover, t: Date.now() };
+        thumbCache[req.id] = { u: r.cover, t: Date.now(), x: coverExpiry(r.cover) };
         cacheDirty = true; failStreak = 0;
-        return { url: r.cover };
+        // v2: keep the bytes; show the stored copy (falls back to the link if storing failed)
+        return LIB.saveCover(req.id, r.cover).then(u => ({ url: u || r.cover }));
       }
       return null;                                            // resolver couldn't: leave the date tile
     })
@@ -826,9 +952,9 @@ const gridVL = VirtualList({
     t.dataset.id = item.id;
     t.innerHTML = '<img alt="" decoding="async"><div class="thumb-date">' + esc(itemLabel(item)) + '</div>';
     t.onclick = () => { primeAudioOnGesture(); openFeed(gridList, gridLabel, i); };
-    bindThumb(t.querySelector('img'), item.id,
-      () => Math.abs(Math.floor(i / 3) * gridVL.rowH - gridScroll.scrollTop),
-      () => t.classList.add('unavailable'));
+    const prio = () => Math.abs(Math.floor(i / 3) * gridVL.rowH - gridScroll.scrollTop);
+    bindThumb(t.querySelector('img'), item.id, prio, () => t.classList.add('unavailable'));
+    warmPlay(item.id, prio);
     return t;
   },
   recycle: (el) => { dropThumbRequest(el.dataset.id); }
@@ -1210,6 +1336,11 @@ function afterTransition(fn) {
 function toggleCurrent() {
   const el = slotEls['0']; if (!el) return;
   const media = el.querySelector('.slide-media');
+  if (el.classList.contains('unavailable-slide')) {
+    // v2: a tap re-checks a video that was remembered as unavailable
+    el.classList.remove('unavailable-slide'); delete thumbCache[el.dataset.id]; cacheDirty = true;
+    const sb = media.querySelector('.status-badge'); if (sb) sb.innerHTML = '<div class="spinner"></div>';
+  }
   const v = el._vid;
   if (media.classList.contains('needs-tap') || !v) {
     // Manual recovery: re-resolve and try again. Clear any cached-but-dead URL.
@@ -1464,10 +1595,17 @@ window.addEventListener('resize', () => {
    3 buffering / undefined none) so the debug overlay keeps working.
    ============================================================ */
 const RESOLVER = 'https://www.tikwm.com/api/?url=';
-const RESOLVE_TTL = 2 * 60 * 60 * 1000;
+const RESOLVE_TTL = 2 * 60 * 60 * 1000;   // fallback lifetime when a link's own expiry can't be read
 const _rvMem = new Map();
-function cacheGet(id){ const r=_rvMem.get(String(id)); if(r && Date.now()-r.ts<RESOLVE_TTL) return r; return null; }
-function cacheSet(id,d){ const r={play:d.play,ts:Date.now()}; _rvMem.set(String(id),r); if (KV.ok) KV.write('rv', [[String(id), r]], []).catch(()=>{}); }
+// v2: a video link carries its expiry as a hex timestamp in its path (about 6 h, measured
+// Nov 14 2026). Use it, minus 15 minutes so a video never starts on a link about to die.
+function playExpiry(u){
+  const m = /^https?:\/\/[^/]+\/[0-9a-f]{32}\/([0-9a-f]{8})\//.exec(u || ''); const x = m ? parseInt(m[1], 16) * 1000 : 0;
+  return (x > Date.now() + 60000 && x < Date.now() + 48 * 3600e3) ? x : 0;
+}
+function rvFresh(r){ return !!r && Date.now() < (r.exp ? r.exp - 900000 : r.ts + RESOLVE_TTL); }
+function cacheGet(id){ const r=_rvMem.get(String(id)); return rvFresh(r) ? r : null; }
+function cacheSet(id,d){ const r={play:d.play,ts:Date.now(),exp:playExpiry(d.play)}; _rvMem.set(String(id),r); if (KV.ok) KV.write('rv', [[String(id), r]], []).catch(()=>{}); }
 function cacheDrop(id){ _rvMem.delete(String(id)); if (KV.ok) KV.write('rv', [], [String(id)]).catch(()=>{}); }
 // Load fresh resolved URLs; move any old per-video localStorage keys over and delete them.
 (async () => {
@@ -1477,7 +1615,7 @@ function cacheDrop(id){ _rvMem.delete(String(id)); if (KV.ok) KV.write('rv', [],
   legacy.forEach(k => { try { const r = JSON.parse(localStorage.getItem(k)); if (r && now - r.ts < RESOLVE_TTL) { _rvMem.set(k.slice(3), r); puts.push([k.slice(3), r]); } } catch (e) {} });
   try {
     const all = await KV.getAll('rv'), stale = [];
-    for (const k in all) { if (now - all[k].ts < RESOLVE_TTL) { if (!_rvMem.has(k)) _rvMem.set(k, all[k]); } else stale.push(k); }
+    for (const k in all) { if (rvFresh(all[k])) { if (!_rvMem.has(k)) _rvMem.set(k, all[k]); } else stale.push(k); }
     await KV.write('rv', puts, stale);
     legacy.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
   } catch (e) {}
@@ -1489,9 +1627,16 @@ function cacheDrop(id){ _rvMem.delete(String(id)); if (KV.ok) KV.write('rv', [],
 // for videos you've scrolled away from are dropped so the ~1/sec budget always
 // goes to what's on screen. Cold videos still cost ~1s each (a third-party
 // ceiling), but nothing floods the resolver, so loads are reliable, not freezy.
-const MIN_GAP = 1150;
+// v2 (measured Nov 14 2026): the limit is on how close together calls START (a call 1.0 s
+// after another is refused; 1.3 s is accepted even while the first is still in flight),
+// a refusal costs 0.1 s and carries no penalty, and one call takes 0.5-2.5 s (2-7 s for a
+// video the resolver can't find). So calls now start on a steady clock without waiting
+// for the previous answer: a slow or dead video no longer holds up the one you tapped.
+const MIN_GAP = 1150, MAX_FLIGHT = 4, RESOLVE_TIMEOUT = 12000;
 let _queue = [];              // [{id, prio, tries}]
-let _working = false, _lastRes = 0;
+let _timer = null, _lastRes = 0, _lastOk = 0;
+const _flying = new Set();    // ids with a call in flight
+const _suspect = new Map();   // id -> time of a "can't find it" answer not yet confirmed
 const _waiters = new Map();   // id -> [resolve fns]
 const _thumbWaiters = new Map();   // xray: id -> [resolve fns] for thumbnail jobs (resolve with {cover} | null | 'dropped')
 const THUMB_PRIO = 10;
@@ -1499,7 +1644,7 @@ function _emitThumb(id, val){ const ws=_thumbWaiters.get(id); if(ws){ _thumbWait
 function resolveForThumb(id){
   id = String(id);
   const p = new Promise(res => { const a=_thumbWaiters.get(id)||[]; a.push(res); _thumbWaiters.set(id,a); });
-  if (!_queue.find(q => q.id === id)) _queue.push({ id, prio: THUMB_PRIO, tries: 0 });
+  if (!_flying.has(id) && !_queue.find(q => q.id === id)) _queue.push({ id, prio: THUMB_PRIO, tries: 0 });
   _pump();
   return p;
 }
@@ -1510,44 +1655,67 @@ function cancelThumbResolve(id){
 }
 function _emit(id, val, err){ const ws=_waiters.get(id); if(ws){ _waiters.delete(id); ws.forEach(w=> err? w.rej(err): w.res(val)); } }
 
+function goneError(){ const e = new Error('gone'); e.gone = true; return e; }
 function requestResolve(id, prio){
   const c = cacheGet(id); if (c) return Promise.resolve(c);
   id = String(id);
+  if (isGone(id)) return Promise.reject(goneError());       // v2: remembered; a tap on the slide re-checks
   const existing = _queue.find(q => q.id === id);
   if (existing) { if (prio < existing.prio) existing.prio = prio; }
-  else _queue.push({ id, prio, tries: 0 });
+  else if (!_flying.has(id)) _queue.push({ id, prio, tries: 0 });
   const p = new Promise((res, rej) => { const a=_waiters.get(id)||[]; a.push({res,rej}); _waiters.set(id,a); });
   _pump();
   return p;
 }
 function _pump(){
-  if (_working || !_queue.length) return;
-  _working = true;
-  const wait = Math.max(0, MIN_GAP - (Date.now() - _lastRes));
-  setTimeout(async () => {
-    _queue.sort((a,b) => a.prio - b.prio);
-    const job = _queue.shift();
-    if (!job) { _working = false; return; }
-    const hit = cacheGet(job.id); if (hit && !_thumbWaiters.has(job.id)) { _emit(job.id, hit); _working = false; _pump(); return; }
-    _lastRes = Date.now();
-    try {
-      const res = await fetch(RESOLVER + encodeURIComponent('https://www.tiktok.com/@i/video/' + job.id));
-      const j = await res.json();
-      if (j.code !== 0 || !j.data || !j.data.play) throw new Error('code ' + (j.msg||j.code));
-      let play = j.data.play; if (play[0]==='/') play='https://www.tikwm.com'+play;
-      const au = j.data.author || {};
-      metaSet(job.id, { author: au.nickname || '', handle: au.unique_id || '', desc: j.data.title || '' });
-      const out = { play }; cacheSet(job.id, out); _emit(job.id, out);
-      let cover = j.data.cover || j.data.origin_cover || ''; if (cover && cover[0]==='/') cover='https://www.tikwm.com'+cover;
-      _emitThumb(job.id, { cover });
-    } catch (e) {
-      job.tries++;
+  if (_timer || !_queue.length || _flying.size >= MAX_FLIGHT) return;
+  _timer = setTimeout(() => { _timer = null; _fire(); _pump(); }, Math.max(0, MIN_GAP - (Date.now() - _lastRes)));
+}
+function _fire(){
+  _queue.sort((a,b) => a.prio - b.prio);
+  const job = _queue.shift();
+  if (!job) return;
+  const hit = cacheGet(job.id);
+  if (hit && !_thumbWaiters.has(job.id)) { _emit(job.id, hit); return; }   // nothing sent, no wait owed
+  _lastRes = Date.now(); _flying.add(job.id);
+  _run(job).then(() => { _flying.delete(job.id); _pump(); });
+}
+// A video the resolver says it can't find is remembered as gone only when (a) it said so
+// twice and (b) the resolver was demonstrably working around then (another video succeeded
+// within 2 minutes, before or after). A resolver outage must never brand the library.
+function markGone(id){
+  thumbCache[id] = { gone: true, t: Date.now() }; cacheDirty = true;
+  _emit(id, null, goneError()); _emitThumb(id, { gone: true });
+}
+async function _run(job){
+  const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const to = setTimeout(() => { if (ac) ac.abort(); }, RESOLVE_TIMEOUT);
+  try {
+    const res = await fetch(RESOLVER + encodeURIComponent('https://www.tiktok.com/@i/video/' + job.id), ac ? { signal: ac.signal } : undefined);
+    const j = await res.json();
+    if (j.code !== 0 || !j.data || !j.data.play) { const e = new Error('code ' + (j.msg||j.code)); e.msg = String(j.msg || ''); throw e; }
+    let play = j.data.play; if (play[0]==='/') play='https://www.tikwm.com'+play;
+    const au = j.data.author || {};
+    metaSet(job.id, { author: au.nickname || '', handle: au.unique_id || '', desc: j.data.title || '' });
+    const out = { play }; cacheSet(job.id, out); _emit(job.id, out);
+    let cover = j.data.cover || j.data.origin_cover || ''; if (cover && cover[0]==='/') cover='https://www.tikwm.com'+cover;
+    if (cover && !_thumbWaiters.has(job.id) && !LIB.has(job.id)) LIB.saveCover(job.id, cover);   // keep the image even when only the video was wanted
+    _emitThumb(job.id, { cover });
+    _lastOk = Date.now();
+    _suspect.forEach((t, id) => { if (_lastOk - t < 120000) markGone(id); }); _suspect.clear();
+  } catch (e) {
+    const msg = e && e.msg || '';
+    if (/limit/i.test(msg)) { _lastRes = Date.now(); job.tries += 0.34; }   // refused for pace (something else on this network is calling too): wait a full gap
+    else job.tries++;
+    if (/parsing is failed/i.test(msg) && job.tries >= 2) {
+      if (Date.now() - _lastOk < 120000) markGone(job.id);
+      else { _suspect.set(job.id, Date.now()); _emit(job.id, null, e); _emitThumb(job.id, null); }
+    } else {
       const thumbOnly = job.prio >= THUMB_PRIO && !_waiters.has(job.id);
       if (job.tries < (thumbOnly ? 2 : 5)) _queue.push(job);        // rate-limited/transient — retry later
       else { _emit(job.id, null, e); _emitThumb(job.id, null); }   // give up: waiters see rejection
     }
-    _working = false; _pump();
-  }, wait);
+  } finally { clearTimeout(to); }
 }
 // Drop pending requests for videos no longer near the current index, so the
 // rate budget isn't spent on things you've already scrolled past.
@@ -1556,7 +1724,7 @@ function clearResolveQueue(){ _queue.forEach(q => _emitThumb(q.id, 'dropped')); 
 
 // resolve(id, prio) — compatibility wrapper used by mountSlot.
 function resolve(id, prio){ return requestResolve(id, prio == null ? 1 : prio); }
-function prefetch(idx, prio){ const it = feedList[idx]; if (it && !cacheGet(it.id)) requestResolve(it.id, prio == null ? 4 : prio); }
+function prefetch(idx, prio){ const it = feedList[idx]; if (it && !cacheGet(it.id)) requestResolve(it.id, prio == null ? 4 : prio).catch(() => {}); }
 
 /* ---- pool of reusable <video> elements (prev/current/next ring) ----
    The next clip is preloaded (src set, buffering, paused) so a swipe promotes
@@ -1577,7 +1745,10 @@ function newVideo(){
   v.addEventListener('playing',()=>{ const el=slideOf(); if(!el)return; el._state=1; const m=el.querySelector('.slide-media'); if(m) m.classList.remove('paused','needs-tap'); revealWhenPainted(el, v); });
   v.addEventListener('waiting',()=>{ const el=slideOf(); if(el&&el!==null) el._state=3; });
   v.addEventListener('pause',()=>{ const el=slideOf(); if(el&&el._state===1) el._state=2; });
-  v.addEventListener('error',()=>{ const el=slideOf(); if(el){ el._state=undefined; el.querySelector('.slide-media').classList.add('needs-tap'); } });
+  v.addEventListener('error',()=>{ const el=slideOf(); if(!el) return; el._state=undefined;
+    // v2: links are now trusted for hours, so one that died early gets one fresh resolve before asking for a tap
+    if (el._vidId && !el._retried) { el._retried = true; cacheDrop(el._vidId); el._vidId = null; mountSlot(el, slotEls['0']===el); return; }
+    el.querySelector('.slide-media').classList.add('needs-tap'); });
   return v;
 }
 // Reveal the video (fade out the thumbnail) only once a real frame of the
@@ -1643,7 +1814,13 @@ function mountSlot(el, active){
     if(el._token!==tok || el._vid!==v) return;
     if(v.src!==r.play){ media.classList.remove('is-playing'); el._revealTok=(el._revealTok||0)+1; v.src=r.play; try{v.load();}catch(e){} }
     el._vidId=id; applyState();
-  }).catch(()=>{ media.classList.remove('resolving'); if(slotEls['0']===el) media.classList.add('needs-tap'); });
+  }).catch((e)=>{ media.classList.remove('resolving');
+    if (e && e.gone) {                       // v2: remembered as unavailable; a tap re-checks
+      unmountSlot(el); el.classList.add('unavailable-slide');
+      const sb = media.querySelector('.status-badge'); if (sb) sb.textContent = 'Video unavailable';
+      return;
+    }
+    if(slotEls['0']===el) media.classList.add('needs-tap'); });
 }
 function unmountSlot(el){
   if(!el) return;
@@ -1988,7 +2165,7 @@ window.__fav = {
   },
   async storage() {
     let ls = 0; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); ls += k.length + (localStorage.getItem(k) || '').length; }
-    const out = { localStorageChars: ls, idbOk: KV.ok };
+    const out = { localStorageChars: ls, idbOk: KV.ok, covers: LIB.count(), coverFailures: LIB.failed(), resolverInFlight: _flying.size };
     if (KV.ok) for (const s of ['thumb', 'meta', 'rv']) { try { out['idb_' + s] = await KV.count(s); } catch (e) { out['idb_' + s] = -1; } }
     return out;
   },
