@@ -129,6 +129,17 @@
     font-size:9px; color:rgba(255,255,255,.6); background:rgba(0,0,0,.55);
     padding:2px 5px; border-radius:3px;
   }
+  /* v15: selecting many videos in a grid */
+  .thumb-tile.sel::before { content:''; position:absolute; inset:0; z-index:3; border:3px solid var(--accent); background:rgba(59,125,216,.28); pointer-events:none; }
+  .thumb-tile.sel::after { content:'\2713'; position:absolute; right:6px; top:6px; z-index:4; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff; font-size:14px; font-weight:700; text-align:center; line-height:22px; }
+  #selBar { position:absolute; left:0; right:0; bottom:0; z-index:17; display:none; align-items:center; gap:8px; background:#161616; border-top:1px solid var(--line);
+    padding:10px 12px max(12px,env(safe-area-inset-bottom)); }
+  #selBar.open { display:flex; }
+  #selCount { flex:1; font-size:14px; font-weight:600; }
+  #selBar button { border:0; border-radius:9px; padding:9px 12px; font-size:14px; font-weight:600; background:#2a2a2a; }
+  #selBar #selMove { background:var(--accent); }
+  #selBar #selDelete { background:#4a2020; color:#ff8f8f; }
+  .slide-desc .tag { color:#fff; font-weight:700; }
   #gridEmpty { padding:40px 20px; text-align:center; color:var(--dim); font-size:14px; display:none; }
 
   /* date jump */
@@ -381,6 +392,7 @@
   <div id="chipRow" class="chip-row"></div>
   <div id="gridScroll"><div id="thumbGrid"></div><div id="gridEmpty">Nothing here yet.</div></div>
   <div id="datePanel"><div class="date-panel-inner" id="datePanelInner"></div></div>
+  <div id="selBar"><div id="selCount"></div><button id="selAll">All</button><button id="selMove">Move to…</button><button id="selDelete">Delete</button><button id="selCancel">Cancel</button></div>
 </div>
 
 <div id="feed">
@@ -407,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 14, APP_BUILT = 'Nov 15 10:54 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 15, APP_BUILT = 'Nov 15 2:15 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1219,7 +1231,14 @@ const gridVL = VirtualList({
     t.dataset.id = item.id;
     const pm = metaStore[item.id];
     t.innerHTML = '<img alt="" decoding="async"><div class="thumb-date">' + esc(itemLabel(item)) + '</div>' + (pm && pm.img ? '<div class="thumb-photos">&#9635; ' + pm.img + '</div>' : '');
-    t.onclick = () => { primeAudioOnGesture(); openFeed(gridList, gridLabel, i); };
+    if (sel.has(item.id)) t.classList.add('sel');
+    let skipClick = false;      // only the click produced by releasing the long press itself is ignored
+    t.onclick = () => { if (skipClick) { skipClick = false; return; } if (selMode) { selToggle(item.id, t); return; } primeAudioOnGesture(); openFeed(gridList, gridLabel, i); };
+    // v15: press and hold a thumbnail to start selecting
+    let lp = null, sx = 0, sy = 0;
+    t.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; clearTimeout(lp); lp = setTimeout(() => { lp = null; if (!selMode) { selStart(); selToggle(item.id, t); skipClick = true; } }, 480); });
+    t.addEventListener('pointermove', (e) => { if (lp && (Math.abs(e.clientX - sx) > 8 || Math.abs(e.clientY - sy) > 8)) { clearTimeout(lp); lp = null; } });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => t.addEventListener(ev, () => { clearTimeout(lp); lp = null; if (skipClick) setTimeout(() => { skipClick = false; }, 80); }));
     const prio = () => Math.abs(Math.floor(i / 3) * gridVL.rowH - gridScroll.scrollTop);
     bindThumb(t.querySelector('img'), item.id, prio, () => t.classList.add('unavailable'));
     warmPlay(item.id, prio);
@@ -1262,7 +1281,58 @@ function setupChips(label, keep) {
   const uns = state.items.filter(i => i.category === SHARED_CAT && !X.from[i.id]).length; if (uns) mk('Unsorted  ' + uns, 'u');
   row.classList.add('open');
 }
+/* ---- v15: select many videos in a grid, then move or delete them together ----
+   Start with a long press on a thumbnail; then taps add or remove. "Delete" only moves to
+   Deleted (reversible there); in the Deleted grid the bar offers Restore instead. */
+const sel = new Set(); let selMode = false;
+function selPaint() {
+  const bar = document.getElementById('selBar'); bar.classList.toggle('open', selMode);
+  document.getElementById('selCount').textContent = sel.size + ' selected';
+  document.getElementById('selDelete').style.display = gridLabel === DELETED ? 'none' : '';
+  document.getElementById('selMove').textContent = gridLabel === DELETED ? 'Restore to…' : 'Move to…';
+}
+function selStart() { selMode = true; sel.clear(); selPaint(); }
+function selEnd() { selMode = false; sel.clear(); document.querySelectorAll('.thumb-tile.sel').forEach(t => t.classList.remove('sel')); selPaint(); }
+function selToggle(id, tile) { if (sel.has(id)) sel.delete(id); else sel.add(id); if (tile) tile.classList.toggle('sel', sel.has(id)); selPaint(); }
+function selApply(fn, doneText) {
+  const ids = new Set(sel); let n = 0;
+  state.items.forEach(i => { if (ids.has(i.id)) { fn(i); n++; } });
+  flushSave(true);
+  // what still belongs in the grid being shown
+  const tree = state.categories.includes(gridLabel) ? new Set(treeOf(gridLabel)) : null;
+  const keep = (i) => (tree && !(gridLabel === SHARED_CAT && chipSel)) ? tree.has(i.category) : i.category !== DELETED;
+  const top = gridScroll.scrollTop; gridBaseList = gridBaseList.filter(keep);
+  selEnd(); runSearch(document.getElementById('searchInput').value); gridScroll.scrollTop = top; gridVL.update(true);
+  toast(doneText.replace('N', n));
+}
+document.getElementById('selCancel').onclick = selEnd;
+document.getElementById('selAll').onclick = () => { gridList.forEach(i => sel.add(i.id)); gridVL.live.forEach(el => el.classList.add('sel')); selPaint(); };
+document.getElementById('selDelete').onclick = () => { if (!sel.size) return; if (!state.categories.includes(DELETED)) state.categories.push(DELETED); selApply(i => { i.category = DELETED; }, 'Moved N to Deleted'); };
+document.getElementById('selMove').onclick = () => {
+  if (!sel.size) return;
+  actionSheet({ title: (gridLabel === DELETED ? 'Restore ' : 'Move ') + sel.size + ' to…', rows: orderedCats().map(c => ({ label: '\u2003'.repeat(c.depth) + c.name,
+    onClick: () => selApply(i => { i.category = c.name; }, 'Moved N to ' + c.name) })) });
+};
+// v15: tap a hashtag in a caption to see everything in the library with that tag
+function setDesc(el, text) {
+  el.textContent = ''; if (!text) return;
+  String(text).split(/(#[\p{L}\p{N}_]+)/u).forEach(part => {
+    if (!part) return;
+    if (part[0] === '#' && part.length > 1) { const sp = document.createElement('span'); sp.className = 'tag'; sp.textContent = part;
+      sp.onclick = (e) => { e.stopPropagation(); openTag(part); }; el.appendChild(sp); }
+    else el.appendChild(document.createTextNode(part));
+  });
+}
+function openTag(tag) {
+  const feedWasOpen = document.getElementById('feed').classList.contains('open'), gridWasOpen = document.getElementById('gridView').classList.contains('open');
+  const back = { list: gridBaseList, label: gridLabel, scroll: gridScrollMemory[gridLabel] || 0 };
+  if (feedWasOpen) closeFeed();
+  if (gridWasOpen) gridStack.push(back); else gridStack = [];
+  openGrid(liveItems(), 'All Videos');
+  document.getElementById('searchRow').classList.add('open'); document.getElementById('searchInput').value = tag; runSearch(tag);
+}
 function openGrid(list, label, keepChips) {
+  if (selMode) selEnd();
   setupChips(label, !!keepChips && label === gridLabel);
   gridBaseList = list;
   // reset any active search when (re)opening a grid
@@ -1880,7 +1950,7 @@ function fillOverlay(el, id) {
   const m = metaStore[id]; if (!m) return;
   const a = el.querySelector('.slide-author'); const d = el.querySelector('.slide-desc');
   if (a) a.textContent = m.author ? (m.handle ? m.author + '  ·  @' + m.handle : m.author) : (m.handle ? '@' + m.handle : '');
-  if (d) d.textContent = m.desc || '';
+  if (d) setDesc(d, m.desc || '');
 }
 // On-screen fallback for creator + description (the ⓘ rail button). Always
 // accessible even if the on-video overlay is hard to read; if metadata isn't
