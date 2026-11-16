@@ -419,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 20, APP_BUILT = 'Nov 15 11:23 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 21, APP_BUILT = 'Nov 15 11:29 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2372,10 +2372,19 @@ function releaseVideo(v){ if(!v) return; try{ v.pause(); v.playbackRate=1; v.rem
 // still refuses, the current video falls back to muted playback (never frozen)
 // and the sound button remains as manual override — so this can only help.
 let audioPrimed = false;
+// v21 (benchmark gap 7): once the primer has started (the permission is granted at the play()
+// call inside the tap and stays with the element), pause it, so an element still waiting for
+// its link doesn't loop the 0.3 s clip (a seek every 0.3 s keeps a phone decoder busy). Not on
+// the slide on screen: a pause there would use up one of its automatic restarts.
+function stopPrimer(v) {
+  if (!v.src || v.src.indexOf('clips/silent.mp4') < 0) return;
+  const s = v.closest && v.closest('.slide'); if (s && slotEls['0'] === s) return;
+  try { v.pause(); } catch (e) {}
+}
 function primeAudioOnGesture(){
   desiredMuted = false; audioUnlocked = true;
   while (vpool.length < 3) vpool.push(newVideo());
-  vpool.forEach(v => { try { v.muted = true; if (!v.src) v.src = 'clips/silent.mp4'; const p = v.play(); if (p) p.catch(()=>{}); } catch(e){} });
+  vpool.forEach(v => { try { v.muted = true; if (!v.src) v.src = 'clips/silent.mp4'; const p = v.play(); if (p) p.then(() => stopPrimer(v), () => {}); } catch(e){} });
   audioPrimed = true;
 }
 
