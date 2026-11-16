@@ -419,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 21, APP_BUILT = 'Nov 15 11:29 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 22, APP_BUILT = 'Nov 15 11:47 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1613,7 +1613,8 @@ function promoteCurrent() {
     // preloaded neighbour promoted — just play it (usually already started when the finger lifted)
     delete el.dataset.userPaused;
     const v = el._vid;
-    v.muted = desiredMuted || !audioUnlocked;
+    if (el._deferUnmute && !v.paused) v.muted = true;            // v22: startIncoming turns the sound on at the first frame
+    else { el._deferUnmute = 0; v.muted = desiredMuted || !audioUnlocked; }
     const p = v.play(); if (p) p.catch(()=>{});
     // if sound was refused, play muted rather than sit frozen
     if (!v.muted) setTimeout(() => { if (slotEls['0'] === el && el._vid === v && el.dataset.userPaused !== 'true' && v.paused) { v.muted = true; const q = v.play(); if (q) q.catch(()=>{}); } }, 900);
@@ -1734,8 +1735,24 @@ function startIncoming(dir) {
   if (!inc) return;
   inc._wantPlay = true; delete inc.dataset.userPaused;
   if (inc._vid && inc._vidId === inc.dataset.id) {
-    inc._vid.muted = desiredMuted || !audioUnlocked;
-    const p = inc._vid.play(); if (p) p.catch(()=>{});
+    const v = inc._vid;
+    // v22 (benchmark gap 6): starting with sound costs ~0.3 s before the picture moves (WebKit:
+    // first moving frame ~400 ms after the finger lifts with sound, ~110 ms muted). So start
+    // muted and turn the sound on as soon as the first frame is shown (~115 ms): the picture
+    // moves ~0.23 s sooner and the sound comes on no later than before.
+    if (desiredMuted || !audioUnlocked) { v.muted = true; const p = v.play(); if (p) p.catch(()=>{}); return; }
+    v.muted = true; const tok = inc._deferUnmute = (inc._deferUnmute || 0) + 1;
+    const p = v.play(); if (p) p.catch(()=>{});
+    const unmute = () => {
+      if (inc._deferUnmute !== tok) return; inc._deferUnmute = 0;
+      if (inc._vid !== v || !inc._wantPlay || desiredMuted || !audioUnlocked) return;
+      v.muted = false;
+      // if the phone refuses sound here it pauses the video: play muted rather than sit frozen (as elsewhere)
+      setTimeout(() => { if (inc._vid === v && inc._wantPlay && v.paused && inc.dataset.userPaused !== 'true') { v.muted = true; const q = v.play(); if (q) q.catch(()=>{}); } }, 400);
+    };
+    if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) { try { v.requestVideoFrameCallback(unmute); } catch (e) { setTimeout(unmute, 150); } }
+    else v.addEventListener('timeupdate', unmute, { once: true });
+    setTimeout(unmute, 700);                       // never leave it muted if no frame is reported
   }
 }
 function slideTo(dir) {
