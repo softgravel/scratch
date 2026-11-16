@@ -273,8 +273,6 @@
     color:rgba(255,255,255,.9); text-shadow:0 1px 3px rgba(0,0,0,.7);
     pointer-events:none;
   }
-  .official-badge { position:absolute; top:calc(env(safe-area-inset-top) + 58px); left:50%; transform:translateX(-50%); z-index:7;
-    font-size:12px; font-weight:600; color:#fff; background:rgba(0,0,0,.45); padding:4px 11px; border-radius:14px; pointer-events:none; white-space:nowrap; }
   .slide-media.ffwd::after {
     content:'2\00D7  \25B8\25B8'; position:absolute; top:calc(env(safe-area-inset-top) + 58px); left:50%;
     transform:translateX(-50%); z-index:7; font-size:14px; font-weight:700; letter-spacing:.02em;
@@ -421,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 27, APP_BUILT = 'Nov 16 2:12 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 28, APP_BUILT = 'Nov 16 10:34 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1593,7 +1591,6 @@ function commitAdvance(dir) {
   // v17 (Ian, Nov 15: "when back scrolling videos should also start where they left off"):
   // the video you leave keeps its place, so swiping back resumes it (v4 restarted it at 0).
   const left = slotEls[dir === 1 ? '-1' : '1'];
-  removeOfficial(left);   // v27: never keep a TikTok player off screen (iOS can't resume it; TikTok throttles extra players)
   if (left && left._vid) { try { left._vid.pause(); left._primedSrc = left._vid.src; } catch (e) {} rememberPlace(left); }
   ['-1','0','1'].forEach(k => { if (slotEls[k]) slotEls[k].dataset.slot = k; });
   layoutSlots();
@@ -1768,7 +1765,6 @@ function startIncoming(dir) {
   const inc = slotEls[String(dir)], out = slotEls['0'];
   // v26: an early-started swipe has already muted the video being left; pausing it right at the
   // lift froze the incoming picture when its sound came on, so it is paused once it has slid away
-  if (out && out._official && out._offFrame) offPost(out._offFrame, 'pause');
   if (out) { out._wantPlay = false; if (early) setTimeout(() => { if (!out._wantPlay) pauseSlide(out); }, 300); else pauseSlide(out); }
   if (!inc) return;
   inc._wantPlay = true; delete inc.dataset.userPaused;
@@ -1835,7 +1831,6 @@ function afterTransition(fn, ms) {
 function toggleCurrent() {
   const el = slotEls['0']; if (!el) return;
   const media = el.querySelector('.slide-media');
-  if (el._official && el._offFrame) { officialTap(el, media); return; }
   if (el.classList.contains('unavailable-slide')) {
     // v2: a tap re-checks a video that was remembered as unavailable
     el.classList.remove('unavailable-slide'); delete thumbCache[el.dataset.id]; cacheDirty = true;
@@ -1880,7 +1875,7 @@ function toggleCurrent() {
 let _ffCheck = null;
 function ffNudge(v) { try { v.currentTime = v.currentTime + 0.02; const p = v.play(); if (p) p.catch(()=>{}); } catch (e) {} }
 function startFF() {
-  const el = slotEls['0']; if (!el || !el._vid || el._official) return;   // v27: TikTok's player has no 2x
+  const el = slotEls['0']; if (!el || !el._vid) return;
   const v = el._vid; holding = true;
   el.querySelector('.slide-media').classList.add('ffwd');
   if (v.paused && el.dataset.userPaused !== 'true') { const p = v.play(); if (p) p.catch(()=>{}); }
@@ -1963,7 +1958,6 @@ function buildSlide(item, i) {
   mb.onclick = (e) => {
     e.stopPropagation();
     desiredMuted = !desiredMuted;
-    { const c = slotEls['0']; if (c && c._official && c._offFrame) { offPost(c._offFrame, desiredMuted ? 'mute' : 'unMute'); if (!desiredMuted) offPost(c._offFrame, 'play'); } }   // v27: inside the tap
     // This tap is a genuine user gesture. When turning sound ON, call play() on
     // ALL live slot videos synchronously here — that grants each pooled element
     // audio activation while the gesture is valid, so when you later swipe to a
@@ -2433,82 +2427,6 @@ function releaseVideo(v){ if(!v) return; try{ v.pause(); v.playbackRate=1; v.rem
 // (which reuse these same elements) play unmuted, iOS allows it. If the platform
 // still refuses, the current video falls back to muted playback (never frozen)
 // and the sound button remains as manual override — so this can only help.
-// v27 (Ian, Nov 16 4:45 AM, tikwm down for hours: "build it in as fallback but make sure it only
-// operates when tikwm would be worse"): TikTok's official player (player/v1 iframe, measured 10/10
-// and 0.6-1.9 s to moving video during the outage) takes over the video ON SCREEN only, only
-// while it has no tikwm link: after 0.4 s when tikwm is failing right now, after 3 s when tikwm
-// seems fine but this answer is slow. One player at most (removed as soon as its slide leaves,
-// never paused off screen: LEARNINGS 7-8); it ignores touches (swipes and taps stay ours) and
-// starts muted; a tap unmutes it inside the tap (LEARNINGS 9). No 2x / scrub / resume in this mode,
-// so a small label says "TikTok player". When the tikwm link arrives meanwhile, this view stays on
-// the official player and the next visit plays natively.
-const OFFICIAL_SLOW_MS = 3000, OFFICIAL_BAD_MS = 400;
-function tikwmBad() {
-  const now = Date.now(); let oldest = 0;
-  _flightT.forEach(f => { if (!oldest || f.t0 < oldest) oldest = f.t0; });
-  const hung = oldest && now - oldest > 5000, stale = now - (HEALTH.lastOkAt || 0) > 8000;
-  return stale && (HEALTH.failRun >= 1 || hung);
-}
-function officialSrc(id) {
-  if (window.__officialBase) return window.__officialBase + '?id=' + encodeURIComponent(id);   // Mac tests only: a local fake, never TikTok
-  const p = new URLSearchParams({ rel: '0', autoplay: '1', loop: '1', muted: '1', playsinline: '1', controls: '0', progress_bar: '0', play_button: '0',
-    volume_control: '0', fullscreen_button: '0', timestamp: '0', music_info: '0', description: '0', native_context_menu: '0', closed_caption: '0' });
-  return 'https://www.tiktok.com/player/v1/' + encodeURIComponent(id) + '?' + p.toString();
-}
-function offPost(f, type, value) { try { if (f && f.contentWindow) f.contentWindow.postMessage({ 'x-tiktok-player': true, type, value }, '*'); } catch (e) {} }
-function armOfficial(el, id) {
-  clearTimeout(el._offT1); clearTimeout(el._offT2);
-  const go = (why) => {
-    if (slotEls['0'] !== el || el.dataset.id !== id || el._vidId === id || el._official || el.classList.contains('unavailable-slide')) return;
-    if (!document.getElementById('feed').classList.contains('open') || navigator.onLine === false) return;
-    startOfficial(el, id, why);
-  };
-  el._offT1 = setTimeout(() => { if (tikwmBad()) go('tikwm failing'); }, OFFICIAL_BAD_MS);
-  el._offT2 = setTimeout(() => go('tikwm slow'), OFFICIAL_SLOW_MS);
-}
-function startOfficial(el, id, why) {
-  const media = el.querySelector('.slide-media'); if (!media) return;
-  document.querySelectorAll('.slide').forEach(o => { if (o !== el) removeOfficial(o); });   // never two players
-  el._official = true; el._offMuted = true; el._offWhy = why; delete el.dataset.userPaused;
-  if (el._vid) { try { el._vid.pause(); } catch (e) {} }
-  const f = document.createElement('iframe');
-  f.setAttribute('allow', 'autoplay; encrypted-media; fullscreen; picture-in-picture'); f.setAttribute('playsinline', '');
-  f.setAttribute('title', 'TikTok player'); f.style.opacity = '0'; f.style.zIndex = '2';
-  media.appendChild(f); el._offFrame = f;
-  const b = document.createElement('div'); b.className = 'official-badge'; media.appendChild(b); el._offBadge = b; officialBadge(el);
-  bindOfficialMessages();
-  requestAnimationFrame(() => { if (el._offFrame === f && f.isConnected) f.src = officialSrc(id); });   // attach first, src after a paint
-}
-function officialBadge(el) { if (el._offBadge) el._offBadge.textContent = 'TikTok player' + (el._offMuted && !desiredMuted ? ' · tap for sound' : '') + ' · no 2x'; }
-function removeOfficial(el) {
-  if (!el) return;
-  clearTimeout(el._offT1); clearTimeout(el._offT2);
-  if (!el._official && !el._offFrame) return;
-  if (el._offFrame) { try { el._offFrame.remove(); } catch (e) {} }
-  if (el._offBadge) { try { el._offBadge.remove(); } catch (e) {} }
-  el._offFrame = null; el._offBadge = null; el._official = false; el._offPlaying = false;
-  const m = el.querySelector('.slide-media'); if (m && !(el._vid && el._state === 1)) m.classList.remove('is-playing');
-}
-function officialTap(el, media) {
-  const f = el._offFrame;
-  if (el._offMuted && !desiredMuted && audioUnlocked) { offPost(f, 'unMute'); offPost(f, 'play'); el._offMuted = false; delete el.dataset.userPaused; media.classList.remove('paused'); officialBadge(el); return; }
-  if (el.dataset.userPaused === 'true') { delete el.dataset.userPaused; offPost(f, 'play'); media.classList.remove('paused'); }
-  else { el.dataset.userPaused = 'true'; offPost(f, 'pause'); media.classList.add('paused'); }
-}
-let _offBound = false;
-function bindOfficialMessages() {
-  if (_offBound) return; _offBound = true;
-  window.addEventListener('message', (e) => {
-    const d = e.data; if (!d || !d['x-tiktok-player']) return;
-    let el = null; document.querySelectorAll('.slide').forEach(o => { if (o._offFrame && o._offFrame.contentWindow === e.source) el = o; });
-    if (!el) return;
-    const media = el.querySelector('.slide-media');
-    if (d.type === 'onPlayerReady') { if (slotEls['0'] === el && el.dataset.userPaused !== 'true') offPost(el._offFrame, 'play'); }
-    else if (d.type === 'onStateChange' && d.value === 1) { el._offPlaying = true; el._offFrame.style.opacity = '1'; if (media) { media.classList.remove('resolving', 'needs-tap'); media.classList.add('is-playing'); } }
-    else if (d.type === 'onMute') { el._offMuted = !!d.value; officialBadge(el); }
-    else if (d.type === 'onPlayerError') { el._offError = d.value; }
-  });
-}
 let audioPrimed = false;
 // v21 (benchmark gap 7): once the primer has started (the permission is granted at the play()
 // call inside the tap and stays with the element), pause it, so an element still waiting for
@@ -2631,17 +2549,14 @@ function mountSlot(el, active){
   // without an error answer, so the 'not answering' notice (4 failed answers in a row) could take
   // a minute while the screen shows only a spinner. Say so after 6 s of waiting for the video on
   // screen; the next answer from the source clears it (healthOk).
-  if(active) armOfficial(el, id);
-  if(active){ clearTimeout(el._slowT); el._slowT=setTimeout(()=>{ if(slotEls['0']===el && el._token===tok && el._vidId!==id && !(el._official && el._offPlaying) && navigator.onLine!==false && document.getElementById('feed').classList.contains('open')) showNotice('resolver', 'The video source is slow or not answering right now. Videos already prepared still play; this one starts when it answers.'); }, 6000); }
+  if(active){ clearTimeout(el._slowT); el._slowT=setTimeout(()=>{ if(slotEls['0']===el && el._token===tok && el._vidId!==id && navigator.onLine!==false && document.getElementById('feed').classList.contains('open')) showNotice('resolver', 'The video source is slow or not answering right now. Videos already prepared still play; this one starts when it answers.'); }, 6000); }
   resolve(id, active ? 0 : 1).then(r=>{
     if(!r) throw new Error('null');
     if(el._token!==tok || el._vid!==v) return;
     upgradePoster(el, r.poster);
     if (r.images) mountPhotos(el, r.images);
     if(v.src!==r.play){ media.classList.remove('is-playing'); el._revealTok=(el._revealTok||0)+1; v.src=r.play; try{v.load(); v.playbackRate=1;}catch(e){} resumePlace(v, id); }
-    el._vidId=id;
-    if (el._official) { if (el._offPlaying) return; removeOfficial(el); }   // v27: whichever starts first wins; if TikTok's player is already playing, this view stays on it
-    applyState();
+    el._vidId=id; applyState();
   }).catch((e)=>{ media.classList.remove('resolving');
     if (e && e.gone) {                       // v2: remembered as unavailable; a tap re-checks
       unmountSlot(el); el.classList.add('unavailable-slide');
@@ -2654,7 +2569,6 @@ function unmountSlot(el){
   if(!el) return;
   rememberPlace(el);
   if(el._playGrace){ clearTimeout(el._playGrace); el._playGrace=null; }
-  removeOfficial(el);
   if(el._vid){ releaseVideo(el._vid); el._vid=null; el._vidId=null; }
   if(el._photoTimer){ clearInterval(el._photoTimer); el._photoTimer=null; }
   el.querySelectorAll('.photos, .photo-count').forEach(n => n.remove());
@@ -2689,7 +2603,7 @@ function ensurePlaying(el){
   delete el.dataset.userPaused;
   if(el._playGrace) clearTimeout(el._playGrace);
   el._playGrace=setTimeout(()=>{
-    if(slotEls['0']!==el || el.dataset.userPaused==='true' || el._state===1 || el._scrubbing || el._official) return;
+    if(slotEls['0']!==el || el.dataset.userPaused==='true' || el._state===1 || el._scrubbing) return;
     const v=el._vid;
     if(v && v.paused){ v.muted=desiredMuted||!audioUnlocked; const p=v.play(); if(p)p.catch(()=>{}); }
     if(el._state!==1 && media) media.classList.add('needs-tap');
