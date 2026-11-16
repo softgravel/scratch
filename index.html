@@ -419,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 16, APP_BUILT = 'Nov 15 10:51 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 17, APP_BUILT = 'Nov 15 10:56 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1462,6 +1462,18 @@ let stageH = 0;
 let dragging = false, dragStartY = 0, dragDY = 0, dragStartT = 0, dragMoved = false;
 let animating = false;
 let holdTimer = null, ffTimer = null, holding = false;
+// v17: where each video was left in this feed (id -> seconds), so one swiped back to resumes
+// there even after its player was released. Cleared when a feed is opened (a new session).
+const resumeAt = new Map();
+function rememberPlace(el) {
+  const v = el && el._vid; if (!v || el._vidId !== el.dataset.id) return;
+  const t = v.currentTime; if (t > 0.3 && v.duration > 0) resumeAt.set(el.dataset.id, t); else resumeAt.delete(el.dataset.id);
+}
+function resumePlace(v, id) {
+  const t = resumeAt.get(id); if (!t) return;
+  const go = () => { if (v.duration > 0 && t < v.duration - 0.5) { try { v.currentTime = t; } catch (e) {} } };
+  if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
+}
 
 function stageHeight() { return stage.clientHeight || window.innerHeight || 700; }
 
@@ -1484,7 +1496,7 @@ function layoutSlots() {
 }
 
 function openFeed(list, label, startIndex) {
-  feedMode = 'list'; paintShuffleBar();
+  feedMode = 'list'; paintShuffleBar(); resumeAt.clear();
   feedList = list.slice(); feedLabel = label;
   document.getElementById('feedLabel').textContent = label;
   document.getElementById('feed').classList.add('open');
@@ -1576,9 +1588,10 @@ function commitAdvance(dir) {
   }
 
   slotEls = next;
-  // v4: a video you swipe back to starts from the beginning, as on TikTok
+  // v17 (Ian, Nov 15: "when back scrolling videos should also start where they left off"):
+  // the video you leave keeps its place, so swiping back resumes it (v4 restarted it at 0).
   const left = slotEls[dir === 1 ? '-1' : '1'];
-  if (left && left._vid) { try { left._vid.pause(); left._vid.currentTime = 0; } catch (e) {} }
+  if (left && left._vid) { try { left._vid.pause(); left._primedSrc = left._vid.src; } catch (e) {} rememberPlace(left); }
   ['-1','0','1'].forEach(k => { if (slotEls[k]) slotEls[k].dataset.slot = k; });
   layoutSlots();
   setTrack(0, false);
@@ -2430,7 +2443,7 @@ function mountSlot(el, active){
     if(el._token!==tok || el._vid!==v) return;
     upgradePoster(el, r.poster);
     if (r.images) mountPhotos(el, r.images);
-    if(v.src!==r.play){ media.classList.remove('is-playing'); el._revealTok=(el._revealTok||0)+1; v.src=r.play; try{v.load(); v.playbackRate=1;}catch(e){} }
+    if(v.src!==r.play){ media.classList.remove('is-playing'); el._revealTok=(el._revealTok||0)+1; v.src=r.play; try{v.load(); v.playbackRate=1;}catch(e){} resumePlace(v, id); }
     el._vidId=id; applyState();
   }).catch((e)=>{ media.classList.remove('resolving');
     if (e && e.gone) {                       // v2: remembered as unavailable; a tap re-checks
@@ -2442,6 +2455,7 @@ function mountSlot(el, active){
 }
 function unmountSlot(el){
   if(!el) return;
+  rememberPlace(el);
   if(el._playGrace){ clearTimeout(el._playGrace); el._playGrace=null; }
   if(el._vid){ releaseVideo(el._vid); el._vid=null; el._vidId=null; }
   if(el._photoTimer){ clearInterval(el._photoTimer); el._photoTimer=null; }
