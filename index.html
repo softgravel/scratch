@@ -419,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 18, APP_BUILT = 'Nov 15 11:10 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 19, APP_BUILT = 'Nov 15 11:16 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1319,7 +1319,7 @@ function setDesc(el, text) {
   String(text).split(/(#[\p{L}\p{N}_]+)/u).forEach(part => {
     if (!part) return;
     if (part[0] === '#' && part.length > 1) { const sp = document.createElement('span'); sp.className = 'tag'; sp.textContent = part;
-      sp.onclick = (e) => { e.stopPropagation(); openTag(part); }; el.appendChild(sp); }
+      sp.onclick = (e) => { e.stopPropagation(); if (overlayClickSuppressed()) return; openTag(part); }; el.appendChild(sp); }
     else el.appendChild(document.createTextNode(part));
   });
 }
@@ -1689,10 +1689,22 @@ function playCurrent() {
 // finishes it at once and starts the next drag, so a quick second swipe is never dropped;
 // (3) flicks are judged by finger speed, and a faster flick gets a shorter animation.
 let dragVel = 0, lastMoveY = 0, lastMoveT = 0, _animDone = null;
+// v19: a gesture that starts on the creator name or the caption belongs to the stage; a tap
+// there still does what tapping it always did.
+let dragStartEl = null, _stageGestureEnd = 0;
+function overlayClickSuppressed() { return Date.now() - _stageGestureEnd < 700; }
+function overlayTap(t) {
+  if (!t || !t.closest) return false;
+  const slide = t.closest('.slide'), tag = t.closest('.slide-desc .tag'), auth = t.closest('.slide-author'), desc = t.closest('.slide-desc');
+  if (tag) { openTag(tag.textContent); return true; }
+  if (auth && slide) { openCreator(slide.dataset.id); return true; }
+  if (desc) { desc.classList.toggle('expanded'); return true; }
+  return false;
+}
 stage.addEventListener('pointerdown', (e) => {
   if (animating && _animDone) _animDone();
   if (animating) return;
-  dragging = true; dragMoved = false;
+  dragging = true; dragMoved = false; dragStartEl = e.target;
   dragStartY = e.clientY; dragDY = 0; dragStartT = Date.now();
   dragVel = 0; lastMoveY = e.clientY; lastMoveT = performance.now();
   setTrack(0, false);
@@ -1737,13 +1749,13 @@ function slideTo(dir) {
 }
 function endDrag(e) {
   if (!dragging) return;
-  dragging = false;
+  dragging = false; _stageGestureEnd = Date.now();
   clearTimeout(holdTimer);
   if (holding) { stopFF(); setTrack(0, false); return; }
   const dt = Date.now() - dragStartT;
   const H = stageHeight();
-  // a tap: little movement, short time → toggle play/pause
-  if (!dragMoved && dt < 400) { toggleCurrent(); setTrack(0, false); return; }
+  // a tap: little movement, short time → toggle play/pause (or the name / caption / hashtag's own action)
+  if (!dragMoved && dt < 400) { setTrack(0, false); if (!overlayTap(dragStartEl)) toggleCurrent(); return; }
   if (performance.now() - lastMoveT > 90) dragVel = 0;          // the finger stopped before lifting
   const far = Math.abs(dragDY) > H * 0.18;
   const flick = Math.abs(dragVel) > 0.35 && Math.abs(dragDY) > 24 && (dragVel < 0) === (dragDY < 0);
@@ -1752,7 +1764,7 @@ function endDrag(e) {
   else setTrack(0, true, 180);   // snap back
 }
 stage.addEventListener('pointerup', endDrag);
-stage.addEventListener('pointercancel', () => { dragging = false; clearTimeout(holdTimer); if (holding) stopFF(); setTrack(0, true, 180); });
+stage.addEventListener('pointercancel', () => { dragging = false; _stageGestureEnd = Date.now(); clearTimeout(holdTimer); if (holding) stopFF(); setTrack(0, true, 180); });
 
 function afterTransition(fn, ms) {
   let done = false;
@@ -1881,8 +1893,10 @@ function buildSlide(item, i) {
   el.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
   el.querySelector('.info-btn').onclick = (e) => { e.stopPropagation(); showInfo(item.id); };
   const authEl = el.querySelector('.slide-author');
-  authEl.onpointerdown = (e) => e.stopPropagation();
-  authEl.onclick = (e) => { e.stopPropagation(); openCreator(item.id); };
+  // v19: no stopPropagation on pointerdown: a swipe (or hold for 2x) that starts on the name
+  // or the caption moves the feed, as on TikTok. The stage turns a tap there into the action
+  // (overlayTap); a click arriving right after a stage gesture is ignored so nothing runs twice.
+  authEl.onclick = (e) => { e.stopPropagation(); if (overlayClickSuppressed()) return; openCreator(item.id); };
   const mb = el.querySelector('.mute-btn');
   syncMuteBtn(mb);
   mb.onclick = (e) => {
@@ -1904,8 +1918,7 @@ function buildSlide(item, i) {
   };
   // Tapping the caption expands/collapses it (long descriptions are clamped).
   const descEl = el.querySelector('.slide-desc');
-  descEl.onpointerdown = (e) => e.stopPropagation();
-  descEl.onclick = (e) => { e.stopPropagation(); descEl.classList.toggle('expanded'); };
+  descEl.onclick = (e) => { e.stopPropagation(); if (overlayClickSuppressed()) return; descEl.classList.toggle('expanded'); };
   // Populate creator/description from whatever metadata we already have cached
   // (from a prior oEmbed thumbnail fetch or resolve); it fills in later otherwise.
   fillOverlay(el, item.id);
