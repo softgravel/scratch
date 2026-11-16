@@ -1,0 +1,3184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<base href="../">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Favorites">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<link rel="preconnect" href="https://www.tikwm.com" crossorigin>
+<link rel="dns-prefetch" href="https://v16m.tiktokcdn-us.com">
+<link rel="dns-prefetch" href="https://p16-common-sign.tiktokcdn-us.com">
+<title>Favorites</title>
+<style>
+  :root {
+    --bg:#000; --panel:#151515; --line:#242424;
+    --text:#f2f2f2; --dim:#8a8a8a; --accent:#3b7dd8;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body {
+    margin:0; height:100%; background:var(--bg); color:var(--text);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;
+    overscroll-behavior:none;
+  }
+  button { font:inherit; color:inherit; }
+  /* v4: a long press must never start text selection, the magnifier or the image menu */
+  #home, #gridView, #feed { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+  #gridView img, #feed img { -webkit-user-drag:none; }
+  /* v7: one-line notice when something outside the app is broken (tap to dismiss) */
+  #notice { position:fixed; left:10px; right:10px; top:calc(env(safe-area-inset-top) + 60px); z-index:58;   /* below the row of buttons, never over Back */ display:none; background:#3a2c10; color:#ffd78a;
+    border:1px solid #6b5220; border-radius:10px; padding:8px 12px; font-size:12px; line-height:1.35; box-shadow:0 2px 10px rgba(0,0,0,.5); }
+  #notice.show { display:block; }
+  #verTag { position:fixed; right:6px; bottom:calc(env(safe-area-inset-bottom) + 2px); z-index:60; font-size:9px;
+    color:rgba(255,255,255,.4); pointer-events:none; letter-spacing:.03em; text-shadow:0 0 2px rgba(0,0,0,.8); }
+
+  /* ===================== HOME ===================== */
+  #verBadge { margin-top:22px; text-align:center; font-size:11px; color:#666; letter-spacing:.02em; }
+  #libBtn { display:block; margin:10px auto 0; background:none; border:0; color:#777; font-size:12px; padding:8px 12px; text-decoration:underline; }
+  #filePick { position:fixed; left:-9999px; top:0; width:1px; height:1px; opacity:0; }
+  #home { padding:max(18px,env(safe-area-inset-top)) 14px max(24px,env(safe-area-inset-bottom)); }
+  #allTile {
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:18px 16px; margin-bottom:14px;
+  }
+  #shuffleTile { background:linear-gradient(135deg,#1d2f4d,#16202f); border:1px solid #2b4168; border-radius:14px; padding:18px 16px; margin-bottom:14px; }
+  #shuffleTile .name { font-size:17px; font-weight:600; }
+  #shuffleTile .count { font-size:13px; color:#9fb4d6; margin-top:3px; }
+  #shuffleBar { display:none; flex:1; justify-content:center; gap:6px; }
+  #shuffleBar.open { display:flex; }
+  #shuffleBar button { font-size:12px; font-weight:600; padding:6px 11px; border-radius:14px; border:0; background:rgba(0,0,0,.4); color:rgba(255,255,255,.8); }
+  #shuffleBar button.on { background:rgba(255,255,255,.92); color:#000; }
+  #homeSearch { display:flex; align-items:center; gap:8px; width:100%; margin-bottom:14px; padding:11px 14px; border-radius:12px; border:1px solid var(--line);
+    background:var(--panel); color:var(--dim); font-size:15px; text-align:left; }
+  .cat-cover { position:absolute; right:8px; bottom:8px; width:34px; height:52px; border-radius:6px; object-fit:cover; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .cat-cover.loaded { opacity:.85; }
+  #allTile .name { font-size:17px; font-weight:600; }
+  #allTile .count { font-size:13px; color:var(--dim); margin-top:3px; }
+  #addLinkBtn {
+    width:100%; margin-bottom:14px; padding:12px 16px; border-radius:12px;
+    border:1px dashed var(--line); background:transparent; color:var(--accent);
+    font-size:14px; font-weight:600; text-align:left;
+  }
+  #catGrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .cat-tile {
+    position:relative; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:16px 14px; min-height:78px;
+    display:flex; flex-direction:column; justify-content:space-between;
+  }
+  .cat-tile .name { font-size:15px; font-weight:600; padding-right:22px; word-break:break-word; }
+  .cat-tile .count { font-size:12px; color:var(--dim); margin-top:6px; }
+  .cat-tile.add { align-items:center; justify-content:center; color:var(--dim); border-style:dashed; }
+  .cat-tile.trash { opacity:.72; }
+  .cat-manage {
+    position:absolute; top:6px; right:6px; background:none; border:0;
+    color:var(--dim); font-size:16px; line-height:1; padding:6px 8px;
+  }
+
+  /* ===================== GRID ===================== */
+  #gridView { position:fixed; inset:0; background:#000; display:none; flex-direction:column; z-index:15; }
+  #gridView.open { display:flex; }
+  .grid-top {
+    display:flex; align-items:center; gap:10px;
+    padding:max(14px,env(safe-area-inset-top)) 12px 8px;
+  }
+  .grid-title { font-size:15px; font-weight:600; flex:1; }
+  .icon-btn {
+    width:32px; height:32px; border-radius:50%; border:0;
+    background:rgba(255,255,255,0.09); color:var(--text); font-size:15px; line-height:1;
+  }
+  #searchRow { display:none; align-items:center; gap:8px; padding:0 12px 8px; }
+  #searchRow.open { display:flex; }
+  /* v9: chips (people under "Shared with me"; the who-sent-it picker) */
+  .chip { flex:0 0 auto; border:1px solid var(--line); background:var(--panel); color:var(--text); border-radius:16px; padding:7px 13px; font-size:14px; }
+  .chip.on { background:var(--accent); border-color:var(--accent); }
+  .chip-row { display:none; gap:8px; padding:0 12px 8px; overflow-x:auto; white-space:nowrap; scrollbar-width:none; }
+  .chip-row::-webkit-scrollbar { display:none; }
+  .chip-row.open { display:flex; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 6px; max-height:36vh; overflow-y:auto; }
+  .sender-top { display:flex; gap:12px; align-items:center; }
+  .sender-thumb { position:relative; flex:0 0 54px; height:84px; border-radius:8px; overflow:hidden; background:linear-gradient(160deg,#232323,#111); }
+  .sender-thumb img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .15s; }
+  .sender-thumb img.loaded { opacity:1; }
+  #searchInput {
+    flex:1; height:38px; border-radius:10px; border:1px solid var(--line);
+    background:var(--panel); color:var(--text); font-size:15px; padding:0 12px; outline:none;
+  }
+  #searchClear { width:34px; height:34px; border-radius:50%; border:0; background:rgba(255,255,255,.09); color:var(--text); font-size:18px; }
+  #gridScroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }
+  /* Virtualized: the container is sized to the whole library, but only the
+     visible tiles exist in the DOM. */
+  #thumbGrid { position:relative; width:100%; }
+  .thumb-tile {
+    position:absolute; overflow:hidden;
+    background:linear-gradient(160deg,#232323,#111);
+  }
+  .thumb-tile img {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    opacity:0; transition:opacity .18s ease;
+  }
+  .thumb-tile img.loaded { opacity:1; }
+  .thumb-date {
+    position:absolute; left:4px; bottom:4px; font-size:9px;
+    color:rgba(255,255,255,.75); background:rgba(0,0,0,.45);
+    padding:1px 4px; border-radius:3px;
+  }
+  .thumb-tile.unavailable::after {
+    content:'Unavailable'; position:absolute; top:6px; left:6px;
+    font-size:9px; color:rgba(255,255,255,.6); background:rgba(0,0,0,.55);
+    padding:2px 5px; border-radius:3px;
+  }
+  /* v15: selecting many videos in a grid */
+  .thumb-tile.sel::before { content:''; position:absolute; inset:0; z-index:3; border:3px solid var(--accent); background:rgba(59,125,216,.28); pointer-events:none; }
+  .thumb-tile.sel::after { content:'\2713'; position:absolute; right:6px; top:6px; z-index:4; width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff; font-size:14px; font-weight:700; text-align:center; line-height:22px; }
+  #selBar { position:absolute; left:0; right:0; bottom:0; z-index:17; display:none; align-items:center; gap:8px; background:#161616; border-top:1px solid var(--line);
+    padding:10px 12px max(12px,env(safe-area-inset-bottom)); }
+  #selBar.open { display:flex; }
+  #selCount { flex:1; font-size:14px; font-weight:600; }
+  #selBar button { border:0; border-radius:9px; padding:9px 12px; font-size:14px; font-weight:600; background:#2a2a2a; }
+  #selBar #selMove { background:var(--accent); }
+  #selBar #selDelete { background:#4a2020; color:#ff8f8f; }
+  .slide-desc .tag { color:#fff; font-weight:700; }
+  #gridEmpty { padding:40px 20px; text-align:center; color:var(--dim); font-size:14px; display:none; }
+
+  /* date jump */
+  #datePanel {
+    position:absolute; left:0; right:0; bottom:0; background:#161616;
+    border-top:1px solid var(--line); max-height:55vh; overflow-y:auto;
+    transform:translateY(100%); transition:transform .22s ease; z-index:16;
+    padding-bottom:max(16px,env(safe-area-inset-bottom));
+  }
+  #datePanel.open { transform:translateY(0); }
+  .date-panel-inner { padding:8px 12px; }
+  .date-year-hdr {
+    font-size:13px; font-weight:700; color:var(--accent);
+    padding:12px 4px 6px; position:sticky; top:0; background:#161616;
+  }
+  .date-month-row {
+    display:inline-flex; margin:3px; padding:7px 12px; background:var(--panel);
+    border:1px solid var(--line); border-radius:8px; font-size:13px;
+  }
+
+  /* ===================== FEED ===================== */
+  #feed { position:fixed; inset:0; background:#000; display:none; flex-direction:column; z-index:20; }
+  #feed.open { display:flex; }
+  .feed-top {
+    position:absolute; top:0; left:0; right:0; z-index:8;
+    display:flex; align-items:center; gap:10px;
+    padding:max(12px,env(safe-area-inset-top)) 12px 8px;
+    background:linear-gradient(to bottom,rgba(0,0,0,.55),transparent);
+  }
+  .feed-label {
+    flex:1; font-size:13px; font-weight:600; text-align:center;
+    text-shadow:0 1px 3px rgba(0,0,0,.6);
+  }
+  /* No native scroll anywhere in the feed. The stage is a fixed viewport and the
+     track holds exactly three slides (prev / current / next) that we move with a
+     CSS transform in response to swipe gestures. This eliminates the entire class
+     of native-scroll + scroll-snap + momentum bugs. */
+  #stage { position:absolute; inset:0; overflow:hidden; touch-action:none; background:#000; }
+  #track { position:absolute; left:0; top:0; width:100%; will-change:transform; }
+  /* The cross-origin iframe would swallow all touches, so it never receives
+     pointer events — we drive play/pause ourselves and capture every gesture on
+     the stage. The rail buttons (z-index 7) stay interactive above everything. */
+  .slide-media iframe { pointer-events:none; }
+  .slide {
+    position:absolute; left:0; width:100%; overflow:hidden;
+  }
+  .slide-media { position:absolute; inset:0; background:#0b0b0b; }
+  /* Thumbnail sits ABOVE the iframe (z-index 2 vs 1) until the video is
+     confirmed playing. On devices where autoplay is blocked this means the
+     slide shows its thumbnail, never a black frame; once playing, .is-playing
+     fades the thumbnail out to reveal the video underneath. */
+  .slide-media img {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    opacity:0; transition:opacity .06s linear; z-index:2;
+  }
+  .slide-media img.loaded { opacity:1; }
+  /* v4: the stored grid thumbnail is a small 3:4 crop; as a full-screen start frame it is shown
+     blurred until the full-frame poster (or the video itself) takes over */
+  .slide-media img.lowres { filter:blur(14px); transform:scale(1.12); }
+  /* v6: photo posts (slideshows): pictures side by side, swiped sideways, with the post's sound */
+  .photos { position:absolute; inset:0; z-index:2; display:flex; overflow-x:auto; overflow-y:hidden; scroll-snap-type:x mandatory;
+    touch-action:pan-x; -webkit-overflow-scrolling:touch; scrollbar-width:none; background:#000; }
+  .photos::-webkit-scrollbar { display:none; }
+  .slide-media .photos img { position:relative; inset:auto; flex:0 0 100%; width:100%; height:100%; object-fit:contain; opacity:1 !important;
+    scroll-snap-align:center; scroll-snap-stop:always; filter:none; transform:none; transition:none; }
+  .photo-count { position:absolute; top:calc(env(safe-area-inset-top) + 54px); left:50%; transform:translateX(-50%); z-index:6; font-size:12px; font-weight:600;
+    background:rgba(0,0,0,.45); padding:3px 10px; border-radius:12px; pointer-events:none; }
+  .thumb-photos { position:absolute; right:4px; top:4px; font-size:9px; color:#fff; background:rgba(0,0,0,.55); padding:1px 5px; border-radius:3px; }
+  /* v4: progress / scrub bar along the bottom of every video */
+  .scrub { position:absolute; left:0; right:0; bottom:max(2px,calc(env(safe-area-inset-bottom) - 12px)); height:30px; z-index:8; touch-action:none; }
+  .scrub-track { position:absolute; left:10px; right:10px; bottom:9px; height:2px; border-radius:3px; background:rgba(255,255,255,.26); overflow:hidden; transition:height .12s ease, bottom .12s ease; }
+  .scrub-fill { height:100%; width:0; background:rgba(255,255,255,.9); border-radius:3px; }
+  .scrub.active .scrub-track { height:8px; bottom:6px; }
+  .scrub-time { display:none; position:absolute; left:0; right:0; bottom:54px; text-align:center; font-size:24px; font-weight:700; text-shadow:0 1px 6px rgba(0,0,0,.8); pointer-events:none; }
+  .scrub-time span { opacity:.6; font-weight:600; }
+  .scrub.active .scrub-time { display:block; }
+  .slide.scrubbing .slide-overlay, .slide.scrubbing .rail { opacity:0; }
+  .slide-media.resolving ~ .scrub .scrub-track, .slide-media.buffering ~ .scrub .scrub-track {
+    background:linear-gradient(90deg,rgba(255,255,255,.18) 0%,rgba(255,255,255,.75) 50%,rgba(255,255,255,.18) 100%); background-size:50% 100%; background-repeat:no-repeat;
+    animation:scrubwait .9s linear infinite; }
+  @keyframes scrubwait { from { background-position:-60% 0; } to { background-position:160% 0; } }
+  @keyframes fadein { from { opacity:0; } to { opacity:1; } }
+  .slide-media.is-playing img { opacity:0; pointer-events:none; }
+  .slide-media iframe { position:absolute; inset:0; width:100%; height:100%; border:0; z-index:1; }
+  .slide-media video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#0b0b0b; z-index:1; pointer-events:none; }
+
+  /* scrims hiding TikTok's own chrome; taps can't reach it regardless */
+  .mask-bottom {
+    position:absolute; left:0; right:0; bottom:0; height:200px; z-index:3;
+    background:linear-gradient(to top,rgba(0,0,0,.6) 0%,rgba(0,0,0,.28) 45%,rgba(0,0,0,0) 100%);
+    pointer-events:none;
+  }
+  .mask-rail {
+    display:none; position:absolute; right:0; bottom:96px; width:64px; height:250px; z-index:3;
+    background:linear-gradient(to left,rgba(0,0,0,.82) 0%,rgba(0,0,0,.5) 55%,rgba(0,0,0,0) 100%);
+    pointer-events:none;
+  }
+  /* full-surface tap interceptor: nothing reaches TikTok's player */
+
+  .status-badge {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:5;
+    pointer-events:none; text-align:center; max-width:220px;
+    font-size:12px; color:rgba(255,255,255,.5);
+  }
+  .spinner {
+    width:26px; height:26px; border-radius:50%; margin:0 auto;
+    border:2px solid rgba(255,255,255,.22); border-top-color:rgba(255,255,255,.75);
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .slide-media.has-player .status-badge { display:none; }
+  /* While a cold video is being resolved/buffered, keep the spinner up over the
+     thumbnail so it reads as loading rather than frozen. */
+  .slide-media.has-player.resolving .status-badge { display:block; animation:fadein .2s .9s both; }   /* v4: the bottom bar shows waiting first; the spinner only after ~1 s */
+  .slide-media.is-playing .status-badge { display:none; }
+  .slide-media.paused .pause-icon,
+  .slide-media.needs-tap .tap-icon { display:flex; }
+  .pause-icon, .tap-icon {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); z-index:6;
+    width:74px; height:74px; border-radius:50%; background:rgba(0,0,0,.45);
+    display:none; align-items:center; justify-content:center;
+    font-size:30px; color:#fff; pointer-events:none;
+  }
+  .tap-icon {
+    padding-left:6px; width:88px; height:88px; font-size:36px;
+    background:rgba(0,0,0,.55); box-shadow:0 0 0 4px rgba(255,255,255,.14);
+  }
+  .slide-media.needs-tap::after {
+    content:'Tap to play'; position:absolute; left:0; right:0; z-index:6;
+    top:calc(50% + 62px); text-align:center; font-size:13px;
+    color:rgba(255,255,255,.9); text-shadow:0 1px 3px rgba(0,0,0,.7);
+    pointer-events:none;
+  }
+  .slide-media.ffwd::after {
+    content:'2\00D7  \25B8\25B8'; position:absolute; top:calc(env(safe-area-inset-top) + 58px); left:50%;
+    transform:translateX(-50%); z-index:7; font-size:14px; font-weight:700; letter-spacing:.02em;
+    color:#fff; background:rgba(0,0,0,.45); padding:5px 13px; border-radius:16px;
+    pointer-events:none;
+  }
+  .slide-overlay {
+    position:absolute; left:0; right:74px; bottom:calc(max(26px,env(safe-area-inset-bottom)) + 14px); transition:opacity .12s;
+    padding:0 16px; z-index:6; pointer-events:none;
+    text-shadow:0 1px 4px rgba(0,0,0,.65);
+  }
+  .slide-author { font-size:15px; font-weight:700; margin-bottom:3px; pointer-events:auto; display:inline-block; }
+  .slide-desc {
+    font-size:13px; line-height:1.35; color:rgba(255,255,255,.95); margin-bottom:5px;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .slide-desc.expanded { -webkit-line-clamp:unset; }
+  .slide-overlay .slide-desc { pointer-events:auto; }
+  .slide-title { font-size:12px; font-weight:600; color:rgba(255,255,255,.8); }
+  .slide-cat { font-size:12px; color:rgba(255,255,255,.7); margin-top:1px; }
+  .rail {
+    position:absolute; right:10px; bottom:max(118px,calc(env(safe-area-inset-bottom) + 108px));
+    display:flex; flex-direction:column; align-items:center; gap:16px; z-index:7;
+  }
+  .rail-btn {
+    width:46px; height:46px; border-radius:50%; border:0;
+    background:rgba(0,0,0,.5); color:var(--text); font-size:18px;
+  }
+  .rail-btn.active { background:var(--accent); }
+  .rail-btn.blocked { background:#8a5a1f; }
+
+  /* ===================== SHEETS / MODALS ===================== */
+  #sheetBackdrop { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; z-index:30; }
+  #sheetBackdrop.open { display:block; }
+  #sheet {
+    position:fixed; left:0; right:0; bottom:0; z-index:31; background:#1a1a1a;
+    border-radius:16px 16px 0 0; padding:16px 16px max(20px,env(safe-area-inset-bottom));
+    transform:translateY(100%); transition:transform .22s ease; max-height:70vh; overflow-y:auto;
+  }
+  #sheet.open { transform:translateY(0); }
+  .sheet-title { font-size:13px; color:var(--dim); margin-bottom:8px; }
+  .sheet-cat { padding:12px 4px; border-bottom:1px solid #262626; font-size:15px; }
+  .sheet-cat.selected { color:var(--accent); }
+  .sheet-action { font-weight:600; }
+  .sheet-action.destructive { color:#ff6b6b; }
+  .sheet-new { display:flex; gap:8px; margin-top:14px; }
+  .sheet-new input {
+    flex:1; background:#101010; border:1px solid #2a2a2a; border-radius:8px;
+    color:var(--text); padding:10px 12px; font-size:15px;
+  }
+  .sheet-new button { background:var(--accent); border:0; border-radius:8px; padding:0 16px; font-weight:600; }
+
+  .modal-backdrop {
+    position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:40;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .modal-card { background:#1c1c1c; border:1px solid var(--line); border-radius:14px; width:100%; max-width:320px; padding:18px; }
+  .modal-title { font-size:16px; font-weight:600; margin-bottom:6px; }
+  .modal-message { font-size:13px; color:var(--dim); margin-bottom:14px; }
+  .modal-input {
+    width:100%; background:#101010; border:1px solid #2a2a2a; border-radius:8px;
+    color:var(--text); padding:10px 12px; font-size:15px; margin-bottom:6px;
+  }
+  .modal-error { font-size:12px; color:#ff6b6b; min-height:15px; }
+  .modal-actions { display:flex; gap:8px; margin-top:10px; }
+  .modal-btn { flex:1; border:0; border-radius:8px; padding:11px 0; font-size:14px; font-weight:600; background:#2a2a2a; }
+  .modal-btn.primary { background:var(--accent); }
+  .modal-btn.destructive { background:#4a2020; color:#ff8f8f; }
+
+  .action-sheet {
+    position:fixed; left:16px; right:16px; bottom:max(20px,env(safe-area-inset-bottom));
+    z-index:41; background:#1c1c1c; border-radius:14px; overflow:hidden;
+  }
+  .action-sheet-title { font-size:12px; color:var(--dim); text-align:center; padding:12px; border-bottom:1px solid #262626; }
+  .action-row { padding:14px; text-align:center; font-size:16px; border-bottom:1px solid #262626; }
+  .action-row.destructive { color:#ff6b6b; }
+  .action-row.cancel { font-weight:600; border-bottom:0; }
+
+  #toast {
+    position:fixed; top:max(16px,env(safe-area-inset-top)); left:50%;
+    transform:translateX(-50%); background:#222; padding:8px 16px; border-radius:20px;
+    font-size:13px; z-index:50; box-shadow:0 2px 10px rgba(0,0,0,.4); display:none;
+  }
+  #toast.show { display:block; }
+
+  #debugLog {
+    position:absolute; left:0; right:0; bottom:0; max-height:38vh; overflow-y:auto;
+    margin:0; padding:8px 10px; background:rgba(0,0,0,.82); color:#5f5;
+    font-family:ui-monospace,monospace; font-size:10px; line-height:1.35;
+    z-index:40; white-space:pre-wrap; pointer-events:none; display:none;
+  }
+  #debugLog.show { display:block; }
+</style>
+</head>
+<body>
+
+<div id="home">
+  <div id="shuffleTile"><div class="name">Shuffle</div><div class="count" id="shuffleCount"></div></div>
+  <button id="homeSearch">&#128269;&nbsp; Search your videos</button>
+  <div id="allTile"><div class="name">All Videos</div><div class="count" id="allCount">Loading…</div></div>
+  <button id="addLinkBtn">＋ Add a shared link</button>
+  <div id="catGrid"></div>
+  <div id="verBadge"></div>
+  <button id="libBtn">Library &amp; backup</button>
+  <input type="file" id="filePick">
+</div>
+
+<div id="gridView">
+  <div class="grid-top">
+    <button class="icon-btn" id="gridBack">&lsaquo;</button>
+    <div class="grid-title" id="gridTitle">All Videos</div>
+    <button class="icon-btn" id="gridManage" aria-label="Manage category" style="display:none">&#8942;</button>
+    <button class="icon-btn" id="searchBtn" aria-label="Search">&#128269;</button>
+    <button class="icon-btn" id="dateJumpBtn" style="display:none">&#128197;</button>
+  </div>
+  <div id="searchRow"><input id="searchInput" type="search" autocomplete="off" autocapitalize="off" placeholder="Search creator or description…"><button id="searchClear" aria-label="Clear">&times;</button></div>
+  <div id="chipRow" class="chip-row"></div>
+  <div id="gridScroll"><div id="thumbGrid"></div><div id="gridEmpty">Nothing here yet.</div></div>
+  <div id="datePanel"><div class="date-panel-inner" id="datePanelInner"></div></div>
+  <div id="selBar"><div id="selCount"></div><button id="selAll">All</button><button id="selMove">Move to…</button><button id="selDelete">Delete</button><button id="selCancel">Cancel</button></div>
+</div>
+
+<div id="feed">
+  <div class="feed-top">
+    <button class="icon-btn" id="feedBack">&lsaquo;</button>
+    <div class="feed-label" id="feedLabel">All Videos</div>
+    <div id="shuffleBar"><button id="shufUnseen">Unseen only</button><button id="shufFresh">Fresh shuffle</button></div>
+    <button class="icon-btn" id="debugToggle">&#128027;</button>
+  </div>
+  <div id="stage"><div id="track"></div></div>
+  <pre id="debugLog"></pre>
+</div>
+
+<div id="sheetBackdrop"></div>
+<div id="sheet">
+  <div class="sheet-title">Move to category</div>
+  <div id="sheetCats"></div>
+  <div class="sheet-new"><input id="newCatInput" placeholder="New category"><button id="newCatBtn">Add</button></div>
+</div>
+
+<div id="notice"></div>
+<div id="verTag"></div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+var APP_VERSION = 21, APP_BUILT = 'Nov 15 11:29 PM';   // stamped by _dev/tools/release.py
+
+/* ============================================================
+   DATA
+   ============================================================ */
+const DELETED = 'Deleted';
+const DATA_VERSION = 5;
+
+let state = null;
+try { state = JSON.parse(localStorage.getItem('gallery-state') || 'null'); } catch (e) { state = null; }
+
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function formatDate(iso) {
+  const d = new Date(String(iso).replace(' ','T'));
+  return isNaN(d) ? '' : d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+}
+function itemLabel(it) { return it.date ? formatDate(it.date) : ''; }
+function itemUrl(it) { return 'https://www.tiktok.com/@i/video/' + it.id; }
+function liveItems() { return state.items.filter(i => i.category !== DELETED); }
+
+let saveTimer = null;
+function save() { if (!saveTimer) saveTimer = setTimeout(flushSave, 400); }
+function flushSave(now) {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  let json = '';
+  try { json = JSON.stringify(state); localStorage.setItem('gallery-state', json); }
+  catch (e) {
+    // The thumbnail cache is rebuildable; drop it to make room for real data.
+    try { freeLegacyStorage();
+          localStorage.setItem('gallery-state', json); }
+    catch (e2) { toast('Storage full — change may not be saved'); }
+  }
+  mirrorState(now === true);
+}
+// v2: a second copy of the organizing work, kept outside localStorage (IndexedDB). If
+// localStorage ever comes back empty, boot() restores from it instead of rebuilding
+// from favorites.json and silently losing every category. Written at most every 15 s
+// and when the app is hidden; never written from an empty or half-built state.
+let _mirrorAt = 0, _mirrorTimer = null;
+function mirrorState(now) {
+  const write = () => {
+    _mirrorTimer = null; _mirrorAt = Date.now();
+    if (state && state.hydrated && state.items && state.items.length) { try { LIB.putSnap(JSON.stringify(state)); } catch (e) {} }
+  };
+  if (now) { if (_mirrorTimer) clearTimeout(_mirrorTimer); write(); return; }
+  if (!_mirrorTimer) _mirrorTimer = setTimeout(write, Math.max(0, 15000 - (Date.now() - _mirrorAt)));
+}
+window.addEventListener('pagehide', () => flushSave(true));
+window.addEventListener('visibilitychange', () => { if (document.hidden) flushSave(true); });
+
+async function boot() {
+  if (!state) {
+    try {
+      const s = await LIB.getSnap(); const st = s && s.json ? JSON.parse(s.json) : null;
+      if (st && st.items && st.items.length) {
+        state = st;
+        try { localStorage.setItem('gallery-state', s.json); } catch (e) {}
+        toast('Restored your categories from the backup copy');
+      }
+    } catch (e) {}
+  }
+  try { if (localStorage.getItem('gallery-shuffle') == null) { const ss = await LIB.getSnapAs('gallery-shuffle'); const v = ss && ss.json ? JSON.parse(ss.json) : null;
+    if (v && typeof v === 'object') { SH = v; normSH(); try { localStorage.setItem('gallery-shuffle', ss.json); } catch (e) {} } } } catch (e) {}
+  // v9: the same safety net for the extra organizing data (who sent what, subcategories)
+  try { if (localStorage.getItem('gallery-x') == null) { const sx = await LIB.getSnapAs('gallery-x'); const x = sx && sx.json ? JSON.parse(sx.json) : null;
+    if (x && typeof x === 'object') { X = x; normX(); try { localStorage.setItem('gallery-x', sx.json); } catch (e) {} } } } catch (e) {}
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
+  const fresh = !state || state.version !== DATA_VERSION || !state.hydrated;
+  if (!fresh) { handleIncomingAdd(); renderHome(); resumeAfterUpdate(); return; }
+  document.getElementById('allCount').textContent = 'Loading…';
+  try {
+    const raw = await (await fetch('favorites.json')).json();
+    const prev = {};
+    if (state && state.items) state.items.forEach(i => { prev[i.id] = i; });
+    const purged = new Set((state && state.purged) || []);
+    const cats = ((state && state.categories) || []).slice();
+    // v3: a rebuild keeps every extra field of a video and every video that is not in
+    // favorites.json (shared links), so nothing organised can be dropped by it.
+    const inRaw = new Set(raw.map(e => e.id));
+    const extra = ((state && state.items) || []).filter(i => i && i.id && !inRaw.has(i.id) && !purged.has(i.id));
+    const items = extra.concat(raw.filter(e => !purged.has(e.id)).map(e => Object.assign({}, prev[e.id] || {}, {
+      id: e.id,
+      date: e.date,
+      category: (prev[e.id] && prev[e.id].category) || 'Uncategorized'
+    })));
+    extra.forEach(i => { if (i.category && !cats.includes(i.category)) cats.push(i.category); });
+    if (!cats.includes('Uncategorized')) cats.unshift('Uncategorized');
+    if (items.some(i => i.category === DELETED) && !cats.includes(DELETED)) cats.push(DELETED);
+    state = { categories: cats, items, hydrated: true, version: DATA_VERSION, purged: [...purged] };
+    flushSave();
+  } catch (e) {
+    console.error('favorites.json failed to load', e);
+    state = state || { categories:['Uncategorized'], items:[], hydrated:false, version:DATA_VERSION, purged:[] };
+  }
+  handleIncomingAdd();
+  renderHome();
+  startHarvest();   // begin filling search metadata for the whole library
+}
+
+// v4: an automatic update reloads the page; put the grid back where it was.
+function resumeAfterUpdate() {
+  let r = null; try { r = JSON.parse(sessionStorage.getItem('resume-grid') || 'null'); sessionStorage.removeItem('resume-grid'); } catch (e) {}
+  if (!r || !r.label) return;
+  const list = r.label === 'All Videos' ? liveItems() : (state.categories.includes(r.label) ? itemsOfTree(r.label) : null);
+  if (!list) return;
+  openGrid(list, r.label); gridScroll.scrollTop = r.scroll || 0; gridVL.update(true);
+}
+/* ---- v12: Shuffle feed (SPEC -> Shuffle feed) ----
+   A feed like a For You page, drawn only from this library. Stored apart from everything
+   else in localStorage 'gallery-shuffle' (mirrored, in backups):
+     s: { id: time last WATCHED IN THE SHUFFLE FEED }   a: { id: time last watched anywhere else }
+     mode: 'fresh' | 'unseen'      fresh / unseen: { served: [ids in the order shown], pos }
+   Watched = about 2 s played. Fresh shuffle: weighted draw without repeats, weight = days since
+   the last shuffle view (never seen = 365, capped there). Unseen only: random among never-seen;
+   when none are left, least recently seen first. A session lasts until Fresh shuffle is tapped
+   again and survives leaving the feed and closing the app. Videos known to be gone are left out.
+   The order is drawn 12 ahead, so the resolver can prepare what is coming. */
+let SH = (() => { try { return JSON.parse(localStorage.getItem('gallery-shuffle') || 'null'); } catch (e) { return null; } })() || {};
+function normSH() {
+  if (!SH || typeof SH !== 'object') SH = {};
+  SH.s = SH.s || {}; SH.a = SH.a || {}; SH.mode = SH.mode === 'unseen' ? 'unseen' : 'fresh';
+  ['fresh', 'unseen'].forEach(m => { const x = SH[m] = (SH[m] && typeof SH[m] === 'object') ? SH[m] : {}; x.served = Array.isArray(x.served) ? x.served : []; x.pos = x.pos | 0; });
+}
+normSH();
+let _shTimer = null, _shMirrorAt = 0, feedMode = 'list';
+function saveSH(now) {
+  const w = () => { _shTimer = null; const j = JSON.stringify(SH); try { localStorage.setItem('gallery-shuffle', j); } catch (e) {}
+    if (now || Date.now() - _shMirrorAt > 60000) { _shMirrorAt = Date.now(); LIB.putSnapAs('gallery-shuffle', j); } };
+  if (now) { clearTimeout(_shTimer); w(); } else if (!_shTimer) _shTimer = setTimeout(w, 1500);
+}
+window.addEventListener('pagehide', () => { if (_shTimer) saveSH(true); });
+function shuffleEligible() { return state.items.filter(i => i.category !== DELETED && !isGone(i.id)); }
+function shuffleDraw(sess, mode, n) {
+  const served = new Set(sess.served), pool = shuffleEligible().filter(i => !served.has(i.id)), out = [], now = Date.now();
+  if (mode === 'unseen') {
+    const unseen = pool.filter(i => !SH.s[i.id]);
+    while (out.length < n && unseen.length) out.push(unseen.splice(Math.floor(Math.random() * unseen.length), 1)[0]);
+    if (out.length < n) { const got = new Set(out.map(i => i.id)); out.push(...pool.filter(i => SH.s[i.id] && !got.has(i.id)).sort((a, b) => SH.s[a.id] - SH.s[b.id]).slice(0, n - out.length)); }
+    return out;
+  }
+  const w = pool.map(i => { const t = SH.s[i.id]; return t ? Math.min(365, Math.max(0, now - t) / 86400000) + 0.05 : 365; });
+  let total = w.reduce((x, y) => x + y, 0);
+  while (out.length < n && pool.length) { let r = Math.random() * total, k = 0; while (k < w.length - 1 && r >= w[k]) { r -= w[k]; k++; } out.push(pool[k]); total -= w[k]; pool.splice(k, 1); w.splice(k, 1); }
+  return out;
+}
+function shuffleTopUp(list, sess, from) {         // keep 12 drawn beyond the current position
+  let need = from + 13 - list.length; if (need <= 0) return;
+  let more = shuffleDraw(sess, SH.mode, need);
+  if (more.length < need && SH.mode === 'unseen' && sess.served.length > 60) {     // everything left was skipped earlier: let the skipped ones come round again
+    sess.served = sess.served.slice(-50).filter(id => list.some(i => i.id === id)); more = shuffleDraw(sess, SH.mode, need); sess.served = list.map(i => i.id);
+  }
+  more.forEach(i => { list.push(i); sess.served.push(i.id); });
+}
+function openShuffle(mode) {
+  if (mode) SH.mode = mode; const sess = SH[SH.mode];
+  const byId = new Map(state.items.map(i => [i.id, i]));
+  const list = sess.served.map(id => byId.get(id)).filter(i => i && i.category !== DELETED);
+  sess.served = list.map(i => i.id); sess.pos = Math.max(0, Math.min(sess.pos, Math.max(0, list.length - 1)));
+  shuffleTopUp(list, sess, sess.pos);
+  if (!list.length) { toast('Nothing to shuffle yet'); return; }
+  openFeed(list, 'Shuffle', sess.pos); feedMode = 'shuffle'; paintShuffleBar(); saveSH();
+}
+function shuffleMoved() { const sess = SH[SH.mode]; sess.pos = curIndex; shuffleTopUp(feedList, sess, curIndex); saveSH(); }
+function paintShuffleBar() {
+  const bar = document.getElementById('shuffleBar'), lab = document.getElementById('feedLabel'); if (!bar || !lab) return;
+  const on = feedMode === 'shuffle'; bar.classList.toggle('open', on); lab.style.display = on ? 'none' : '';
+  document.getElementById('shufUnseen').classList.toggle('on', on && SH.mode === 'unseen'); document.getElementById('shufFresh').classList.toggle('on', on && SH.mode === 'fresh');
+}
+document.getElementById('shufFresh').onclick = () => { SH.fresh = { served: [], pos: 0 }; openShuffle('fresh'); toast('Fresh shuffle'); };     // always a new session (Ian, Nov 15)
+document.getElementById('shufUnseen').onclick = () => { if (SH.mode === 'unseen') SH.unseen = { served: [], pos: 0 }; openShuffle('unseen'); };
+// "Watched" = about 2 s of play. Shuffle views and other views are recorded separately.
+setInterval(() => {
+  const el = slotEls['0']; if (!el || !el._vid || el._vid.paused || document.hidden || el._seenMarked) return;
+  el._played = (el._played || 0) + 0.5;
+  if (el._played >= 2) { el._seenMarked = true; (feedMode === 'shuffle' ? SH.s : SH.a)[el.dataset.id] = Date.now(); saveSH(); }
+}, 500);
+
+const SHARED_CAT = 'Shared with me';
+/* ---- v9: extra organizing data, kept APART from gallery-state ----
+   localStorage 'gallery-x' = { from: { videoId: person }, parents: { child: parent } }. Older
+   releases never read or write this key, so rolling back cannot damage it, and gallery-state
+   keeps its format. Mirrored to IndexedDB like the main state, and included in backup files. */
+let X = (() => { try { return JSON.parse(localStorage.getItem('gallery-x') || 'null'); } catch (e) { return null; } })() || {};
+function normX() { if (!X || typeof X !== 'object') X = {}; X.from = X.from || {}; X.parents = X.parents || {}; X.saved = X.saved || {}; }
+normX();
+function saveX() { const j = JSON.stringify(X); try { localStorage.setItem('gallery-x', j); } catch (e) {} LIB.putSnapAs('gallery-x', j); }
+// v11: subcategories. Categories stay a flat list of unique names in gallery-state (older
+// releases simply see them all as ordinary categories); who sits under whom is X.parents.
+function cleanParents() {
+  let ch = false;
+  for (const c in X.parents) { const p = X.parents[c];
+    if (!state.categories.includes(c) || !state.categories.includes(p) || c === p || c === DELETED || p === DELETED || treeOf(c).includes(p)) { delete X.parents[c]; ch = true; } }
+  if (ch) saveX();
+}
+function childrenOf(cat) { return state.categories.filter(c => X.parents[c] === cat && c !== cat); }
+function treeOf(cat) { const out = [cat]; for (let i = 0; i < out.length && i < 400; i++) childrenOf(out[i]).forEach(c => { if (!out.includes(c)) out.push(c); }); return out; }
+function itemsOfTree(cat) { const set = new Set(treeOf(cat)); return state.items.filter(i => set.has(i.category)); }
+function orderedCats() {         // [{name, depth}] in tree order, Deleted left out
+  const out = [], seen = new Set();
+  const walk = (c, d) => { if (seen.has(c)) return; seen.add(c); out.push({ name: c, depth: d }); if (d < 8) childrenOf(c).forEach(k => walk(k, d + 1)); };
+  state.categories.filter(c => c !== DELETED && !X.parents[c]).forEach(c => walk(c, 0));
+  state.categories.filter(c => c !== DELETED && !seen.has(c)).forEach(c => walk(c, 0));
+  return out;
+}
+function refreshViews() {
+  renderHome();
+  if (document.getElementById('gridView').classList.contains('open') && !document.getElementById('feed').classList.contains('open') && state.categories.includes(gridLabel)) openGrid(itemsOfTree(gridLabel), gridLabel, true);
+}
+function senderOf(id) { return X.from[id] || ''; }
+function catLine(item) { const p = senderOf(item.id); return item.category + (p ? '  ·  from ' + p : '') + (X.saved[item.id] ? '  ·  saved' : ''); }
+function people() {              // [{name, n}] among videos not deleted, most videos first
+  const c = {}; liveItems().forEach(i => { const p = X.from[i.id]; if (p) c[p] = (c[p] || 0) + 1; });
+  return Object.keys(c).map(name => ({ name, n: c[name] })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+}
+function setSender(id, name) {
+  if (name) X.from[id] = name; else delete X.from[id];
+  saveX();
+  document.querySelectorAll('.slide[data-id="' + CSS.escape(id) + '"] .slide-cat').forEach(c => { const it = state.items.find(i => i.id === id); if (it) c.textContent = catLine(it); });
+  if (document.getElementById('gridView').classList.contains('open') && gridLabel === SHARED_CAT) setupChips(gridLabel, true);
+}
+// "Who sent it?": the people already used, New person, Skip. Shown right after a shared link is
+// added (with the video's thumbnail as confirmation) and from the organize sheet to change it.
+function senderModal(id, justAdded) {
+  closeOverlays();
+  const cur = senderOf(id), ppl = people();
+  const b = document.createElement('div'); b.className = 'modal-backdrop'; b.id = 'senderModal';
+  b.innerHTML = '<div class="modal-card"><div class="sender-top"><div class="sender-thumb"><img alt=""></div><div>' +
+    '<div class="modal-title">' + (justAdded ? 'Added to “Shared with me”' : 'Who sent it?') + '</div>' +
+    '<div class="modal-message" style="margin:0">' + (justAdded ? 'Who sent it?' : (cur ? 'Now: ' + esc(cur) : 'Not set')) + '</div></div></div>' +
+    '<div class="chips">' + ppl.map((p, i) => '<button class="chip' + (p.name === cur ? ' on' : '') + '" data-i="' + i + '">' + esc(p.name) + '</button>').join('') + '</div>' +
+    '<div class="modal-actions"><button class="modal-btn" id="sndSkip">' + (cur && !justAdded ? 'No one' : 'Skip') + '</button><button class="modal-btn primary" id="sndNew">New person</button></div></div>';
+  document.body.appendChild(b);
+  bindThumb(b.querySelector('img'), id, () => 0, () => {});
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelectorAll('.chip').forEach(c => { c.onclick = () => { setSender(id, ppl[+c.dataset.i].name); closeOverlays(); toast('From ' + ppl[+c.dataset.i].name); }; });
+  b.querySelector('#sndSkip').onclick = () => { if (cur && !justAdded) setSender(id, ''); closeOverlays(); };
+  b.querySelector('#sndNew').onclick = () => inputModal({ title: 'Who sent it?', placeholder: 'Name', confirmLabel: 'Save',
+    onSubmit: (name) => { if (name.length > 40) return 'That name is too long.'; setSender(id, name); toast('From ' + name); } });
+}
+// Add a video (by id) into the "Shared with me" category. Returns true if it
+// resulted in a change worth re-rendering.
+function addSharedVideo(id) {
+  if (!id) return false;
+  id = String(id);
+  const existing = state.items.find(i => i.id === id);
+  if (existing) {
+    if (existing.category === DELETED || existing.category === 'Uncategorized') existing.category = SHARED_CAT;
+    else { toast('Already in your library'); return true; }
+  } else {
+    if ((state.purged || []).includes(id)) state.purged = state.purged.filter(x => x !== id);   // adding it again by hand is a deliberate undo
+    state.items.unshift({ id, date: new Date().toISOString().replace('T',' ').slice(0,19), category: SHARED_CAT });
+  }
+  if (!state.categories.includes(SHARED_CAT)) state.categories.unshift(SHARED_CAT);
+  flushSave();
+  toast('Added to “Shared with me”');
+  setTimeout(() => senderModal(id, true), 60);      // after the paste dialog has closed itself
+  return true;
+}
+// Accepts any TikTok link the user pastes/shares. If the numeric id is in the
+// URL we use it directly; otherwise (short vt.tiktok.com/... links) we ask the
+// resolver to expand it. Files the result into "Shared with me".
+function addSharedLink(raw, onDone) {
+  raw = String(raw || '').trim();
+  if (!raw) { onDone && onDone(false); return; }
+  const direct = raw.match(/\/video\/(\d+)/) || raw.match(/^(\d{6,25})$/);
+  if (direct) { const ch = addSharedVideo(direct[1]); startHarvest(); onDone && onDone(ch); return; }
+  toast('Reading shared link…');
+  fetch(RESOLVER + encodeURIComponent(raw))
+    .then(r => r.json())
+    .then(j => {
+      const vid = j && j.code === 0 && j.data && j.data.id;
+      if (vid) {
+        if (j.data.author) metaSet(String(vid), { author:(j.data.author.nickname||''), handle:(j.data.author.unique_id||''), desc:j.data.title||'' });
+        const ch = addSharedVideo(String(vid)); startHarvest(); onDone && onDone(ch);
+      } else { toast('Could not read that link'); onDone && onDone(false); }
+    })
+    .catch(() => { toast('Could not read that link'); onDone && onDone(false); });
+}
+function handleIncomingAdd() {
+  const p = new URLSearchParams(window.location.search).get('add');
+  if (!p) return;
+  window.history.replaceState({}, '', window.location.pathname);
+  addSharedLink(p, (changed) => { if (changed) renderHome(); });
+}
+
+/* ============================================================
+   THUMBNAILS
+   A failed fetch must NEVER permanently brand a video unavailable:
+   TikTok rate-limits, and its thumbnail URLs expire between sessions.
+   Only an explicit "this video is gone" response is treated as final,
+   and even that is re-checked after a day.
+   ============================================================ */
+const THUMB_TTL   = 6 * 60 * 60 * 1000;   // fallback lifetime for a cover URL whose own expiry can't be read
+const GONE_TTL    = 7 * 24 * 60 * 60 * 1000;  // v2: re-check "gone" verdicts after a week (a tap re-checks at once)
+const MAX_INFLIGHT = 3;                   // thumbnails come from the ~1/s resolver, so keep only a few queued there
+// v2: cover links carry their own expiry (x-expires, about 24 h, measured Nov 14 2026).
+function coverExpiry(u) {
+  const m = /[?&]x-expires=(\d{9,11})/.exec(u || ''); const x = m ? Number(m[1]) * 1000 : 0;
+  return (x > Date.now() && x < Date.now() + 72 * 3600e3) ? x : 0;
+}
+function isGone(id) { const e = thumbCache[id]; return !!(e && e.gone && Date.now() - e.t < GONE_TTL); }
+
+/* ---- persistent caches (victor): IndexedDB instead of localStorage ----
+   localStorage is capped at ~5 MB per site and the caption index alone outgrows
+   it, so the caches now live in IndexedDB (hundreds of MB on iOS) and each entry
+   saves on its own, instead of re-serialising megabytes every 3 s. The user's
+   categories ('gallery-state') stay in localStorage, now with plenty of room.
+   If IndexedDB is unavailable, everything falls back to the old localStorage
+   behaviour. */
+const KV = (() => {
+  let dbp = null, ok = typeof indexedDB !== 'undefined';
+  function db() {
+    if (!dbp) dbp = new Promise((res, rej) => {
+      let r; try { r = indexedDB.open('favorites-kv', 1); } catch (e) { rej(e); return; }
+      r.onupgradeneeded = () => { const d = r.result; ['thumb', 'meta', 'rv'].forEach(s => { if (!d.objectStoreNames.contains(s)) d.createObjectStore(s); }); };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+      r.onblocked = () => rej(new Error('blocked'));
+    }).catch(e => { ok = false; throw e; });
+    return dbp;
+  }
+  async function getAll(store) {
+    const d = await db();
+    return new Promise((res, rej) => {
+      const out = {}; const tx = d.transaction(store, 'readonly');
+      const req = tx.objectStore(store).openCursor();
+      req.onsuccess = () => { const c = req.result; if (c) { out[c.key] = c.value; c.continue(); } };
+      tx.oncomplete = () => res(out); tx.onerror = () => rej(tx.error);
+    });
+  }
+  async function write(store, puts, dels) {
+    const d = await db();
+    return new Promise((res, rej) => {
+      const tx = d.transaction(store, 'readwrite'); const os = tx.objectStore(store);
+      puts.forEach(([k, v]) => os.put(v, k)); dels.forEach(k => os.delete(k));
+      tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+    });
+  }
+  async function count(store) { const d = await db(); return new Promise(res => { const r = d.transaction(store, 'readonly').objectStore(store).count(); r.onsuccess = () => res(r.result); r.onerror = () => res(-1); }); }
+  return { db, getAll, write, count, get ok() { return ok; } };
+})();
+// A plain object whose writes/deletes are remembered, so only changed entries are saved.
+function trackedStore(initial) {
+  const target = initial || {}, dirty = new Set();
+  const obj = new Proxy(target, {
+    set(t, k, v) { t[k] = v; dirty.add(k); return true; },
+    deleteProperty(t, k) { delete t[k]; dirty.add(k); return true; }
+  });
+  return { obj, target, dirty };
+}
+function legacyLoad(key) { try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (e) { return {}; } }
+async function flushTracked(store, ts, legacyKey) {
+  if (!ts.dirty.size) return;
+  const keys = [...ts.dirty]; ts.dirty.clear();
+  if (KV.ok) {
+    try {
+      for (let i = 0; i < keys.length; i += 400) {
+        const chunk = keys.slice(i, i + 400);
+        await KV.write(store, chunk.filter(k => k in ts.target).map(k => [k, ts.target[k]]), chunk.filter(k => !(k in ts.target)));
+      }
+      return;
+    } catch (e) { /* fall through to the localStorage fallback */ }
+  }
+  try { localStorage.setItem(legacyKey, JSON.stringify(ts.target)); } catch (e) {}
+}
+// Load what IndexedDB has, then move any old localStorage copy into it and free that space.
+async function hydrateTracked(store, ts, legacyKey) {
+  try {
+    const fromDb = await KV.getAll(store);
+    for (const k in fromDb) if (!(k in ts.target)) ts.target[k] = fromDb[k];
+    if (localStorage.getItem(legacyKey) != null) {
+      for (const k in ts.target) ts.dirty.add(k);
+      await flushTracked(store, ts, legacyKey);
+      if (KV.ok) localStorage.removeItem(legacyKey);
+    }
+  } catch (e) { /* IndexedDB unavailable: keep the localStorage copy */ }
+}
+// Emergency space for the categories: drop every rebuildable cache key from localStorage.
+function freeLegacyStorage() {
+  try {
+    localStorage.removeItem('thumb-cache'); localStorage.removeItem('meta');
+    for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i); if (k && k.startsWith('rv:')) localStorage.removeItem(k); }
+  } catch (e) {}
+}
+/* ---- v2 library store: whatever is fetched once is kept ----
+   Cover images are stored as bytes (about 20 KB each), so a thumbnail costs one resolver
+   call ever instead of one every few hours, and the grid reads from the phone. Also holds
+   the mirror of the organizing state. A separate database on purpose: 'favorites-kv'
+   stays at version 1, so an older release (rollback) still opens it. */
+const LIB = (() => {
+  let dbp = null; const have = new Set(), urls = new Map(), saving = new Map(); let failed = 0;
+  function db() {
+    if (!dbp) dbp = new Promise((res, rej) => {
+      let r; try { r = indexedDB.open('favorites-lib', 1); } catch (e) { rej(e); return; }
+      r.onupgradeneeded = () => { const d = r.result; ['cover', 'snap'].forEach(s => { if (!d.objectStoreNames.contains(s)) d.createObjectStore(s); }); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); r.onblocked = () => rej(new Error('blocked'));
+    });
+    return dbp;
+  }
+  function tx(store, mode, fn) {
+    return db().then(d => new Promise((res, rej) => {
+      const t = d.transaction(store, mode); const r = fn(t.objectStore(store));
+      t.oncomplete = () => res(r ? r.result : undefined); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+    }));
+  }
+  const ready = tx('cover', 'readonly', os => os.getAllKeys()).then(keys => { (keys || []).forEach(k => have.add(String(k))); }).catch(() => {});
+  function remember(id, buf, type) {            // small LRU of object URLs for images on screen
+    const u = URL.createObjectURL(new Blob([buf], { type: type || 'image/jpeg' }));
+    urls.set(id, u);
+    if (urls.size > 240) { const old = urls.keys().next().value; URL.revokeObjectURL(urls.get(old)); urls.delete(old); }
+    return u;
+  }
+  async function coverUrl(id) {                 // object URL of a stored cover, or null
+    id = String(id);
+    if (urls.has(id)) { const u = urls.get(id); urls.delete(id); urls.set(id, u); return u; }
+    if (!have.has(id)) return null;
+    try { const v = await tx('cover', 'readonly', os => os.get(id)); return v && v.b ? remember(id, v.b, v.m) : null; } catch (e) { return null; }
+  }
+  function saveCover(id, url) {                 // download the image once and keep it; object URL, or null if that failed
+    id = String(id);
+    if (have.has(id)) return coverUrl(id);
+    if (saving.has(id)) return saving.get(id);
+    const p = (async () => {
+      try {
+        const r = await fetch(url, { referrerPolicy: 'no-referrer', credentials: 'omit' });
+        if (!r.ok) { failed++; return null; }
+        const m = r.headers.get('content-type') || 'image/jpeg', b = await r.arrayBuffer();
+        if (b.byteLength < 200 || !/^image\//.test(m)) { failed++; return null; }
+        await tx('cover', 'readwrite', os => os.put({ b, m, t: Date.now() }, id));
+        have.add(id); return remember(id, b, m);
+      } catch (e) { failed++; return null; } finally { saving.delete(id); }
+    })();
+    saving.set(id, p); return p;
+  }
+  // State mirror: today's copy under 'gallery-state'; the last copy from an earlier day under 'gallery-state-prev'.
+  function putSnap(json) {
+    const day = new Date().toISOString().slice(0, 10);
+    return db().then(d => new Promise(res => {
+      const t = d.transaction('snap', 'readwrite'), os = t.objectStore('snap'), g = os.get('gallery-state');
+      g.onsuccess = () => { const cur = g.result; if (cur && cur.day && cur.day !== day) os.put(cur, 'gallery-state-prev'); os.put({ json, t: Date.now(), day }, 'gallery-state'); };
+      t.oncomplete = () => res(true); t.onerror = () => res(false); t.onabort = () => res(false);
+    })).catch(() => false);
+  }
+  function putCovers(list) {                    // v3: many covers in one transaction (library pack import)
+    return db().then(d => new Promise((res, rej) => {
+      const t = d.transaction('cover', 'readwrite'), os = t.objectStore('cover'), now = Date.now();
+      list.forEach(([id, b]) => os.put({ b, m: 'image/jpeg', t: now }, id));
+      t.oncomplete = () => { list.forEach(([id]) => have.add(id)); res(list.length); }; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+    }));
+  }
+  function putSnapAs(key, json) { return tx('snap', 'readwrite', os => os.put({ json, t: Date.now() }, key)).catch(() => {}); }
+  function getSnapAs(key) { return tx('snap', 'readonly', os => os.get(key)).catch(() => null); }
+  function getSnap(prev) { return tx('snap', 'readonly', os => os.get(prev ? 'gallery-state-prev' : 'gallery-state')).catch(() => null); }
+  return { ready, has: id => have.has(String(id)), coverUrl, saveCover, putCovers, putSnap, putSnapAs, getSnapAs, getSnap, count: () => have.size, failed: () => failed };
+})();
+
+const _thumbTS = trackedStore(legacyLoad('thumb-cache'));
+let thumbCache = _thumbTS.obj;
+const thumbReady = hydrateTracked('thumb', _thumbTS, 'thumb-cache');
+
+let cacheDirty = false;
+setInterval(() => {
+  cacheDirty = false;
+  flushTracked('thumb', _thumbTS, 'thumb-cache');
+}, 3000);
+
+const pending = new Map();      // id -> {id, priority(), cbs:[]}
+const inflight = new Map();     // id -> AbortController
+let activeFetches = 0;
+let failStreak = 0;
+let backoffUntil = 0;
+
+function cachedThumb(id) {
+  const e = thumbCache[id];
+  if (!e) return null;
+  if (e.gone) return (Date.now() - e.t < GONE_TTL) ? { gone: true } : null;
+  if (Date.now() > (e.x ? e.x - 300000 : e.t + THUMB_TTL)) return null;      // stale URL, refetch
+  return { url: e.u };
+}
+
+let _libLoaded = false; LIB.ready.then(() => { _libLoaded = true; });
+function requestThumb(id, cb, priority) {
+  if (!_libLoaded) { LIB.ready.then(() => requestThumb(id, cb, priority)); return; }
+  if (LIB.has(id)) {                       // v2: the image is already on the phone, no network
+    LIB.coverUrl(id).then(u => {
+      if (!u) { requestThumbRemote(id, cb, priority); return; }
+      cb({ url: u });
+      if (isGone(id)) cb({ gone: true });
+    });
+    return;
+  }
+  requestThumbRemote(id, cb, priority);
+}
+function requestThumbRemote(id, cb, priority) {
+  const hit = cachedThumb(id);
+  if (hit && hit.gone) { cb(hit); return; }
+  // a still-valid link from an earlier visit: fetch it once, keep the bytes, show the stored copy
+  if (hit) { LIB.saveCover(id, hit.url).then(u => cb({ url: u || hit.url })); return; }
+  const ex = pending.get(id);
+  if (ex) { ex.cbs.push(cb); ex.warm = false; return; }
+  pending.set(id, { id, cbs: [cb], priority: priority || (() => 0) });
+  schedulePump();
+}
+// v2: covers no longer need the resolver once stored, so nothing else would get the
+// videos on screen ready to play. While a grid is showing, quietly resolve the ones
+// whose cover is local but whose video link is missing or expired (closest first,
+// dropped when the tile scrolls away, paused while the feed is open).
+function warmPlay(id, priority) {
+  LIB.ready.then(() => {
+    if (!LIB.has(id) || cacheGet(id) || pending.has(id) || isGone(id)) return;
+    pending.set(id, { id, cbs: [], priority: priority || (() => 0), warm: true });
+    schedulePump();
+  });
+}
+
+function dropThumbRequest(id) {
+  const p = pending.get(id);
+  if (p) pending.delete(id);
+  const c = inflight.get(id);
+  if (c) { c.abort(); inflight.delete(id); }
+}
+
+let pumpScheduled = false;
+function schedulePump() {
+  if (pumpScheduled) return;
+  pumpScheduled = true;
+  // Deferred so an entire batch of newly visible tiles is queued before any
+  // fetch starts — otherwise arrival order wins and priority never applies.
+  setTimeout(() => { pumpScheduled = false; pump(); }, 0);
+}
+
+function pump() {
+  // xray: never spend the resolver budget on thumbnails while a video is on screen
+  if (document.getElementById('feed').classList.contains('open')) { setTimeout(schedulePump, 1000); return; }
+  if (Date.now() < backoffUntil) {
+    setTimeout(schedulePump, backoffUntil - Date.now() + 20);
+    return;
+  }
+  while (activeFetches < MAX_INFLIGHT && pending.size) {
+    let best = null, bestP = Infinity;
+    pending.forEach(p => { const v = p.priority(); if (v < bestP) { bestP = v; best = p; } });
+    if (!best) break;
+    pending.delete(best.id);
+    startFetch(best);
+  }
+}
+
+function startFetch(req) {
+  // xray (Nov 15 2026): TikTok's oEmbed stopped returning thumbnail_url / author / title
+  // (it now answers with only the id), so thumbnails and captions come from the
+  // resolver's cover + metadata instead, at low priority behind the feed. Bonus: the
+  // video URL gets cached too, so a tapped thumbnail plays at once.
+  if (req.warm && cacheGet(req.id)) { schedulePump(); return; }   // already playable
+  activeFetches++;
+  inflight.set(req.id, { abort() { cancelThumbResolve(req.id); } });
+  resolveForThumb(req.id)
+    .then(r => {
+      if (r === 'dropped') return { retry: true };            // pruned for the feed; try again later
+      if (r && r.gone) return { gone: true };                 // remembered by markGone()
+      if (r && r.cover) {
+        thumbCache[req.id] = { u: r.cover, t: Date.now(), x: coverExpiry(r.cover) };
+        cacheDirty = true; failStreak = 0;
+        // v2: keep the bytes; show the stored copy (falls back to the link if storing failed)
+        return LIB.saveCover(req.id, r.cover).then(u => { healthCover(!!u); return { url: u || r.cover }; });
+      }
+      return null;                                            // resolver couldn't: leave the date tile
+    })
+    .then(result => {
+      if (result) req.cbs.forEach(cb => { try { cb(result); } catch (e) {} });
+    })
+    .finally(() => {
+      inflight.delete(req.id);
+      activeFetches--;
+      schedulePump();
+    });
+}
+
+// Binds a thumbnail to an <img>, surviving the two ways TikTok fails us:
+//  - a transient failure (throttling, flaky network) -> retry with backoff,
+//    because a tile that stays on screen would otherwise never load again;
+//  - an expired cached URL -> the image fails to decode, so refetch it once.
+function bindThumb(imgEl, id, priority, onGone) {
+  let urlRetried = false, attempts = 0;
+  const alive = () => imgEl.parentNode !== null;
+
+  const apply = (r) => {
+    if (!alive()) return;
+    if (r.gone) { if (onGone) onGone(); return; }
+    if (r.retry) {
+      // Try again while this tile is still on screen, backing off each time.
+      if (++attempts > 6) return;
+      setTimeout(() => { if (alive()) requestThumb(id, apply, priority); },
+                 Math.min(20000, 700 * Math.pow(2, attempts)));
+      return;
+    }
+    if (imgEl.dataset.hi) return;               // v4: a full-frame poster is already showing
+    imgEl.onerror = () => {
+      if (urlRetried) return;
+      urlRetried = true;
+      delete thumbCache[id]; cacheDirty = true;   // the signed URL expired
+      requestThumb(id, apply, priority);
+    };
+    imgEl.onload = () => imgEl.classList.add('loaded');
+    imgEl.src = r.url;
+  };
+  requestThumb(id, apply, priority);
+}
+
+/* ============================================================
+   VIRTUAL LIST
+   Only the visible window exists in the DOM, so cost is constant
+   whether the library holds 30 videos or 6,070.
+   ============================================================ */
+function VirtualList(opts) {
+  const { scroller, content, perRow, overscan } = opts;
+  const self = {
+    items: [], rowH: 0, perRow: perRow || 1, overscan: overscan == null ? 2 : overscan,
+    live: new Map(), range: [-1,-1], onRange: null
+  };
+  self.rows = () => Math.ceil(self.items.length / self.perRow);
+  self.totalHeight = () => self.rows() * self.rowH;
+
+  self.setItems = (items, rowH) => {
+    self.items = items;
+    if (rowH) self.rowH = rowH;
+    self.live.forEach(el => el.remove());
+    self.live.clear();
+    self.range = [-1,-1];
+    content.style.height = self.totalHeight() + 'px';
+    self.update(true);
+  };
+
+  self.indexAtScroll = () => Math.round(scroller.scrollTop / Math.max(1, self.rowH)) * self.perRow;
+
+  self.update = (force) => {
+    if (!self.rowH) return;
+    const first = Math.max(0, Math.floor(scroller.scrollTop / self.rowH) - self.overscan);
+    const last  = Math.min(self.rows() - 1,
+                  Math.ceil((scroller.scrollTop + scroller.clientHeight) / self.rowH) + self.overscan);
+    if (!force && first === self.range[0] && last === self.range[1]) return;
+    self.range = [first, last];
+
+    const need = new Set();
+    for (let r = first; r <= last; r++) {
+      for (let c = 0; c < self.perRow; c++) {
+        const i = r * self.perRow + c;
+        if (i < self.items.length) need.add(i);
+      }
+    }
+    self.live.forEach((el, i) => {
+      if (!need.has(i)) { opts.recycle && opts.recycle(el, i); el.remove(); self.live.delete(i); }
+    });
+    need.forEach(i => {
+      if (self.live.has(i)) return;
+      const el = opts.render(self.items[i], i);
+      const r = Math.floor(i / self.perRow), c = i % self.perRow;
+      el.style.top = (r * self.rowH) + 'px';
+      if (self.perRow > 1) {
+        el.style.left = (c * (100 / self.perRow)) + '%';
+        el.style.width = (100 / self.perRow) + '%';
+      }
+      el.style.height = (opts.itemHeight || self.rowH) + 'px';
+      content.appendChild(el);
+      self.live.set(i, el);
+    });
+    if (self.onRange) self.onRange();
+  };
+
+  self.scrollToIndex = (i) => {
+    scroller.scrollTop = Math.floor(i / self.perRow) * self.rowH;
+    self.update(true);
+  };
+  self.get = (i) => self.live.get(i);
+  return self;
+}
+
+/* ============================================================
+   HOME
+   ============================================================ */
+function renderHome() {
+  document.getElementById('allCount').textContent = liveItems().length + ' saved';
+  { const el = shuffleEligible(), un = el.filter(i => !SH.s[i.id]).length, sc = document.getElementById('shuffleCount');
+    if (sc) sc.textContent = el.length ? (un ? un + ' not seen yet' : 'all seen; oldest views first') + (SH[SH.mode].served.length ? '  ·  continues where you left off' : '') : 'nothing to shuffle yet'; }
+  const grid = document.getElementById('catGrid');
+  grid.innerHTML = '';
+  cleanParents();
+  const ordered = state.categories.filter(c => c !== DELETED && !X.parents[c]);     // v11: top level only
+  if (state.categories.includes(DELETED)) ordered.push(DELETED);
+  ordered.forEach(cat => {
+    const n = itemsOfTree(cat).length, kids = treeOf(cat).length - 1;
+    const t = document.createElement('div');
+    t.className = 'cat-tile' + (cat === DELETED ? ' trash' : '');
+    t.innerHTML = '<button class="cat-manage">&#8942;</button>' +
+                  '<div class="name">' + esc(cat) + '</div>' +
+                  '<div class="count">' + n + ' saved' + (kids ? '  ·  ' + kids + ' inside' : '') + '</div>';
+    t.onclick = () => { gridStack = []; openGrid(itemsOfTree(cat), cat); };
+    if (cat !== DELETED) {                                    // v14: a small cover from the category, if one is on the phone
+      const first = itemsOfTree(cat).find(i => LIB.has(i.id));
+      if (first) LIB.coverUrl(first.id).then(u => { if (!u || !t.isConnected) return; const im = document.createElement('img'); im.className = 'cat-cover'; im.alt = ''; im.onload = () => im.classList.add('loaded'); im.src = u; t.appendChild(im); });
+    }
+    t.querySelector('.cat-manage').onclick = (e) => { e.stopPropagation(); manageCategory(cat); };
+    grid.appendChild(t);
+  });
+  const add = document.createElement('div');
+  add.className = 'cat-tile add';
+  add.textContent = '+ New Category';
+  add.onclick = promptNewCategory;
+  grid.appendChild(add);
+}
+document.getElementById('allTile').onclick = () => { gridStack = []; openGrid(liveItems(), 'All Videos'); };
+document.getElementById('shuffleTile').onclick = () => { primeAudioOnGesture(); openShuffle(); };
+// v14: search straight from Home (opens All Videos with the search field ready)
+document.getElementById('homeSearch').onclick = () => { gridStack = []; openGrid(liveItems(), 'All Videos'); document.getElementById('searchRow').classList.add('open'); document.getElementById('searchInput').focus(); };
+document.getElementById('addLinkBtn').onclick = () => {
+  inputModal({
+    title: 'Add a shared link',
+    placeholder: 'Paste a TikTok link…',
+    confirmLabel: 'Add',
+    onSubmit: (val) => addSharedLink(val, (changed) => { if (changed) renderHome(); })
+  });
+};
+
+function promptNewCategory() {
+  inputModal({ title:'New category', placeholder:'Category name', confirmLabel:'Add',
+    onSubmit: (name) => {
+      if (name === DELETED) return 'That name is reserved.';
+      if (state.categories.includes(name)) return 'That category already exists.';
+      state.categories.push(name); save(); renderHome();
+    }});
+}
+
+function manageCategory(cat) {
+  if (cat === DELETED) {
+    actionSheet({ title: DELETED, rows:[{ label:'Empty Deleted', destructive:true, onClick: emptyDeleted }] });
+    return;
+  }
+  actionSheet({ title: cat, rows: [
+    { label:'Rename', onClick: () => renameCategory(cat) },
+    { label:'Add a subcategory', onClick: () => addSubcategory(cat) },
+    { label: X.parents[cat] ? 'Move (now inside ' + X.parents[cat] + ')' : 'Move inside another category', onClick: () => moveCategory(cat) },
+    { label:'Delete category', destructive:true, onClick: () => confirmDeleteCategory(cat) }
+  ]});
+}
+function addSubcategory(cat) {
+  inputModal({ title:'New subcategory in "' + cat + '"', placeholder:'Name', confirmLabel:'Add',
+    onSubmit: (name) => {
+      if (name === DELETED) return 'That name is reserved.';
+      if (state.categories.includes(name)) return 'A category with that name already exists.';
+      state.categories.push(name); X.parents[name] = cat; save(); saveX(); refreshViews();
+    }});
+}
+function moveCategory(cat) {
+  const mine = treeOf(cat);
+  const rows = [{ label: 'Top level' + (X.parents[cat] ? '' : '  \u2713'), onClick: () => { delete X.parents[cat]; saveX(); refreshViews(); } }];
+  orderedCats().filter(c => !mine.includes(c.name)).forEach(c => rows.push({ label: '\u2003'.repeat(c.depth) + c.name + (X.parents[cat] === c.name ? '  \u2713' : ''),
+    onClick: () => { X.parents[cat] = c.name; saveX(); refreshViews(); } }));
+  actionSheet({ title: 'Put "' + cat + '" inside…', rows });
+}
+function renameCategory(cat) {
+  inputModal({ title:'Rename "' + cat + '"', placeholder:'New name', initialValue:cat, confirmLabel:'Save',
+    onSubmit: (name) => {
+      if (name === DELETED) return 'That name is reserved.';
+      if (name !== cat && state.categories.includes(name)) return 'That category already exists.';
+      state.categories = state.categories.map(c => c === cat ? name : c);
+      state.items.forEach(i => { if (i.category === cat) i.category = name; });
+      if (name !== cat) {                                   // v11: keep the tree attached to the new name
+        if (X.parents[cat]) { X.parents[name] = X.parents[cat]; delete X.parents[cat]; }
+        for (const c in X.parents) if (X.parents[c] === cat) X.parents[c] = name;
+        saveX(); if (gridLabel === cat) { gridLabel = name; document.getElementById('gridTitle').textContent = name; }
+        gridStack.forEach(g => { if (g.label === cat) g.label = name; });
+      }
+      save(); refreshViews();
+    }});
+}
+function confirmDeleteCategory(cat) {
+  const n = state.items.filter(i => i.category === cat).length;
+  confirmModal({
+    title:'Delete "' + cat + '"?',
+    message: n ? n + ' video(s) move to ' + (X.parents[cat] || 'Uncategorized') + '. The videos are not deleted.' : 'This category is empty.',
+    confirmLabel:'Delete', destructive:true,
+    onConfirm: () => {
+      const up = X.parents[cat];                            // v11: its subcategories move up one level, with their videos
+      childrenOf(cat).forEach(c => { if (up) X.parents[c] = up; else delete X.parents[c]; });
+      delete X.parents[cat]; saveX();
+      state.categories = state.categories.filter(c => c !== cat);
+      state.items.forEach(i => { if (i.category === cat) i.category = up || 'Uncategorized'; });   // a subcategory's videos go to its parent
+      if (n && !up && !state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+      save();
+      if (gridLabel === cat && document.getElementById('gridView').classList.contains('open')) { gridStack = gridStack.filter(g => g.label !== cat); document.getElementById('gridBack').onclick(); }
+      else refreshViews();
+    }});
+}
+
+/* ============================================================
+   GRID
+   ============================================================ */
+const gridScroll = document.getElementById('gridScroll');
+const thumbGrid  = document.getElementById('thumbGrid');
+let gridList = [], gridLabel = '', gridScrollMemory = {};
+
+const gridVL = VirtualList({
+  scroller: gridScroll, content: thumbGrid, perRow: 3, overscan: 5,
+  render: (item, i) => {
+    const t = document.createElement('div');
+    t.className = 'thumb-tile';
+    t.dataset.id = item.id;
+    const pm = metaStore[item.id];
+    t.innerHTML = '<img alt="" decoding="async"><div class="thumb-date">' + esc(itemLabel(item)) + '</div>' + (pm && pm.img ? '<div class="thumb-photos">&#9635; ' + pm.img + '</div>' : '');
+    if (sel.has(item.id)) t.classList.add('sel');
+    let skipClick = false;      // only the click produced by releasing the long press itself is ignored
+    t.onclick = () => { if (skipClick) { skipClick = false; return; } if (selMode) { selToggle(item.id, t); return; } primeAudioOnGesture(); openFeed(gridList, gridLabel, i); };
+    // v15: press and hold a thumbnail to start selecting
+    let lp = null, sx = 0, sy = 0;
+    t.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; clearTimeout(lp); lp = setTimeout(() => { lp = null; if (!selMode) { selStart(); selToggle(item.id, t); skipClick = true; } }, 480); });
+    t.addEventListener('pointermove', (e) => { if (lp && (Math.abs(e.clientX - sx) > 8 || Math.abs(e.clientY - sy) > 8)) { clearTimeout(lp); lp = null; } });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => t.addEventListener(ev, () => { clearTimeout(lp); lp = null; if (skipClick) setTimeout(() => { skipClick = false; }, 80); }));
+    const prio = () => Math.abs(Math.floor(i / 3) * gridVL.rowH - gridScroll.scrollTop);
+    bindThumb(t.querySelector('img'), item.id, prio, () => t.classList.add('unavailable'));
+    warmPlay(item.id, prio);
+    return t;
+  },
+  recycle: (el) => { dropThumbRequest(el.dataset.id); }
+});
+
+function gridRowHeight() {
+  const w = gridScroll.clientWidth || window.innerWidth || 390;
+  return Math.round((w / 3) * (14 / 9));
+}
+
+let gridBaseList = [];        // unfiltered list for the current grid (search filters this)
+// v9: under "Shared with me", a row of people. A person's chip lists every video that person
+// sent, wherever it has been filed since (a view, not a category).
+let chipSel = '';
+function chipList() {
+  if (chipSel === 'u') return state.items.filter(i => i.category === SHARED_CAT && !X.from[i.id]);
+  if (chipSel.indexOf('p:') === 0) { const n = chipSel.slice(2); return liveItems().filter(i => X.from[i.id] === n); }
+  return itemsOfTree(SHARED_CAT);
+}
+function setupChips(label, keep) {
+  const row = document.getElementById('chipRow'); row.innerHTML = ''; row.classList.remove('open');
+  if (!keep || label !== SHARED_CAT) chipSel = '';
+  const mb = document.getElementById('gridManage'); if (mb) mb.style.display = (state.categories.includes(label) && label !== DELETED) ? '' : 'none';
+  const kids = state.categories.includes(label) ? childrenOf(label) : [];
+  const ppl = label === SHARED_CAT ? people() : [];
+  if (!kids.length && !ppl.length) { chipSel = ''; return; }
+  // v11: subcategories first; tapping one goes into it (Back returns here)
+  kids.forEach(k => { const c = document.createElement('button'); c.className = 'chip'; c.textContent = '\u25B8 ' + k + '  ' + itemsOfTree(k).length;
+    c.onclick = () => { gridStack.push({ list: gridBaseList, label: gridLabel, scroll: gridScroll.scrollTop }); openGrid(itemsOfTree(k), k); gridScroll.scrollTop = 0; gridVL.update(true); };
+    row.appendChild(c); });
+  if (!ppl.length) { row.classList.add('open'); return; }
+  if (chipSel.indexOf('p:') === 0 && !ppl.some(p => 'p:' + p.name === chipSel)) chipSel = '';
+  const mk = (text, key) => { const c = document.createElement('button'); c.className = 'chip' + (key === chipSel ? ' on' : ''); c.textContent = text;
+    c.onclick = () => { chipSel = key; [...row.children].forEach(x => x.classList.toggle('on', x === c)); gridBaseList = chipList(); runSearch(document.getElementById('searchInput').value); };
+    row.appendChild(c); };
+  mk('All', ''); ppl.forEach(p => mk(p.name + '  ' + p.n, 'p:' + p.name));
+  const uns = state.items.filter(i => i.category === SHARED_CAT && !X.from[i.id]).length; if (uns) mk('Unsorted  ' + uns, 'u');
+  row.classList.add('open');
+}
+/* ---- v15: select many videos in a grid, then move or delete them together ----
+   Start with a long press on a thumbnail; then taps add or remove. "Delete" only moves to
+   Deleted (reversible there); in the Deleted grid the bar offers Restore instead. */
+const sel = new Set(); let selMode = false;
+function selPaint() {
+  const bar = document.getElementById('selBar'); bar.classList.toggle('open', selMode);
+  document.getElementById('selCount').textContent = sel.size + ' selected';
+  document.getElementById('selDelete').style.display = gridLabel === DELETED ? 'none' : '';
+  document.getElementById('selMove').textContent = gridLabel === DELETED ? 'Restore to…' : 'Move to…';
+}
+function selStart() { selMode = true; sel.clear(); selPaint(); }
+function selEnd() { selMode = false; sel.clear(); document.querySelectorAll('.thumb-tile.sel').forEach(t => t.classList.remove('sel')); selPaint(); }
+function selToggle(id, tile) { if (sel.has(id)) sel.delete(id); else sel.add(id); if (tile) tile.classList.toggle('sel', sel.has(id)); selPaint(); }
+function selApply(fn, doneText) {
+  const ids = new Set(sel); let n = 0;
+  state.items.forEach(i => { if (ids.has(i.id)) { fn(i); n++; } });
+  flushSave(true);
+  // what still belongs in the grid being shown
+  const tree = state.categories.includes(gridLabel) ? new Set(treeOf(gridLabel)) : null;
+  const keep = (i) => (tree && !(gridLabel === SHARED_CAT && chipSel)) ? tree.has(i.category) : i.category !== DELETED;
+  const top = gridScroll.scrollTop; gridBaseList = gridBaseList.filter(keep);
+  selEnd(); runSearch(document.getElementById('searchInput').value); gridScroll.scrollTop = top; gridVL.update(true);
+  toast(doneText.replace('N', n));
+}
+document.getElementById('selCancel').onclick = selEnd;
+document.getElementById('selAll').onclick = () => { gridList.forEach(i => sel.add(i.id)); gridVL.live.forEach(el => el.classList.add('sel')); selPaint(); };
+document.getElementById('selDelete').onclick = () => { if (!sel.size) return; if (!state.categories.includes(DELETED)) state.categories.push(DELETED); selApply(i => { i.category = DELETED; }, 'Moved N to Deleted'); };
+document.getElementById('selMove').onclick = () => {
+  if (!sel.size) return;
+  actionSheet({ title: (gridLabel === DELETED ? 'Restore ' : 'Move ') + sel.size + ' to…', rows: orderedCats().map(c => ({ label: '\u2003'.repeat(c.depth) + c.name,
+    onClick: () => selApply(i => { i.category = c.name; }, 'Moved N to ' + c.name) })) });
+};
+// v15: tap a hashtag in a caption to see everything in the library with that tag
+function setDesc(el, text) {
+  el.textContent = ''; if (!text) return;
+  String(text).split(/(#[\p{L}\p{N}_]+)/u).forEach(part => {
+    if (!part) return;
+    if (part[0] === '#' && part.length > 1) { const sp = document.createElement('span'); sp.className = 'tag'; sp.textContent = part;
+      sp.onclick = (e) => { e.stopPropagation(); if (overlayClickSuppressed()) return; openTag(part); }; el.appendChild(sp); }
+    else el.appendChild(document.createTextNode(part));
+  });
+}
+function openTag(tag) {
+  const feedWasOpen = document.getElementById('feed').classList.contains('open'), gridWasOpen = document.getElementById('gridView').classList.contains('open');
+  const back = { list: gridBaseList, label: gridLabel, scroll: gridScrollMemory[gridLabel] || 0 };
+  if (feedWasOpen) closeFeed();
+  if (gridWasOpen) gridStack.push(back); else gridStack = [];
+  openGrid(liveItems(), 'All Videos');
+  document.getElementById('searchRow').classList.add('open'); document.getElementById('searchInput').value = tag; runSearch(tag);
+}
+function openGrid(list, label, keepChips) {
+  if (selMode) selEnd();
+  setupChips(label, !!keepChips && label === gridLabel);
+  gridBaseList = list;
+  // reset any active search when (re)opening a grid
+  const sr = document.getElementById('searchRow'); if (sr) sr.classList.remove('open');
+  const si = document.getElementById('searchInput'); if (si) si.value = '';
+  gridList = list; gridLabel = label;
+  document.getElementById('gridTitle').textContent = label;
+  document.getElementById('gridView').classList.add('open');
+  document.getElementById('gridEmpty').style.display = list.length ? 'none' : 'block';
+  setupDateJump(list, label);
+  gridVL.setItems(list, gridRowHeight());
+  const saved = gridScrollMemory[label] || 0;
+  gridScroll.scrollTop = saved;
+  gridVL.update(true);
+  startHarvest();   // resume filling search metadata while browsing the library
+}
+
+// ---- Search over creator / description / category / date ----
+// Searches the metadata store (populated as videos are browsed/played) plus the
+// always-known fields (category, date). Filters the current grid's base list and
+// re-renders through the same virtualized grid, so tapping a result opens the
+// feed exactly as normal.
+function matchSearch(item, q) {
+  if (item.category && item.category.toLowerCase().includes(q)) return true;
+  const lbl = itemLabel(item); if (lbl && lbl.toLowerCase().includes(q)) return true;
+  const fr = X.from[item.id]; if (fr && fr.toLowerCase().includes(q)) return true;
+  const m = metaStore[item.id]; if (!m) return false;
+  return (m.author && m.author.toLowerCase().includes(q)) ||
+         (m.handle && m.handle.toLowerCase().includes(q)) ||
+         (m.desc   && m.desc.toLowerCase().includes(q));
+}
+function runSearch(qRaw) {
+  const q = (qRaw || '').trim().toLowerCase();
+  const list = q ? gridBaseList.filter(it => matchSearch(it, q)) : gridBaseList;
+  gridList = list;
+  const empty = document.getElementById('gridEmpty');
+  empty.textContent = q && !list.length ? 'No matches (metadata fills in as you browse).' : 'Nothing here yet.';
+  empty.style.display = list.length ? 'none' : 'block';
+  gridVL.setItems(list, gridRowHeight());
+  gridScroll.scrollTop = 0;
+  gridVL.update(true);
+}
+document.getElementById('gridManage').onclick = () => manageCategory(gridLabel);
+document.getElementById('searchBtn').onclick = () => {
+  const row = document.getElementById('searchRow');
+  const open = row.classList.toggle('open');
+  if (open) { document.getElementById('searchInput').focus(); }
+  else { document.getElementById('searchInput').value = ''; runSearch(''); }
+};
+document.getElementById('searchInput').addEventListener('input', (e) => runSearch(e.target.value));
+document.getElementById('searchClear').onclick = () => { const si=document.getElementById('searchInput'); si.value=''; si.focus(); runSearch(''); };
+
+gridScroll.addEventListener('scroll', () => {
+  gridScrollMemory[gridLabel] = gridScroll.scrollTop;
+  gridVL.update();
+}, { passive:true });
+
+// v4: grids opened from inside another view (a creator's videos) go back to where they came from
+let gridStack = [];
+document.getElementById('gridBack').onclick = () => {
+  if (gridStack.length) { const g = gridStack.pop(); openGrid(g.list, g.label); gridScroll.scrollTop = g.scroll; gridVL.update(true); return; }
+  document.getElementById('gridView').classList.remove('open');
+  document.getElementById('datePanel').classList.remove('open');
+  gridVL.setItems([], gridVL.rowH);
+  renderHome();
+};
+
+/* ---- date jump ---- */
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function setupDateJump(list, label) {
+  const btn = document.getElementById('dateJumpBtn');
+  const show = (label === 'All Videos' || label === 'Uncategorized') && list.length > 0;
+  btn.style.display = show ? '' : 'none';
+  document.getElementById('datePanel').classList.remove('open');
+  if (!show) return;
+  const index = [];
+  let key = '';
+  list.forEach((it, i) => {
+    if (!it.date) return;
+    const d = new Date(String(it.date).replace(' ','T'));
+    if (isNaN(d)) return;
+    const k = d.getFullYear() + '-' + d.getMonth();
+    if (k !== key) { index.push({ y:d.getFullYear(), m:d.getMonth(), i }); key = k; }
+  });
+  const inner = document.getElementById('datePanelInner');
+  inner.innerHTML = '';
+  let year = null;
+  index.forEach(e => {
+    if (e.y !== year) {
+      year = e.y;
+      const h = document.createElement('div');
+      h.className = 'date-year-hdr'; h.textContent = year;
+      inner.appendChild(h);
+    }
+    const c = document.createElement('span');
+    c.className = 'date-month-row'; c.textContent = MONTHS[e.m];
+    c.onclick = () => {
+      document.getElementById('datePanel').classList.remove('open');
+      gridVL.scrollToIndex(e.i);   // O(1) with virtualization — no mass rendering
+    };
+    inner.appendChild(c);
+  });
+}
+document.getElementById('dateJumpBtn').onclick = () =>
+  document.getElementById('datePanel').classList.toggle('open');
+
+/* ============================================================
+   FEED — transform carousel (NO native scroll).
+   The stage is a fixed viewport. A track holds exactly three slides
+   (previous / current / next), positioned by an absolute transform. Swiping
+   drags the track with the finger; on release it either advances one video or
+   snaps back, animated with a CSS transition. There is no scroll container, no
+   scroll-snap, no momentum, no spacers, no scrollTop — so the whole class of
+   "racing / stuck between videos" bugs cannot occur. Only 3 videos are ever in
+   the DOM regardless of library size.
+   ============================================================ */
+const stage = document.getElementById('stage');
+const track = document.getElementById('track');
+let feedList = [], feedLabel = '';
+let curIndex = -1;               // index of the currently-shown video
+let desiredMuted = true;
+let audioUnlocked = false;   // set true on the first unmute tap (a real gesture); persists sound across swipes
+
+// slot elements: slots[-1]=prev, slots[0]=current, slots[1]=next (by offset)
+let slotEls = { '-1': null, '0': null, '1': null };
+let stageH = 0;
+let dragging = false, dragStartY = 0, dragDY = 0, dragStartT = 0, dragMoved = false;
+let animating = false;
+let holdTimer = null, ffTimer = null, holding = false;
+// v17: where each video was left in this feed (id -> seconds), so one swiped back to resumes
+// there even after its player was released. Cleared when a feed is opened (a new session).
+const resumeAt = new Map();
+function rememberPlace(el) {
+  const v = el && el._vid; if (!v || el._vidId !== el.dataset.id) return;
+  const t = v.currentTime; if (t > 0.3 && v.duration > 0) resumeAt.set(el.dataset.id, t); else resumeAt.delete(el.dataset.id);
+}
+function resumePlace(v, id) {
+  const t = resumeAt.get(id); if (!t) return;
+  const go = () => { if (v.duration > 0 && t < v.duration - 0.5) { try { v.currentTime = t; } catch (e) {} } };
+  if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
+}
+
+function stageHeight() { return stage.clientHeight || window.innerHeight || 700; }
+
+function setTrack(y, animate, ms) {
+  track.style.transition = animate ? 'transform ' + (ms || 260) + 'ms cubic-bezier(.25,.46,.45,.94)' : 'none';   // TRIAL: TikTok-like ease-out
+  track.style.transform = 'translate3d(0,' + y + 'px,0)';
+}
+
+// Base offset that centres the current slide: slots are laid at rows -1,0,1
+// (pixel tops -H, 0, H), and the track is translated 0, so the row-0 slide fills
+// the stage. We translate by -dragDY during a drag (drag up = negative dy shows next).
+function layoutSlots() {
+  stageH = stageHeight();
+  ['-1','0','1'].forEach(k => {
+    const el = slotEls[k];
+    if (!el) return;
+    el.style.height = stageH + 'px';
+    el.style.top = (Number(k) * stageH) + 'px';
+  });
+}
+
+function openFeed(list, label, startIndex) {
+  feedMode = 'list'; paintShuffleBar(); resumeAt.clear();
+  feedList = list.slice(); feedLabel = label;
+  document.getElementById('feedLabel').textContent = label;
+  document.getElementById('feed').classList.add('open');
+  curIndex = Math.max(0, Math.min(startIndex || 0, list.length - 1));
+  buildAllSlots();
+  layoutSlots();
+  setTrack(0, false);
+  // Opening the feed is a deliberate tap on a specific video, so load it
+  // promptly — only a short settle, unlike the longer dwell used for swipes.
+  scheduleCurrentPlayer(0);   // v4: no built-in wait before the tapped video starts loading
+}
+
+function closeFeed() {
+  if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; }
+  clearResolveQueue();   // stop resolver work so it doesn't compete with the library's thumbnail loading
+  ['-1','0','1'].forEach(k => { if (slotEls[k]) destroyPlayer(slotEls[k]); });
+  track.innerHTML = '';
+  slotEls = { '-1': null, '0': null, '1': null };
+  document.getElementById('feed').classList.remove('open');
+  curIndex = -1;
+  if (feedMode === 'shuffle') saveSH(true);
+  feedMode = 'list'; paintShuffleBar();
+}
+document.getElementById('feedBack').onclick = () => { const wasShuffle = feedMode === 'shuffle'; closeFeed(); if (wasShuffle) renderHome(); else openGrid(gridList, gridLabel, true); };
+// v4: tap a creator's name on a video to see everything saved from them
+function openCreator(id) {
+  const m = metaStore[id];
+  if (!m || !(m.handle || m.author)) { toast('Creator not known yet for this video'); return; }
+  const key = (m.handle || '').toLowerCase(), name = m.author || '';
+  const list = liveItems().filter(i => { const x = metaStore[i.id]; return !!x && (key ? (x.handle || '').toLowerCase() === key : x.author === name); });
+  const back = { list: gridBaseList, label: gridLabel, scroll: gridScrollMemory[gridLabel] || 0 };
+  closeFeed();
+  gridStack.push(back);
+  openGrid(list, m.handle ? '@' + m.handle : name);
+  gridScroll.scrollTop = 0; gridVL.update(true);
+}
+
+function indexForOffset(off) { return curIndex + off; }
+
+function buildAllSlots() {
+  // Destroy existing players/timers FIRST — wiping track.innerHTML detaches the
+  // elements but does NOT stop their _playTimer/_readyWatchdog intervals (plain
+  // JS timers, no DOM lifecycle tie), which would keep firing on orphaned
+  // elements. Hit whenever this runs with a live player present (e.g.
+  // feedDropCurrent — deleting the currently-open video).
+  ['-1','0','1'].forEach(k => { if (slotEls[k]) destroyPlayer(slotEls[k]); });
+  track.innerHTML = '';
+  slotEls = { '-1': null, '0': null, '1': null };
+  ['-1','0','1'].forEach(k => {
+    const idx = curIndex + Number(k);
+    if (idx < 0 || idx >= feedList.length) return;
+    const el = buildSlide(feedList[idx], idx);
+    el.dataset.slot = k;
+    track.appendChild(el);
+    slotEls[k] = el;
+  });
+  layoutSlots();
+}
+
+// Advance the carousel by +1 (next) or -1 (prev), recycling slots so only three
+// Advance by ±1. Recycle the existing slot elements instead of rebuilding them,
+// so the video you swiped to — which was already preloaded — keeps its player
+// and starts instantly, rather than being destroyed and recreated (a recreate
+// loses any warm autoplay state and causes a visible reload).
+function commitAdvance(dir) {
+  const newIndex = curIndex + dir;
+  if (newIndex < 0 || newIndex >= feedList.length) { setTrack(0, true); return; }
+  if (slotEls['0']) pauseSlide(slotEls['0']);
+
+  const old = { '-1': slotEls['-1'], '0': slotEls['0'], '1': slotEls['1'] };
+  const next = { '-1': null, '0': null, '1': null };
+
+  if (dir === 1) {
+    // moving forward: old next becomes current, old current becomes prev.
+    // Only the FAR edge leaves the window — release its pooled video. The other
+    // two keep their (preloaded) videos, so the incoming current is already
+    // buffered and plays instantly.
+    if (old['-1']) { unmountSlot(old['-1']); dropThumbRequest(old['-1'].dataset.id); old['-1'].remove(); }
+    next['-1'] = old['0'];
+    next['0']  = old['1'];
+    curIndex = newIndex;
+    next['1'] = makeSlotSlide(curIndex + 1);
+  } else {
+    if (old['1']) { unmountSlot(old['1']); dropThumbRequest(old['1'].dataset.id); old['1'].remove(); }
+    next['1']  = old['0'];
+    next['0']  = old['-1'];
+    curIndex = newIndex;
+    next['-1'] = makeSlotSlide(curIndex - 1);
+  }
+
+  slotEls = next;
+  // v17 (Ian, Nov 15: "when back scrolling videos should also start where they left off"):
+  // the video you leave keeps its place, so swiping back resumes it (v4 restarted it at 0).
+  const left = slotEls[dir === 1 ? '-1' : '1'];
+  if (left && left._vid) { try { left._vid.pause(); left._primedSrc = left._vid.src; } catch (e) {} rememberPlace(left); }
+  ['-1','0','1'].forEach(k => { if (slotEls[k]) slotEls[k].dataset.slot = k; });
+  layoutSlots();
+  setTrack(0, false);
+  // Promote the already-preloaded new current immediately (instant play), then
+  // mount/preload the newly-exposed edge after a short settle so fast flicks
+  // don't fire a burst of resolves.
+  promoteCurrent();
+  scheduleCurrentPlayer(DWELL_MS);
+  if (feedMode === 'shuffle') shuffleMoved();
+}
+
+function promoteCurrent() {
+  const el = slotEls['0']; if (!el) return;
+  const it = feedList[curIndex];
+  if (it) { const c = el.querySelector('.slide-cat'); if (c) c.textContent = catLine(it); }
+  fillOverlay(el, el.dataset.id);   // refresh creator/description from cache on activate
+  el._becameCurrentAt = Date.now(); el._diag = []; el._wantPlay = true; el._resumes = 0;
+  if (el._vid && el._vidId === el.dataset.id) {
+    // preloaded neighbour promoted — just play it (usually already started when the finger lifted)
+    delete el.dataset.userPaused;
+    const v = el._vid;
+    v.muted = desiredMuted || !audioUnlocked;
+    const p = v.play(); if (p) p.catch(()=>{});
+    // if sound was refused, play muted rather than sit frozen
+    if (!v.muted) setTimeout(() => { if (slotEls['0'] === el && el._vid === v && el.dataset.userPaused !== 'true' && v.paused) { v.muted = true; const q = v.play(); if (q) q.catch(()=>{}); } }, 900);
+  } else {
+    mountSlot(el, true);
+  }
+  ensurePlaying(el);
+}
+
+// One debounce timer, shared across the whole feed, cleared on every swipe.
+let dwellTimer = null;
+const DWELL_MS = 250;     // settle before mounting/preloading the new edge slide
+function scheduleCurrentPlayer(delay) {
+  if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; }
+  const target = slotEls['0'];
+  if (!target) return;
+  dwellTimer = setTimeout(() => {
+    dwellTimer = null;
+    if (slotEls['0'] !== target) return;
+    if (!document.getElementById('feed').classList.contains('open')) return;
+    playCurrent();
+  }, delay);
+}
+
+// Build a slide for an absolute index and insert it into the track (or return
+// null if out of range). Used to fill the newly-exposed edge slot on advance.
+function makeSlotSlide(idx) {
+  if (idx < 0 || idx >= feedList.length) return null;
+  const el = buildSlide(feedList[idx], idx);
+  track.appendChild(el);
+  return el;
+}
+
+// Run fn after the next paint. Setting an iframe's src in the same frame the
+// slide's position/visibility just changed makes the browser silently drop the
+// load, so player creation must wait one paint. A SINGLE rAF is the minimum
+// paint-aligned path iOS needs for the muted-autoplay grant; a setTimeout
+// backstop guarantees fn still runs in a later task if rAF is ever starved
+// (tab backgrounded, Low Power Mode) — which would otherwise leave the video
+// permanently unloaded. Kept to one frame (not two) because every extra tick
+// between the swipe gesture and the src assignment is time iOS's separate,
+// stricter "audible autoplay needs a recent user gesture" check can run out
+// on — unlike the muted-autoplay grant, that one appears to require the
+// navigation to still read as gesture-adjacent, not just post-paint.
+function deferToPaint(fn) {
+  let done = false;
+  const run = () => { if (done) return; done = true; fn(); };
+  requestAnimationFrame(run);
+  setTimeout(run, 80);
+}
+
+function playCurrent() {
+  const el = slotEls['0'];
+  if (!el) return;
+  // Update the caption immediately (cheap, and it should never wait for a paint).
+  const it = feedList[curIndex];
+  if (it) { const c = el.querySelector('.slide-cat'); if (c) c.textContent = catLine(it); }
+
+  // After a paint, mount current (playing) + both neighbours (preloaded, paused)
+  // so the next swipe in either direction promotes an already-buffered element.
+  deferToPaint(() => {
+    if (slotEls['0'] !== el) return;
+    if (!document.getElementById('feed').classList.contains('open')) return;
+    if (!el._becameCurrentAt) el._becameCurrentAt = Date.now();
+    syncSlots();
+    ensurePlaying(el);
+  });
+}
+
+/* ---------- gestures on the stage ---------- */
+// v4 swipe handling. Three changes from before: (1) the incoming video starts the moment
+// the finger lifts, not after the slide animation; (2) a touch during the animation
+// finishes it at once and starts the next drag, so a quick second swipe is never dropped;
+// (3) flicks are judged by finger speed, and a faster flick gets a shorter animation.
+let dragVel = 0, lastMoveY = 0, lastMoveT = 0, _animDone = null;
+// v19: a gesture that starts on the creator name or the caption belongs to the stage; a tap
+// there still does what tapping it always did.
+let dragStartEl = null, _stageGestureEnd = 0;
+function overlayClickSuppressed() { return Date.now() - _stageGestureEnd < 700; }
+function overlayTap(t) {
+  if (!t || !t.closest) return false;
+  const slide = t.closest('.slide'), tag = t.closest('.slide-desc .tag'), auth = t.closest('.slide-author'), desc = t.closest('.slide-desc');
+  if (tag) { openTag(tag.textContent); return true; }
+  if (auth && slide) { openCreator(slide.dataset.id); return true; }
+  if (desc) { desc.classList.toggle('expanded'); return true; }
+  return false;
+}
+stage.addEventListener('pointerdown', (e) => {
+  if (animating && _animDone) _animDone();
+  if (animating) return;
+  dragging = true; dragMoved = false; dragStartEl = e.target;
+  dragStartY = e.clientY; dragDY = 0; dragStartT = Date.now();
+  dragVel = 0; lastMoveY = e.clientY; lastMoveT = performance.now();
+  setTrack(0, false);
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => { if (!dragMoved && dragging) startFF(); }, 350);
+  try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+});
+
+stage.addEventListener('pointermove', (e) => {
+  if (!dragging) return;
+  if (holding) return;                       // while holding for 2x the finger may wander
+  dragDY = e.clientY - dragStartY;
+  const now = performance.now(), dtm = now - lastMoveT;
+  if (dtm > 0) { dragVel = dragVel * 0.5 + ((e.clientY - lastMoveY) / dtm) * 0.5; lastMoveY = e.clientY; lastMoveT = now; }
+  if (Math.abs(dragDY) > 8) { dragMoved = true; clearTimeout(holdTimer); }
+  let dy = dragDY;
+  // resist at the ends (no prev before 0, no next after last)
+  if (curIndex === 0 && dy > 0) dy *= 0.3;
+  if (curIndex === feedList.length - 1 && dy < 0) dy *= 0.3;
+  setTrack(dy, false);
+});
+
+// Start the video being swiped to (and stop the one leaving) as soon as the swipe is decided.
+function startIncoming(dir) {
+  const inc = slotEls[String(dir)], out = slotEls['0'];
+  if (out) { out._wantPlay = false; pauseSlide(out); }
+  if (!inc) return;
+  inc._wantPlay = true; delete inc.dataset.userPaused;
+  if (inc._vid && inc._vidId === inc.dataset.id) {
+    inc._vid.muted = desiredMuted || !audioUnlocked;
+    const p = inc._vid.play(); if (p) p.catch(()=>{});
+  }
+}
+function slideTo(dir) {
+  const H = stageHeight();
+  const remaining = Math.max(0, H - Math.abs(dragDY));
+  const ms = Math.round(Math.max(210, Math.min(300, remaining / Math.max(Math.abs(dragVel), 2.4))));   // TRIAL: ~210 ms floor like TikTok
+  animating = true;
+  startIncoming(dir);
+  setTrack(dir > 0 ? -H : H, true, ms);
+  afterTransition(() => { animating = false; commitAdvance(dir); }, ms);
+}
+function endDrag(e) {
+  if (!dragging) return;
+  dragging = false; _stageGestureEnd = Date.now();
+  clearTimeout(holdTimer);
+  if (holding) { stopFF(); setTrack(0, false); return; }
+  const dt = Date.now() - dragStartT;
+  const H = stageHeight();
+  // a tap: little movement, short time → toggle play/pause (or the name / caption / hashtag's own action)
+  if (!dragMoved && dt < 400) { setTrack(0, false); if (!overlayTap(dragStartEl)) toggleCurrent(); return; }
+  if (performance.now() - lastMoveT > 90) dragVel = 0;          // the finger stopped before lifting
+  const far = Math.abs(dragDY) > H * 0.18;
+  const flick = Math.abs(dragVel) > 0.35 && Math.abs(dragDY) > 24 && (dragVel < 0) === (dragDY < 0);
+  if (dragDY < 0 && (far || flick) && curIndex < feedList.length - 1) slideTo(1);
+  else if (dragDY > 0 && (far || flick) && curIndex > 0) slideTo(-1);
+  else setTrack(0, true, 180);   // snap back
+}
+stage.addEventListener('pointerup', endDrag);
+stage.addEventListener('pointercancel', () => { dragging = false; _stageGestureEnd = Date.now(); clearTimeout(holdTimer); if (holding) stopFF(); setTrack(0, true, 180); });
+
+function afterTransition(fn, ms) {
+  let done = false;
+  const h = () => { if (done) return; done = true; _animDone = null; track.removeEventListener('transitionend', h); fn(); };
+  _animDone = h;
+  track.addEventListener('transitionend', h);
+  setTimeout(h, (ms || 260) + 100);   // fallback in case transitionend doesn't fire
+}
+
+/* ---------- tap play/pause + hold fast-forward ---------- */
+function toggleCurrent() {
+  const el = slotEls['0']; if (!el) return;
+  const media = el.querySelector('.slide-media');
+  if (el.classList.contains('unavailable-slide')) {
+    // v2: a tap re-checks a video that was remembered as unavailable
+    el.classList.remove('unavailable-slide'); delete thumbCache[el.dataset.id]; cacheDirty = true;
+    const sb = media.querySelector('.status-badge'); if (sb) sb.innerHTML = '<div class="spinner"></div>';
+  }
+  const v = el._vid;
+  if (media.classList.contains('needs-tap') || !v) {
+    // Manual recovery: re-resolve and try again. Clear any cached-but-dead URL.
+    media.classList.remove('needs-tap');
+    cacheDrop(el.dataset.id);
+    el._vidId = null;
+    mountSlot(el, true); ensurePlaying(el);
+    return;
+  }
+  if (!v.paused) {
+    el.dataset.userPaused = 'true'; v.pause(); el._state = 2; media.classList.add('paused');
+  } else {
+    delete el.dataset.userPaused;
+    v.muted = desiredMuted || !audioUnlocked;
+    const p = v.play(); if (p) p.catch(()=>{});
+    media.classList.remove('paused');
+  }
+}
+
+// v4: hold = real 2x playback (native playbackRate, sound included), the way TikTok does it.
+// Before, this nudged the playhead forward every 200 ms, which stuttered.
+// v16 (Ian's phone report, Nov 15: "videos don't start playing 2x smoothly, they freeze / hop back a
+// couple frames"). The v4 code checked for a stall after only 300 ms and, if the picture had
+// barely moved, toggled pitch correction and SEEKED by 0.02 s. On the phone the normal
+// speed change takes a moment, so that check fired on a healthy video, and the seek is what
+// froze it and jumped it back to an earlier frame. Now: set the speed and leave the video
+// alone. A real stall (no movement at all for a full second, seen only in desktop test
+// WebKit) switches pitch correction off and re-applies the speed, still without seeking; the
+// seek is a last resort another second later. Once a stall has been seen, later holds start
+// without pitch correction straight away, and muted videos never use it (inaudible anyway).
+// v18: pitch correction is off for every hold, sound on too. Measured in WebKit with sound on
+// (Nov 16): changing speed with it on froze the picture ~0.5 s at press and again at release
+// and sometimes hopped back 0.33 s; with it off: no hop back, ~0.28 s at press, ~0.15 s at
+// release. The price: higher-pitched sound while held. (At 1x the setting makes no difference.)
+let _ffCheck = null;
+function ffNudge(v) { try { v.currentTime = v.currentTime + 0.02; const p = v.play(); if (p) p.catch(()=>{}); } catch (e) {} }
+function startFF() {
+  const el = slotEls['0']; if (!el || !el._vid) return;
+  const v = el._vid; holding = true;
+  el.querySelector('.slide-media').classList.add('ffwd');
+  if (v.paused && el.dataset.userPaused !== 'true') { const p = v.play(); if (p) p.catch(()=>{}); }
+  try { v.preservesPitch = false; v.webkitPreservesPitch = false; } catch (e) {}
+  const t0 = v.currentTime;
+  try { v.playbackRate = 2; } catch (e) {}
+  clearTimeout(_ffCheck);
+  _ffCheck = setTimeout(() => {
+    if (!holding || el._vid !== v || v.paused || v.readyState < 3 || Math.abs(v.currentTime - t0) > 0.02) return;      // moving, or simply buffering: leave it alone
+    try { v.playbackRate = 1; v.playbackRate = 2; } catch (e) {}
+    const t1 = v.currentTime;
+    _ffCheck = setTimeout(() => { if (holding && el._vid === v && !v.paused && Math.abs(v.currentTime - t1) < 0.02) ffNudge(v); }, 1000);
+  }, 1000);
+}
+function stopFF() {
+  holding = false; clearTimeout(_ffCheck);
+  if (ffTimer) { clearInterval(ffTimer); ffTimer = null; }
+  const el = slotEls['0']; if (!el) return;
+  el.querySelector('.slide-media').classList.remove('ffwd');
+  const v = el._vid; if (!v) return;
+  try { v.playbackRate = 1; } catch (e) {}
+  const t1 = v.currentTime;
+  setTimeout(() => { if (el._vid === v && !v.paused && !holding && slotEls['0'] === el && v.readyState >= 3 && Math.abs(v.currentTime - t1) < 0.02) ffNudge(v); }, 1200);
+}
+
+/* ---------- slide construction ---------- */
+function buildSlide(item, i) {
+  const el = document.createElement('div');
+  el.className = 'slide';
+  el.dataset.id = item.id;
+  el.innerHTML =
+    '<div class="slide-media">' +
+      '<img alt="" decoding="async">' +
+      '<div class="status-badge"><div class="spinner"></div></div>' +
+      '<div class="mask-bottom"></div><div class="mask-rail"></div>' +
+      '<div class="pause-icon">&#10074;&#10074;</div>' +
+      '<div class="tap-icon">&#9654;</div>' +
+    '</div>' +
+    '<div class="slide-overlay">' +
+      '<div class="slide-author"></div>' +
+      '<div class="slide-desc"></div>' +
+      '<div class="slide-title">' + esc(itemLabel(item)) + '</div>' +
+      '<div class="slide-cat">' + esc(catLine(item)) + '</div>' +
+    '</div>' +
+    '<div class="rail">' +
+      '<button class="rail-btn mute-btn" aria-label="Sound">&#128263;</button>' +
+      '<button class="rail-btn info-btn" aria-label="Info">&#8505;</button>' +
+      '<button class="rail-btn share-btn" aria-label="Share">&#10148;</button>' +
+      '<button class="rail-btn tag-btn2" aria-label="Organise">&#127991;</button>' +
+    '</div>' +
+    '<div class="scrub"><div class="scrub-track"><div class="scrub-fill"></div></div><div class="scrub-time"></div></div>';
+  const media = el.querySelector('.slide-media');
+  const pimg = el.querySelector('img');
+  pimg.addEventListener('load', () => {   // blur only the small 3:4 crops; full-frame posters are shown as they are
+    const r = pimg.naturalWidth / Math.max(1, pimg.naturalHeight);
+    pimg.classList.toggle('lowres', !pimg.dataset.hi && r > 0.66 && r < 0.9);
+    if (pimg.dataset.hi || r <= 0.66) pimg.style.objectFit = fitFor(r);
+  });
+  bindScrub(el);
+  bindThumb(el.querySelector('img'), item.id,
+    () => Math.abs(i - curIndex),
+    () => { el.classList.add('unavailable-slide');
+            media.querySelector('.status-badge').textContent = 'Video unavailable'; });
+  // rail buttons stop propagation so they don't start a drag
+  el.querySelector('.tag-btn2').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.share-btn').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.mute-btn').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.info-btn').onpointerdown = (e) => e.stopPropagation();
+  el.querySelector('.tag-btn2').onclick = (e) => { e.stopPropagation(); openCategorySheet(item); };
+  el.querySelector('.share-btn').onclick = (e) => { e.stopPropagation(); shareVideo(item); };
+  el.querySelector('.info-btn').onclick = (e) => { e.stopPropagation(); showInfo(item.id); };
+  const authEl = el.querySelector('.slide-author');
+  // v19: no stopPropagation on pointerdown: a swipe (or hold for 2x) that starts on the name
+  // or the caption moves the feed, as on TikTok. The stage turns a tap there into the action
+  // (overlayTap); a click arriving right after a stage gesture is ignored so nothing runs twice.
+  authEl.onclick = (e) => { e.stopPropagation(); if (overlayClickSuppressed()) return; openCreator(item.id); };
+  const mb = el.querySelector('.mute-btn');
+  syncMuteBtn(mb);
+  mb.onclick = (e) => {
+    e.stopPropagation();
+    desiredMuted = !desiredMuted;
+    // This tap is a genuine user gesture. When turning sound ON, call play() on
+    // ALL live slot videos synchronously here — that grants each pooled element
+    // audio activation while the gesture is valid, so when you later swipe to a
+    // preloaded neighbour it can play unmuted without a fresh tap. The pool
+    // reuses these same activated elements, so the grant carries forward.
+    if (!desiredMuted) {
+      audioUnlocked = true;
+      ['-1','0','1'].forEach(k => { const s = slotEls[k]; if (s && s._vid) { const p = s._vid.play(); if (p) p.catch(()=>{}); } });
+    }
+    const cur = slotEls['0'];
+    if (cur && cur._vid) { cur._vid.muted = desiredMuted; if (!desiredMuted) { const p = cur._vid.play(); if (p) p.catch(()=>{}); } }
+    ['-1','1'].forEach(k => { const s = slotEls[k]; if (s && s._vid) { s._vid.muted = true; s._vid.pause(); } });
+    document.querySelectorAll('.mute-btn').forEach(syncMuteBtn);
+  };
+  // Tapping the caption expands/collapses it (long descriptions are clamped).
+  const descEl = el.querySelector('.slide-desc');
+  descEl.onclick = (e) => { e.stopPropagation(); if (overlayClickSuppressed()) return; descEl.classList.toggle('expanded'); };
+  // Populate creator/description from whatever metadata we already have cached
+  // (from a prior oEmbed thumbnail fetch or resolve); it fills in later otherwise.
+  fillOverlay(el, item.id);
+  return el;
+}
+
+// Metadata store (creator + description), populated as a side effect of the
+// thumbnail oEmbed fetch and the video resolve. Persisted so it accrues across
+// sessions and becomes the searchable index.
+const _metaTS = trackedStore(legacyLoad('meta'));
+let metaStore = _metaTS.obj;
+const metaReady = hydrateTracked('meta', _metaTS, 'meta');
+let metaDirty = false;
+setInterval(() => { metaDirty = false; flushTracked('meta', _metaTS, 'meta'); }, 3000);
+function metaSet(id, m) {
+  const cur = metaStore[id] || {};
+  const next = { author: m.author || cur.author || '', handle: m.handle || cur.handle || '', desc: (m.desc != null ? m.desc : (cur.desc || '')) };
+  if (m.dur || cur.dur) next.dur = m.dur || cur.dur;
+  if (m.img || cur.img) next.img = m.img || cur.img;
+  metaStore[id] = next; metaDirty = true;
+  // If this video is on screen, reflect it immediately.
+  document.querySelectorAll('.slide[data-id="' + CSS.escape(id) + '"]').forEach(el => fillOverlay(el, id));
+}
+
+// Background metadata HARVESTER — fills creator/description for the whole library
+// so search actually finds videos you haven't opened. oEmbed tolerates rapid
+// calls (unlike the play resolver), so this walks the list gently, skips what's
+// already known, persists as it goes, and pauses while the feed is open so it
+// never competes with playback.
+let _harvestTimer = null, _harvestIdx = 0; const _harvestFailed = new Set();
+let _harvestWaiting = false, _harvestBusy = false;
+const HARVEST_TIMEOUT = 10000;   // whiskey: a request that never answers must not stall the indexer
+const HARVEST_ENABLED = false;   // xray: TikTok's oEmbed no longer returns captions; indexing now happens as videos/thumbnails resolve
+function startHarvest(){
+  if (!HARVEST_ENABLED) return;
+  if (_harvestTimer || _harvestWaiting || _harvestBusy) return;
+  _harvestWaiting = true;
+  metaReady.finally(() => { _harvestWaiting = false; if (_harvestTimer) return; _harvestIdx = 0; _harvestStep(); });
+}
+function _harvestStep(){
+  _harvestTimer = null;
+  if (!state || !state.items || !state.items.length) { _harvestTimer = setTimeout(_harvestStep, 3000); return; }
+  if (document.getElementById('feed').classList.contains('open')) { _harvestTimer = setTimeout(_harvestStep, 1500); return; }
+  const items = state.items;
+  while (_harvestIdx < items.length) {
+    const it = items[_harvestIdx];
+    if (!metaStore[it.id] && !_harvestFailed.has(it.id)) break;
+    _harvestIdx++;
+  }
+  if (_harvestIdx >= items.length) { _harvestIdx = 0; return; }   // done for now; re-kicked on demand
+  const it = items[_harvestIdx];
+  _harvestBusy = true;
+  const hc = new AbortController(); const ht = setTimeout(() => hc.abort(), HARVEST_TIMEOUT);
+  fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent('https://www.tiktok.com/@i/video/' + it.id), { signal: hc.signal })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(d => {
+      if (d && (d.author_name || d.title)) {
+        let h = ''; const mm = /tiktok\.com\/@([^/?]+)/.exec(d.author_url || ''); if (mm) h = mm[1];
+        metaSet(it.id, { author: d.author_name || '', handle: h || d.author_unique_id || '', desc: d.title || '' });
+        if (d.thumbnail_url && !thumbCache[it.id]) { thumbCache[it.id] = { u: d.thumbnail_url, t: Date.now() }; cacheDirty = true; }
+      } else { _harvestFailed.add(it.id); }
+      _harvestIdx++;
+    })
+    .catch(() => { _harvestFailed.add(it.id); })
+    .finally(() => { clearTimeout(ht); _harvestBusy = false; _harvestTimer = setTimeout(_harvestStep, 250); });
+}
+function fillOverlay(el, id) {
+  const m = metaStore[id]; if (!m) return;
+  const a = el.querySelector('.slide-author'); const d = el.querySelector('.slide-desc');
+  if (a) a.textContent = m.author ? (m.handle ? m.author + '  ·  @' + m.handle : m.author) : (m.handle ? '@' + m.handle : '');
+  if (d) setDesc(d, m.desc || '');
+}
+// On-screen fallback for creator + description (the ⓘ rail button). Always
+// accessible even if the on-video overlay is hard to read; if metadata isn't
+// known yet it forces a resolve and fills in.
+function showInfo(id) {
+  const render = () => {
+    const m = metaStore[id] || {};
+    const who = m.author ? (m.handle ? m.author + '  ·  @' + m.handle : m.author) : (m.handle ? '@' + m.handle : '(creator unknown yet)');
+    const desc = (m.desc || '(no description available)') + (senderOf(id) ? '\n\nSent by ' + senderOf(id) : '');
+    infoModal(who, desc);
+  };
+  render();
+  if (!metaStore[id] || !metaStore[id].desc) requestResolve(id, 0).then(() => { render(); }).catch(()=>{});
+}
+function infoModal(title, message) {
+  closeOverlays();
+  const b = document.createElement('div');
+  b.className = 'modal-backdrop';
+  b.innerHTML =
+    '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div>' +
+    '<div class="modal-message" style="max-height:50vh;overflow:auto;white-space:pre-wrap;text-align:left">' + esc(message) + '</div>' +
+    '<div class="modal-actions"><button class="modal-btn primary" id="modalOk">Done</button></div></div>';
+  document.body.appendChild(b);
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelector('#modalOk').onclick = closeOverlays;
+}
+
+// Reflects the REAL current sound state, not just the session preference: when
+// the current video's unmute was rejected and it fell back to muted playback
+// (soundBlocked), show a distinct "blocked" state rather than falsely claiming
+// sound is on — that mismatch was the reported "icon says unmuted but it's
+// silent." A tap on a blocked icon retries with a fresh gesture.
+function syncMuteBtn(b) {
+  const slide = b.closest('.slide');
+  const isCurrent = slide && slotEls['0'] === slide;
+  const blocked = isCurrent && !desiredMuted && (slide._soundBlocked || slide._muted === true);
+  if (desiredMuted) {
+    b.innerHTML = '&#128263;';
+    b.classList.remove('active', 'blocked');
+  } else if (blocked) {
+    b.innerHTML = '&#128263;';
+    b.classList.remove('active');
+    b.classList.add('blocked');
+  } else {
+    b.innerHTML = '&#128266;';
+    b.classList.add('active');
+    b.classList.remove('blocked');
+  }
+}
+function syncCurrentMuteBtn() {
+  const el = slotEls['0'];
+  if (!el) return;
+  const b = el.querySelector('.mute-btn');
+  if (b) syncMuteBtn(b);
+}
+
+// Remove a video from the current feed view (used by delete/restore/purge).
+function feedDropCurrent(id) {
+  const i = feedList.findIndex(x => x.id === id);
+  if (i < 0) return;
+  feedList.splice(i, 1);
+  if (!feedList.length) { document.getElementById('feedBack').onclick(); return; }
+  if (curIndex >= feedList.length) curIndex = feedList.length - 1;
+  else if (i < curIndex) curIndex--;
+  if (feedMode === 'shuffle') { const ss = SH[SH.mode]; ss.served = feedList.map(x => x.id); ss.pos = curIndex; saveSH(); }
+  buildAllSlots(); setTrack(0, false); scheduleCurrentPlayer(120);
+}
+
+// keep slot heights correct across rotation / resize
+window.addEventListener('resize', () => {
+  if (document.getElementById('feed').classList.contains('open')) {
+    layoutSlots(); setTrack(0, false);
+  }
+});
+
+
+/* ============================================================
+   PLAYER
+   ============================================================ */
+/* ============================================================
+   PLAYER — native <video> + browser-side resolver.
+
+   Replaces the TikTok player/v1 iframe. Each video ID is resolved to a direct
+   MP4 URL by a free public resolver (called straight from the browser, CORS-
+   open), then played in ONE persistent <video> element reused across slides.
+   Reusing a single, gesture-unlocked element is what lets sound persist across
+   swipes on iOS — a fresh element unmuted outside a gesture gets paused by the
+   platform. el._state mirrors the old iframe states (1 playing / 2 paused /
+   3 buffering / undefined none) so the debug overlay keeps working.
+   ============================================================ */
+/* ---- v7: source health and notices ----
+   The app depends on things it does not control (the resolver, TikTok's image and video
+   servers). When one of them stops behaving as expected, say so in one plain line instead of
+   silently showing blanks; clear the line by itself when things recover. Counters are also
+   shown under Library & backup -> App status. */
+const HEALTH = { ok: 0, fail: 0, failRun: 0, lastOkAt: 0, lastFail: '', shapeRun: 0, shapeMissing: '', coverOk: 0, coverFail: 0, notFoundRun: 0, linkHours: 0 };
+const _notices = new Map(), _dismissed = new Map();
+function paintNotice() {
+  const n = document.getElementById('notice'); if (!n) return;
+  const live = [..._notices.entries()].filter(([k]) => !(Date.now() - (_dismissed.get(k) || 0) < 600000));
+  n.textContent = live.length ? live[live.length - 1][1] : ''; n.dataset.key = live.length ? live[live.length - 1][0] : '';
+  n.classList.toggle('show', live.length > 0);
+}
+function showNotice(key, text) { if (_notices.get(key) === text) return; _notices.set(key, text); paintNotice(); }
+function clearNotice(key) { if (_notices.delete(key)) paintNotice(); }
+document.getElementById('notice').onclick = () => { const k = document.getElementById('notice').dataset.key; if (k) { _dismissed.set(k, Date.now()); paintNotice(); } };
+window.addEventListener('offline', () => showNotice('offline', 'No internet connection. Videos already loaded keep playing.'));
+window.addEventListener('online', () => clearNotice('offline'));
+function healthOk(d, play, cover, nImages) {            // a resolver answer arrived: is it shaped as expected?
+  HEALTH.ok++; HEALTH.failRun = 0; HEALTH.notFoundRun = 0; HEALTH.lastOkAt = Date.now(); clearNotice('resolver');
+  const au = d.author || {}, miss = [];
+  if (!cover) miss.push('cover image'); if (!('title' in d)) miss.push('caption'); if (!au.unique_id && !au.nickname) miss.push('creator');
+  const x = playExpiry(play); if (x) HEALTH.linkHours = Math.round((x - Date.now()) / 360000) / 10;
+  if (miss.length) { HEALTH.shapeRun++; HEALTH.shapeMissing = miss.join(', ');
+    if (HEALTH.shapeRun >= 3) showNotice('shape', 'TikTok changed something: new videos arrive without ' + HEALTH.shapeMissing + '. Everything already on the phone is unaffected.'); }
+  else { HEALTH.shapeRun = 0; clearNotice('shape'); }
+}
+function healthFail(msg, notFound) {
+  if (notFound) { if (++HEALTH.notFoundRun >= 6) showNotice('resolver', 'The video source cannot find any videos right now. It may be broken; nothing is being marked unavailable.'); return; }
+  HEALTH.fail++; HEALTH.failRun++; HEALTH.lastFail = String(msg || '').slice(0, 80);
+  if (HEALTH.failRun >= 4 && navigator.onLine !== false) showNotice('resolver', 'The video source is not answering. Videos already prepared still play; others have to wait.');
+}
+function healthCover(ok) {
+  if (ok) { HEALTH.coverOk++; clearNotice('covers'); return; }
+  if (++HEALTH.coverFail >= 5 && HEALTH.coverOk === 0) showNotice('covers', 'Cover images cannot be saved on the phone right now (TikTok may have changed something). Thumbnails still show while online.');
+}
+function appStatus() {
+  const ago = (t) => t ? Math.round((Date.now() - t) / 1000) + ' s ago' : 'not yet this session';
+  const ls = LIBSYNC.state();
+  infoModal('App status · v' + APP_VERSION,
+    'Video source: ' + HEALTH.ok + ' answers, ' + HEALTH.fail + ' failures this session; last good answer ' + ago(HEALTH.lastOkAt) + (HEALTH.lastFail ? '\nLast failure: ' + HEALTH.lastFail : '') +
+    '\nVideo links currently last: ' + (HEALTH.linkHours ? HEALTH.linkHours + ' h' : 'unknown') +
+    '\nCovers saved this session: ' + HEALTH.coverOk + (HEALTH.coverFail ? ' (' + HEALTH.coverFail + ' could not be saved)' : '') +
+    '\nOn this phone: ' + LIB.count() + ' cover images, ' + Object.keys(_metaTS.target).length + ' captions, ' + state.items.length + ' videos in the list' +
+    '\nAutomatic library: ' + (ls.key ? 'on, ' + ls.parts + ' parts loaded' : (ls.available ? 'available, no code entered' : 'not published')) +
+    (_notices.size ? '\n\nCurrent notices:\n' + [..._notices.values()].join('\n') : '\n\nNo problems detected.'));
+}
+const RESOLVER = 'https://www.tikwm.com/api/?url=';
+const RESOLVE_TTL = 2 * 60 * 60 * 1000;   // fallback lifetime when a link's own expiry can't be read
+const _rvMem = new Map();
+// v2: a video link carries its expiry as a hex timestamp in its path (about 6 h, measured
+// Nov 14 2026). Use it, minus 15 minutes so a video never starts on a link about to die.
+function playExpiry(u){
+  const m = /^https?:\/\/[^/]+\/[0-9a-f]{32}\/([0-9a-f]{8})\//.exec(u || ''); const x = m ? parseInt(m[1], 16) * 1000 : 0;
+  return (x > Date.now() + 60000 && x < Date.now() + 48 * 3600e3) ? x : 0;
+}
+function rvFresh(r){ return !!r && Date.now() < (r.exp ? r.exp - 900000 : r.ts + RESOLVE_TTL); }
+function cacheGet(id){ const r=_rvMem.get(String(id)); return rvFresh(r) ? r : null; }
+function cacheSet(id,d){ const r={play:d.play,ts:Date.now(),exp:playExpiry(d.play)}; if (d.poster) r.poster=d.poster;
+  if (d.images && d.images.length) { r.images = d.images; const x = coverExpiry(d.images[0]); if (x) r.exp = r.exp ? Math.min(r.exp, x) : x; }   // picture links expire too
+  _rvMem.set(String(id),r); if (KV.ok) KV.write('rv', [[String(id), r]], []).catch(()=>{}); }
+function cacheDrop(id){ _rvMem.delete(String(id)); if (KV.ok) KV.write('rv', [], [String(id)]).catch(()=>{}); }
+// Load fresh resolved URLs; move any old per-video localStorage keys over and delete them.
+(async () => {
+  const legacy = [];
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith('rv:')) legacy.push(k); } } catch (e) {}
+  const now = Date.now(), puts = [];
+  legacy.forEach(k => { try { const r = JSON.parse(localStorage.getItem(k)); if (r && now - r.ts < RESOLVE_TTL) { _rvMem.set(k.slice(3), r); puts.push([k.slice(3), r]); } } catch (e) {} });
+  try {
+    const all = await KV.getAll('rv'), stale = [];
+    for (const k in all) { if (rvFresh(all[k])) { if (!_rvMem.has(k)) _rvMem.set(k, all[k]); } else stale.push(k); }
+    await KV.write('rv', puts, stale);
+    legacy.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+  } catch (e) {}
+})();
+// The free resolver hard-limits to ~1 request/second: spaced ~1.1s apart every
+// call succeeds, but a burst gets rejected (code -1). So resolution runs through
+// ONE rate-limited priority queue: the current video first, then near neighbours,
+// then a small forward prefetch window; rejections retry with backoff; requests
+// for videos you've scrolled away from are dropped so the ~1/sec budget always
+// goes to what's on screen. Cold videos still cost ~1s each (a third-party
+// ceiling), but nothing floods the resolver, so loads are reliable, not freezy.
+// v2 (measured Nov 14 2026): the limit is on how close together calls START (a call 1.0 s
+// after another is refused; 1.3 s is accepted even while the first is still in flight),
+// a refusal costs 0.1 s and carries no penalty, and one call takes 0.5-2.5 s (2-7 s for a
+// video the resolver can't find). So calls now start on a steady clock without waiting
+// for the previous answer: a slow or dead video no longer holds up the one you tapped.
+const MIN_GAP = 1150, MAX_FLIGHT = 4, RESOLVE_TIMEOUT = 12000;
+// v20 (benchmark gap 2, Nov 16): the resolver sometimes hangs for 12 s or more per call. For the
+// video on screen and its neighbours (prio <= 1): (1) if MAX_FLIGHT calls are already out, the
+// oldest warmer / prefetch call is aborted and put back in the queue (no penalty), so it never
+// holds them up (aborting rather than adding calls: a browser opens at most 6 connections per
+// host, and hung calls hold theirs); (2) if their call has not answered after HEDGE_MS, a second
+// call for the same video goes out on the next clock tick (one extra slot at most); whichever
+// answers first wins (the slow one is left to finish or time out on its own).
+const HEDGE_MS = 3000, URGENT = 1;   // normal answers take 0.5-2.5 s
+const _flightT = new Map();   // id -> { t0, job, hedgeTimer } for primary calls in flight
+let _queue = [];              // [{id, prio, tries}]
+let _timer = null, _lastRes = 0, _lastOk = 0;
+const _flying = new Set();    // ids with a call in flight
+const _suspect = new Map();   // id -> time of a "can't find it" answer not yet confirmed
+const _waiters = new Map();   // id -> [resolve fns]
+const _thumbWaiters = new Map();   // xray: id -> [resolve fns] for thumbnail jobs (resolve with {cover} | null | 'dropped')
+const THUMB_PRIO = 10;
+function _emitThumb(id, val){ const ws=_thumbWaiters.get(id); if(ws){ _thumbWaiters.delete(id); ws.forEach(f=>f(val)); } }
+function resolveForThumb(id){
+  id = String(id);
+  const p = new Promise(res => { const a=_thumbWaiters.get(id)||[]; a.push(res); _thumbWaiters.set(id,a); });
+  if (!_flying.has(id) && !_queue.find(q => q.id === id)) _queue.push({ id, prio: THUMB_PRIO, tries: 0 });
+  _pump();
+  return p;
+}
+function cancelThumbResolve(id){
+  id = String(id);
+  if (!_waiters.has(id)) _queue = _queue.filter(q => !(q.id === id && q.prio >= THUMB_PRIO));
+  _emitThumb(id, 'dropped');
+}
+function _emit(id, val, err){ const ws=_waiters.get(id); if(ws){ _waiters.delete(id); ws.forEach(w=> err? w.rej(err): w.res(val)); } }
+
+function goneError(){ const e = new Error('gone'); e.gone = true; return e; }
+function requestResolve(id, prio){
+  const c = cacheGet(id); if (c) return Promise.resolve(c);
+  id = String(id);
+  if (isGone(id)) return Promise.reject(goneError());       // v2: remembered; a tap on the slide re-checks
+  const existing = _queue.find(q => q.id === id);
+  if (existing) { if (prio < existing.prio) existing.prio = prio; }
+  else if (!_flying.has(id)) _queue.push({ id, prio, tries: 0 });
+  else { const f = _flightT.get(id); if (f && prio < f.job.prio) { f.job.prio = prio; _armHedge(id); } }
+  const p = new Promise((res, rej) => { const a=_waiters.get(id)||[]; a.push({res,rej}); _waiters.set(id,a); });
+  _pump();
+  return p;
+}
+function _armHedge(id){
+  const f = _flightT.get(id); if (!f || f.job.prio > URGENT || f.hedgeTimer || f.job.hedged) return;
+  f.hedgeTimer = setTimeout(() => {
+    const g = _flightT.get(id); if (g !== f || f.job.hedged || cacheGet(id)) return;
+    f.job.hedged = true; _queue.push({ id, prio: f.job.prio, tries: f.job.tries, hedge: true }); _pump();
+  }, Math.max(0, HEDGE_MS - (Date.now() - f.t0)));
+}
+function _preempt(){
+  let old = null;
+  _flightT.forEach(f => { if (f.job.prio > URGENT && f.ac && !f.job.preempted && (!old || f.t0 < old.t0)) old = f; });
+  if (!old) return false;
+  old.job.preempted = true; try { old.ac.abort(); } catch (e) {}
+  return true;
+}
+function _pump(){
+  if (_timer || !_queue.length) return;
+  if (_flying.size >= MAX_FLIGHT) {
+    if (!_queue.some(q => q.prio <= URGENT)) return;
+    if (_preempt()) return;                        // its slot frees in a moment (the aborted call's .then pumps again)
+    if (_flying.size >= MAX_FLIGHT + 1) return;
+  }
+  _timer = setTimeout(() => { _timer = null; _fire(); _pump(); }, Math.max(0, MIN_GAP - (Date.now() - _lastRes)));
+}
+function _fire(){
+  _queue.sort((a,b) => a.prio - b.prio);
+  const job = _queue.shift();
+  if (!job) return;
+  const hit = cacheGet(job.id);
+  if (hit && !_thumbWaiters.has(job.id)) { _emit(job.id, hit); return; }   // nothing sent, no wait owed
+  if (job.hedge && hit) return;                                          // the first call answered meanwhile
+  const key = job.hedge ? job.id + '#hedge' : job.id;
+  _lastRes = Date.now(); _flying.add(key);
+  if (!job.hedge) { _flightT.set(job.id, { t0: _lastRes, job, hedgeTimer: null }); _armHedge(job.id); }
+  _run(job).then(() => { _flying.delete(key); if (!job.hedge) { const f = _flightT.get(job.id); if (f && f.job === job) { clearTimeout(f.hedgeTimer); _flightT.delete(job.id); } } _pump(); });
+}
+// A video the resolver says it can't find is remembered as gone only when (a) it said so
+// twice, (b) ANOTHER video then succeeds within 2 minutes (the resolver demonstrably works),
+// and (c) that success did not come after a run of not-found answers (v7: more than 4 in a
+// row is treated as the resolver being broken, and every pending verdict is thrown away).
+// A resolver outage must never brand the library, not even its first or last minutes.
+function markGone(id){
+  thumbCache[id] = { gone: true, t: Date.now() }; cacheDirty = true;
+  _emit(id, null, goneError()); _emitThumb(id, { gone: true });
+  document.querySelectorAll('.thumb-tile[data-id="' + CSS.escape(id) + '"]').forEach(t => t.classList.add('unavailable'));
+  document.querySelectorAll('.slide[data-id="' + CSS.escape(id) + '"]').forEach(el => {
+    if (el._state === 1) return; unmountSlot(el); el.classList.add('unavailable-slide');
+    const sb = el.querySelector('.status-badge'); if (sb) sb.textContent = 'Video unavailable';
+    const m = el.querySelector('.slide-media'); if (m) m.classList.remove('needs-tap', 'resolving');
+  });
+}
+async function _run(job){
+  const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const to = setTimeout(() => { if (ac) ac.abort(); }, RESOLVE_TIMEOUT);
+  const fl = _flightT.get(job.id); if (fl && fl.job === job) fl.ac = ac;
+  try {
+    const res = await fetch(RESOLVER + encodeURIComponent('https://www.tiktok.com/@i/video/' + job.id), ac ? { signal: ac.signal } : undefined);
+    const j = await res.json();
+    if (j.code !== 0 || !j.data || !j.data.play) { const e = new Error('code ' + (j.msg||j.code)); e.msg = String(j.msg || ''); throw e; }
+    let play = j.data.play; if (play[0]==='/') play='https://www.tikwm.com'+play;
+    const au = j.data.author || {};
+    metaSet(job.id, { author: au.nickname || '', handle: au.unique_id || '', desc: j.data.title || '' });
+    // v4: origin_cover is the whole frame (360x640, ~12 KB): right framing for the start frame, fine for the grid
+    let cover = j.data.origin_cover || j.data.cover || ''; if (cover && cover[0]==='/') cover='https://www.tikwm.com'+cover;
+    const imgs = Array.isArray(j.data.images) ? j.data.images.filter(u => typeof u === 'string' && u) : [];
+    const out = { play, poster: cover }; if (imgs.length) out.images = imgs;
+    cacheSet(job.id, out); _emit(job.id, cacheGet(job.id) || out);
+    if (j.data.duration || imgs.length) metaSet(job.id, { dur: j.data.duration || 0, img: imgs.length });
+    if (cover && !_thumbWaiters.has(job.id) && !LIB.has(job.id)) LIB.saveCover(job.id, cover);   // keep the image even when only the video was wanted
+    _emitThumb(job.id, { cover });
+    const storm = HEALTH.notFoundRun > 4;
+    _lastOk = Date.now(); healthOk(j.data, play, cover, imgs.length);
+    if (!storm) _suspect.forEach((t, id) => { if (_lastOk - t < 120000) markGone(id); });
+    _suspect.clear();
+  } catch (e) {
+    const msg = e && e.msg || '';
+    if (job.hedge) { if (/limit/i.test(msg)) _lastRes = Date.now(); return; }   // v20: the first call owns retries and verdicts
+    if (job.preempted) { job.preempted = false; _queue.push(job); return; }      // v20: stepped aside for the video on screen
+    if (cacheGet(job.id)) return;                                            // v20: a hedge call already answered
+    if (/limit/i.test(msg)) { _lastRes = Date.now(); job.tries += 0.34; }   // refused for pace (something else on this network is calling too): wait a full gap
+    else job.tries++;
+    if (!/limit/i.test(msg)) healthFail(msg || (e && e.message), /parsing is failed/i.test(msg));
+    if (/parsing is failed/i.test(msg) && job.tries >= 2) {
+      _suspect.set(job.id, Date.now()); _emit(job.id, null, e); _emitThumb(job.id, null);   // verdict waits for the next success
+    } else {
+      const thumbOnly = job.prio >= THUMB_PRIO && !_waiters.has(job.id);
+      if (job.tries < (thumbOnly ? 2 : 5)) _queue.push(job);        // rate-limited/transient — retry later
+      else { _emit(job.id, null, e); _emitThumb(job.id, null); }   // give up: waiters see rejection
+    }
+  } finally { clearTimeout(to); }
+}
+// Drop pending requests for videos no longer near the current index, so the
+// rate budget isn't spent on things you've already scrolled past.
+function pruneQueue(keepIds){ _queue = _queue.filter(q => { if (keepIds.has(q.id)) return true; _emitThumb(q.id, 'dropped'); return false; }); }
+function clearResolveQueue(){ _queue.forEach(q => _emitThumb(q.id, 'dropped')); _queue = []; _waiters.clear(); }
+
+// resolve(id, prio) — compatibility wrapper used by mountSlot.
+function resolve(id, prio){ return requestResolve(id, prio == null ? 1 : prio); }
+function prefetch(idx, prio){ const it = feedList[idx]; if (it && !cacheGet(it.id)) requestResolve(it.id, prio == null ? 4 : prio).catch(() => {}); }
+
+/* ---- pool of reusable <video> elements (prev/current/next ring) ----
+   The next clip is preloaded (src set, buffering, paused) so a swipe promotes
+   an already-ready element instead of re-downloading — the fix for slow+freezy.
+   Elements are REUSED (not recreated), so once the first unmute tap unlocks
+   audio on them, sound keeps working across swipes.
+   (audioUnlocked is declared once, up near desiredMuted.) */
+const vpool = [];
+function newVideo(){
+  const v=document.createElement('video');
+  v.playsInline=true; v.loop=true; v.muted=true; v.preload='auto';
+  v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline',''); v.setAttribute('loop',''); v.setAttribute('muted','');
+  const slideOf=()=>v.closest('.slide');
+  // NOTE: we do NOT reveal the video (fade the thumbnail) on 'playing' — that
+  // event can fire before an actual frame is painted, especially right after a
+  // src swap, which showed as audio-over-black. Revealing is gated on a real
+  // painted frame instead (see revealWhenPainted).
+  v.addEventListener('playing',()=>{ const el=slideOf(); if(!el)return; el._state=1; const m=el.querySelector('.slide-media'); if(m) m.classList.remove('paused','needs-tap','buffering'); revealWhenPainted(el, v); });
+  v.addEventListener('waiting',()=>{ const el=slideOf(); if(el){ el._state=3; const m=el.querySelector('.slide-media'); if(m) m.classList.add('buffering'); } });
+  v.addEventListener('loadedmetadata',()=>{ if(v.videoWidth>0 && v.videoHeight>0) v.style.objectFit = fitFor(v.videoWidth / v.videoHeight); });
+  v.addEventListener('pause',()=>{ const el=slideOf(); if(el&&el._state===1) el._state=2;
+    // v4: if the system pauses the video on screen (not the user, not us), resume it. If that happens
+    // right after a neighbour was primed, stop priming for this session: this phone doesn't tolerate it.
+    if (el && slotEls['0']===el && el._wantPlay && !el._scrubbing && el.dataset.userPaused!=='true' && !document.hidden && !v.ended && (el._resumes||0) < 3) {
+      el._resumes = (el._resumes||0) + 1;
+      if (Date.now() - _lastPrimeAt < 1500) _primeOff = true;
+      setTimeout(()=>{ if (slotEls['0']===el && el._vid===v && v.paused && el.dataset.userPaused!=='true') { const p=v.play(); if(p)p.catch(()=>{}); } }, 60);
+    } });
+  v.addEventListener('error',()=>{ const el=slideOf(); if(!el) return; el._state=undefined;
+    // v2: links are now trusted for hours, so one that died early gets one fresh resolve before asking for a tap
+    if (el._vidId && !el._retried) { el._retried = true; cacheDrop(el._vidId); el._vidId = null; mountSlot(el, slotEls['0']===el); return; }
+    el.querySelector('.slide-media').classList.add('needs-tap'); });
+  return v;
+}
+// Reveal the video (fade out the thumbnail) only once a real frame of the
+// CURRENT source has actually been presented — otherwise the thumbnail hides
+// over a still-black video and you get sound over a black screen. Uses
+// requestVideoFrameCallback (fires on frame present) with a timeupdate fallback.
+function revealWhenPainted(el, v){
+  const media = el.querySelector('.slide-media'); if(!media) return;
+  const tok = (el._revealTok = (el._revealTok||0) + 1);
+  const show = () => { if(el._revealTok===tok && v.videoWidth>0) media.classList.add('is-playing'); };
+  if(v.videoWidth>0 && v.readyState>=2 && v.currentTime>0){ media.classList.add('is-playing'); return; }
+  if('requestVideoFrameCallback' in HTMLVideoElement.prototype){
+    const step = () => { if(el._revealTok!==tok) return; if(v.videoWidth>0){ show(); } else { try{ v.requestVideoFrameCallback(step); }catch(e){} } };
+    try{ v.requestVideoFrameCallback(step); }catch(e){ show(); }
+  } else {
+    const onT = () => { if(el._revealTok!==tok){ v.removeEventListener('timeupdate',onT); return; } if(v.videoWidth>0 && v.currentTime>0){ show(); v.removeEventListener('timeupdate',onT); } };
+    v.addEventListener('timeupdate', onT);
+  }
+}
+function acquireVideo(){ return vpool.pop() || newVideo(); }
+function releaseVideo(v){ if(!v) return; try{ v.pause(); v.playbackRate=1; v.removeAttribute('src'); v.load(); }catch(e){} if(v.parentNode) v.parentNode.removeChild(v); if(vpool.length<2) vpool.push(v); }
+
+// Called SYNCHRONOUSLY from the tap that opens the feed (a real user gesture),
+// so the feed can start with sound ON. We pre-create the pooled <video>
+// elements and play a tiny silent primer clip on each right now, inside the
+// gesture — that grants each element audio activation, so when the real videos
+// (which reuse these same elements) play unmuted, iOS allows it. If the platform
+// still refuses, the current video falls back to muted playback (never frozen)
+// and the sound button remains as manual override — so this can only help.
+let audioPrimed = false;
+// v21 (benchmark gap 7): once the primer has started (the permission is granted at the play()
+// call inside the tap and stays with the element), pause it, so an element still waiting for
+// its link doesn't loop the 0.3 s clip (a seek every 0.3 s keeps a phone decoder busy). Not on
+// the slide on screen: a pause there would use up one of its automatic restarts.
+function stopPrimer(v) {
+  if (!v.src || v.src.indexOf('clips/silent.mp4') < 0) return;
+  const s = v.closest && v.closest('.slide'); if (s && slotEls['0'] === s) return;
+  try { v.pause(); } catch (e) {}
+}
+function primeAudioOnGesture(){
+  desiredMuted = false; audioUnlocked = true;
+  while (vpool.length < 3) vpool.push(newVideo());
+  vpool.forEach(v => { try { v.muted = true; if (!v.src) v.src = 'clips/silent.mp4'; const p = v.play(); if (p) p.then(() => stopPrimer(v), () => {}); } catch(e){} });
+  audioPrimed = true;
+}
+
+// v4: videos close to phone-shaped fill the screen (as before); anything else (landscape, square)
+// is shown whole instead of being cropped to a sliver.
+function fitFor(ratio) { return (ratio > 0.5 && ratio < 0.66) ? 'cover' : 'contain'; }
+// v4: swap the blurred thumbnail for the full-frame poster as soon as the resolver has named it.
+function upgradePoster(el, url) {
+  const img = el.querySelector('.slide-media img'); if (!img || !url || img.dataset.hi) return;
+  const hi = new Image(); hi.decoding = 'async';
+  hi.onload = () => { if (!el.isConnected || img.dataset.hi) return; img.dataset.hi = '1'; img.onerror = null; img.src = url; img.classList.add('loaded'); img.classList.remove('lowres'); };
+  hi.src = url;
+}
+// v6: photo posts. The pictures sit side by side in a sideways-scrolling strip above the
+// (audio-only) player; only the picture on screen and its neighbours are loaded, because the
+// originals are large (about 3 MB each). It moves on by itself every few seconds while the
+// sound plays, unless the strip was touched recently.
+function mountPhotos(el, urls) {
+  const media = el.querySelector('.slide-media'); if (!media || media.querySelector('.photos')) return;
+  const box = document.createElement('div'); box.className = 'photos';
+  const imgs = urls.map(u => { const im = document.createElement('img'); im.alt = ''; im.decoding = 'async'; im.dataset.src = u; box.appendChild(im); return im; });
+  const count = document.createElement('div'); count.className = 'photo-count';
+  let idx = 0, touched = 0, auto = false;
+  const show = (i) => { idx = i; count.textContent = (i + 1) + ' / ' + imgs.length;
+    imgs.forEach((im, k) => { if (Math.abs(k - i) <= 1) { if (!im.getAttribute('src')) im.src = im.dataset.src; } else if (Math.abs(k - i) > 2 && im.getAttribute('src')) im.removeAttribute('src'); }); };
+  box.addEventListener('scroll', () => { const i = Math.round(box.scrollLeft / Math.max(1, box.clientWidth)); if (!auto) touched = Date.now(); if (i !== idx && i >= 0 && i < imgs.length) show(i); }, { passive: true });
+  media.appendChild(box); if (imgs.length > 1) media.appendChild(count); show(0);
+  el._photoGo = (i) => { auto = true; box.scrollTo({ left: i * box.clientWidth, behavior: 'smooth' }); setTimeout(() => { auto = false; }, 700); };
+  if (imgs.length > 1) el._photoTimer = setInterval(() => {
+    if (slotEls['0'] !== el || el.dataset.userPaused === 'true' || el._scrubbing || holding || Date.now() - touched < 6000) return;
+    if (!el._vid || el._vid.paused) return;
+    el._photoGo((idx + 1) % imgs.length);
+  }, 3500);
+}
+function fmtTime(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+// v4: scrub bar. Drag anywhere along the bottom edge to move through the video; the picture
+// follows the finger, and playback continues from there on release.
+function bindScrub(el) {
+  const bar = el.querySelector('.scrub'), fill = el.querySelector('.scrub-fill'), time = el.querySelector('.scrub-time');
+  let raf = 0, want = -1, wasPlaying = false;
+  const ratioAt = (e) => { const r = el.querySelector('.scrub-track').getBoundingClientRect(); return Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(1, r.width))); };
+  const apply = () => { raf = 0; const v = el._vid; if (!v || !(v.duration > 0) || want < 0) return;
+    const t = want * v.duration; try { if (v.fastSeek && Math.abs(t - v.currentTime) > 2) v.fastSeek(t); else v.currentTime = t; } catch (e) {}
+    fill.style.width = (want * 100) + '%'; time.innerHTML = fmtTime(t) + ' <span>/ ' + fmtTime(v.duration) + '</span>'; };
+  const move = (e) => { want = ratioAt(e); if (!raf) raf = requestAnimationFrame(apply); };
+  bar.addEventListener('pointerdown', (e) => {
+    e.stopPropagation(); const v = el._vid; if (!v || !(v.duration > 0)) return;
+    el._scrubbing = true; el.classList.add('scrubbing'); bar.classList.add('active'); wasPlaying = !v.paused; v.pause();
+    try { bar.setPointerCapture(e.pointerId); } catch (err) {}
+    move(e);
+  });
+  bar.addEventListener('pointermove', (e) => { if (el._scrubbing) { e.stopPropagation(); move(e); } });
+  const end = (e) => { if (!el._scrubbing) return; e.stopPropagation(); el._scrubbing = false; want = -1; el.classList.remove('scrubbing'); bar.classList.remove('active');
+    const v = el._vid; if (v && wasPlaying && slotEls['0'] === el) { const p = v.play(); if (p) p.catch(()=>{}); } };
+  bar.addEventListener('pointerup', end); bar.addEventListener('pointercancel', end);
+}
+// One light loop moves the bar of the video on screen.
+(function scrubLoop() {
+  const el = slotEls['0'];
+  if (el && el._vid && !el._scrubbing && el._vid.duration > 0) { const f = el._scrubFill || (el._scrubFill = el.querySelector('.scrub-fill')); if (f) f.style.width = (el._vid.currentTime / el._vid.duration * 100) + '%'; }
+  requestAnimationFrame(scrubLoop);
+})();
+// v4: coming back to the app resumes the video (if the phone refuses, the pause icon shows so a tap is obviously needed).
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return; const el = slotEls['0'];
+  if (!el || !el._vid || el.dataset.userPaused === 'true' || !document.getElementById('feed').classList.contains('open')) return;
+  const v = el._vid; if (!v.paused) return;
+  const p = v.play(); if (p) p.catch(()=>{});
+  setTimeout(() => { if (slotEls['0'] === el && el._vid === v && v.paused) { el.dataset.userPaused = 'true'; el.querySelector('.slide-media').classList.add('paused'); } }, 800);
+});
+
+// v4: a waiting neighbour shows its real first frame (not only the cover) and has data
+// buffered: play it muted until one frame has been presented, then pause it. An iPhone shows
+// nothing for a video that has never played. Skipped once it is the video being swiped to.
+let _primeOff = false, _lastPrimeAt = 0;
+function primeFrame(el, v) {
+  const src = v.src;
+  const settle = () => { if (v.src !== src || el._vid !== v) return; if (el._wantPlay || slotEls['0'] === el) return; v.pause(); };
+  if (!src || _primeOff || el._primedSrc === src) { settle(); return; }
+  el._primedSrc = src; _lastPrimeAt = Date.now();
+  const p = v.play(); if (p) p.catch(()=>{});
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) { try { v.requestVideoFrameCallback(settle); } catch (e) { setTimeout(settle, 400); } }
+  else { const onT = () => { v.removeEventListener('timeupdate', onT); settle(); }; v.addEventListener('timeupdate', onT); }
+  setTimeout(settle, 2500);                 // never leave a neighbour running
+}
+
+// Attach a pooled video to a slide, resolve+set its src (preload), and either
+// play it (active) or leave it buffering+paused (neighbour).
+function mountSlot(el, active){
+  if(!el || el.classList.contains('unavailable-slide')) return;
+  const media=el.querySelector('.slide-media'); if(!media) return;
+  if(!el._vid){ el._vid=acquireVideo(); media.appendChild(el._vid); media.classList.add('has-player'); }
+  const v=el._vid, id=el.dataset.id;
+  const applyState=()=>{
+    media.classList.remove('resolving');
+    if(active){
+      el._wantPlay = true;
+      v.muted = desiredMuted || !audioUnlocked;
+      const p=v.play(); if(p)p.catch(()=>{});
+      // Safety: if we asked for SOUND but the platform refused (video still
+      // paused shortly after), fall back to muted playback so it never freezes.
+      if(!v.muted){
+        setTimeout(()=>{ if(slotEls['0']===el && el.dataset.userPaused!=='true' && v.paused){ v.muted=true; const q=v.play(); if(q)q.catch(()=>{}); } }, 900);
+      }
+    } else { v.muted=true; primeFrame(el, v); }
+  };
+  if(el._vidId===id && v.src){ const c=cacheGet(id); if(c){ upgradePoster(el, c.poster); if(c.images) mountPhotos(el, c.images); } applyState(); return; }         // already mounted
+  el._token=(el._token||0)+1; const tok=el._token;
+  // Show the spinner while resolving so a cold video reads as loading, not frozen.
+  if(active && el._state!==1) media.classList.add('resolving');
+  resolve(id, active ? 0 : 1).then(r=>{
+    if(!r) throw new Error('null');
+    if(el._token!==tok || el._vid!==v) return;
+    upgradePoster(el, r.poster);
+    if (r.images) mountPhotos(el, r.images);
+    if(v.src!==r.play){ media.classList.remove('is-playing'); el._revealTok=(el._revealTok||0)+1; v.src=r.play; try{v.load(); v.playbackRate=1;}catch(e){} resumePlace(v, id); }
+    el._vidId=id; applyState();
+  }).catch((e)=>{ media.classList.remove('resolving');
+    if (e && e.gone) {                       // v2: remembered as unavailable; a tap re-checks
+      unmountSlot(el); el.classList.add('unavailable-slide');
+      const sb = media.querySelector('.status-badge'); if (sb) sb.textContent = 'Video unavailable';
+      return;
+    }
+    if(slotEls['0']===el) media.classList.add('needs-tap'); });
+}
+function unmountSlot(el){
+  if(!el) return;
+  rememberPlace(el);
+  if(el._playGrace){ clearTimeout(el._playGrace); el._playGrace=null; }
+  if(el._vid){ releaseVideo(el._vid); el._vid=null; el._vidId=null; }
+  if(el._photoTimer){ clearInterval(el._photoTimer); el._photoTimer=null; }
+  el.querySelectorAll('.photos, .photo-count').forEach(n => n.remove());
+  const m=el.querySelector('.slide-media'); if(m) m.classList.remove('has-player','paused','needs-tap','is-playing','buffering');
+  delete el.dataset.userPaused; el._state=undefined;
+}
+// Keep the old names the rest of the app calls:
+function destroyPlayer(el){ unmountSlot(el); }
+function createPlayer(el){ mountSlot(el, slotEls['0']===el); return el && el._vid; }
+function pauseSlide(el){ if(el && el._vid){ el._vid.pause(); if(el._state===1) el._state=2; } if(el&&el._playGrace){clearTimeout(el._playGrace);el._playGrace=null;} }
+
+// Mount current (playing) + both neighbours (preloaded, paused), and gently
+// prefetch a few videos AHEAD so normal forward scrolling stays supplied by the
+// ~1/sec resolver. Prune the queue to just this neighbourhood so the rate budget
+// isn't wasted on videos already scrolled past.
+function syncSlots(){
+  if(slotEls['0']) mountSlot(slotEls['0'], true);
+  ['-1','1'].forEach(k=>{ if(slotEls[k]) mountSlot(slotEls[k], false); });
+  const keep = new Set();
+  const cur = slotEls['0']; if(cur) keep.add(cur.dataset.id);
+  ['-1','1'].forEach(k=>{ if(slotEls[k]) keep.add(slotEls[k].dataset.id); });
+  for(let d=2; d<=8; d++){ const it=feedList[curIndex+d]; if(it){ keep.add(it.id); prefetch(curIndex+d, 3+d); } }   // v4: links live 6 h, so look further ahead
+  const back=feedList[curIndex-2]; if(back){ keep.add(back.id); prefetch(curIndex-2, 8); }
+  pruneQueue(keep);
+}
+
+// Native playback needs no polling; just a grace timer that surfaces a
+// tap-to-play prompt if autoplay was genuinely refused.
+function ensurePlaying(el){
+  if(!el || el.classList.contains('unavailable-slide')) return;
+  const media=el.querySelector('.slide-media'); if(media) media.classList.remove('needs-tap','paused');
+  delete el.dataset.userPaused;
+  if(el._playGrace) clearTimeout(el._playGrace);
+  el._playGrace=setTimeout(()=>{
+    if(slotEls['0']!==el || el.dataset.userPaused==='true' || el._state===1 || el._scrubbing) return;
+    const v=el._vid;
+    if(v && v.paused){ v.muted=desiredMuted||!audioUnlocked; const p=v.play(); if(p)p.catch(()=>{}); }
+    if(el._state!==1 && media) media.classList.add('needs-tap');
+  }, 5000);
+}
+
+// Set mute on the current video — called from the mute-button tap (a real
+// gesture) so unmuting sticks on iOS.
+function applySound(el){
+  if(!el || !el._vid) return;
+  el._vid.muted=desiredMuted; el._muted=el._vid.muted;
+  if(!desiredMuted){ const p=el._vid.play(); if(p)p.catch(()=>{}); }
+}
+
+/* ============================================================
+   PER-VIDEO SHEET: categories, delete, restore, purge
+   ============================================================ */
+function openCategorySheet(item) {
+  const list = document.getElementById('sheetCats');
+  list.innerHTML = '';
+  const inTrash = item.category === DELETED;
+
+  if (!inTrash) {
+    orderedCats().forEach(oc => {
+      const cat = oc.name;
+      const r = document.createElement('div');
+      r.className = 'sheet-cat' + (cat === item.category ? ' selected' : '');
+      r.textContent = '\u2003'.repeat(oc.depth) + cat + (cat === item.category ? '  \u2713' : '');
+      r.onclick = () => {
+        item.category = cat; save();
+        const el = slotEls['0'];
+        if (el && el.dataset.id === item.id) el.querySelector('.slide-cat').textContent = catLine(item);
+        closeSheet();
+      };
+      list.appendChild(r);
+    });
+  }
+  const act = (label, cls, fn) => {
+    const r = document.createElement('div');
+    r.className = 'sheet-cat sheet-action' + (cls ? ' ' + cls : '');
+    r.textContent = label; r.onclick = fn; list.appendChild(r);
+  };
+  if (inTrash) {
+    act('Restore to Uncategorized','',() => { restoreVideo(item); closeSheet(); });
+    act('Delete permanently','destructive',() => {
+      closeSheet();
+      confirmModal({ title:'Delete permanently?',
+        message:'This removes the video from your library for good.',
+        confirmLabel:'Delete', destructive:true, onConfirm:() => purgeVideo(item) });
+    });
+  } else {
+    act(X.saved[item.id] ? 'Save a copy again (saved ' + formatDate(new Date(X.saved[item.id]).toISOString()) + ')' : 'Save a copy to keep', '', () => { closeSheet(); saveCopy(item); });
+    if (senderOf(item.id) || item.category === SHARED_CAT) act(senderOf(item.id) ? 'Sent by ' + senderOf(item.id) + ' (change)' : 'Set who sent it', '', () => { closeSheet(); senderModal(item.id, false); });
+    act('Delete','destructive',() => { deleteVideo(item); closeSheet(); });
+  }
+  document.getElementById('sheetBackdrop').classList.add('open');
+  document.getElementById('sheet').classList.add('open');
+}
+function closeSheet() {
+  document.getElementById('sheetBackdrop').classList.remove('open');
+  document.getElementById('sheet').classList.remove('open');
+}
+document.getElementById('sheetBackdrop').onclick = closeSheet;
+document.getElementById('newCatBtn').onclick = () => {
+  const inp = document.getElementById('newCatInput');
+  const name = (inp.value || '').trim();
+  if (!name || name === DELETED) return;
+  if (!state.categories.includes(name)) state.categories.push(name);
+  inp.value = '';
+  save();
+  const el = slotEls['0'];
+  const item = feedList[curIndex];
+  if (item) { item.category = name; if (el) el.querySelector('.slide-cat').textContent = catLine(item); }
+  closeSheet();
+};
+
+function deleteVideo(item) {
+  item.category = DELETED;
+  if (!state.categories.includes(DELETED)) state.categories.push(DELETED);
+  save(); dropFromCurrentViews(item); toast('Moved to Deleted');
+}
+function restoreVideo(item) {
+  item.category = 'Uncategorized';
+  if (!state.categories.includes('Uncategorized')) state.categories.unshift('Uncategorized');
+  save(); dropFromCurrentViews(item); toast('Restored');
+}
+function purgeVideo(item) {
+  state.items = state.items.filter(i => i.id !== item.id);
+  state.purged = state.purged || [];
+  if (!state.purged.includes(item.id)) state.purged.push(item.id);
+  if (X.from[item.id]) { delete X.from[item.id]; saveX(); }
+  flushSave();                    // irreversible: never leave it in a debounce window
+  dropFromCurrentViews(item);
+  toast('Deleted permanently');
+}
+function emptyDeleted() {
+  const gone = state.items.filter(i => i.category === DELETED);
+  if (!gone.length) { toast('Nothing to empty'); return; }
+  confirmModal({ title:'Empty Deleted?',
+    message: gone.length + ' video(s) will be removed for good.',
+    confirmLabel:'Empty', destructive:true,
+    onConfirm: () => {
+      state.purged = state.purged || [];
+      gone.forEach(i => { if (!state.purged.includes(i.id)) state.purged.push(i.id); });
+      state.items = state.items.filter(i => i.category !== DELETED);
+      flushSave();
+      if (document.getElementById('gridView').classList.contains('open') && gridLabel === DELETED) {
+        openGrid([], DELETED);
+      }
+      renderHome();
+      toast('Deleted ' + gone.length);
+    }});
+}
+
+// Remove a video from whatever the user is looking at right now.
+function dropFromCurrentViews(item) {
+  const gi = gridList.findIndex(x => x.id === item.id);
+  if (gi >= 0) gridList.splice(gi, 1);
+  if (document.getElementById('feed').classList.contains('open')) {
+    feedDropCurrent(item.id);
+  } else {
+    const fi = feedList.findIndex(x => x.id === item.id);
+    if (fi >= 0) feedList.splice(fi, 1);
+  }
+  if (document.getElementById('gridView').classList.contains('open')) {
+    gridVL.setItems(gridList, gridVL.rowH);
+    document.getElementById('gridEmpty').style.display = gridList.length ? 'none' : 'block';
+  }
+}
+
+/* ============================================================
+   SHARE
+   ============================================================ */
+async function shareVideo(item) {
+  const url = itemUrl(item);
+  if (navigator.share) { try { await navigator.share({ url }); } catch (e) {} return; }
+  try { await navigator.clipboard.writeText(url); toast('Link copied'); }
+  catch (e) { toast('Could not share on this device'); }
+}
+
+/* ============================================================
+   UI PRIMITIVES
+   ============================================================ */
+let toastTimer = null;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+function closeOverlays() {
+  document.querySelectorAll('.modal-backdrop, .action-sheet').forEach(e => e.remove());
+}
+function inputModal({ title, placeholder, initialValue, confirmLabel, onSubmit }) {
+  closeOverlays();
+  const b = document.createElement('div');
+  b.className = 'modal-backdrop';
+  b.innerHTML =
+    '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div>' +
+    '<input class="modal-input" id="modalInput" placeholder="' + esc(placeholder || '') +
+    '" value="' + esc(initialValue || '') + '">' +
+    '<div class="modal-error" id="modalError"></div><div class="modal-actions">' +
+    '<button class="modal-btn" id="modalCancel">Cancel</button>' +
+    '<button class="modal-btn primary" id="modalConfirm">' + esc(confirmLabel) + '</button></div></div>';
+  document.body.appendChild(b);
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelector('#modalCancel').onclick = closeOverlays;
+  b.querySelector('#modalConfirm').onclick = () => {
+    const v = (b.querySelector('#modalInput').value || '').trim();
+    if (!v) { b.querySelector('#modalError').textContent = 'Enter a name.'; return; }
+    const err = onSubmit(v);
+    if (err) { b.querySelector('#modalError').textContent = err; return; }
+    closeOverlays();
+  };
+}
+function confirmModal({ title, message, confirmLabel, destructive, onConfirm }) {
+  closeOverlays();
+  const b = document.createElement('div');
+  b.className = 'modal-backdrop';
+  b.innerHTML =
+    '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div>' +
+    '<div class="modal-message">' + esc(message) + '</div><div class="modal-actions">' +
+    '<button class="modal-btn" id="modalCancel">Cancel</button>' +
+    '<button class="modal-btn ' + (destructive ? 'destructive' : 'primary') + '" id="modalConfirm">' +
+    esc(confirmLabel) + '</button></div></div>';
+  document.body.appendChild(b);
+  b.onclick = (e) => { if (e.target === b) closeOverlays(); };
+  b.querySelector('#modalCancel').onclick = closeOverlays;
+  b.querySelector('#modalConfirm').onclick = () => { onConfirm(); closeOverlays(); };
+}
+function actionSheet({ title, rows }) {
+  closeOverlays();
+  const s = document.createElement('div');
+  s.className = 'action-sheet';
+  s.innerHTML = (title ? '<div class="action-sheet-title">' + esc(title) + '</div>' : '') +
+    rows.map((r, i) => '<div class="action-row' + (r.destructive ? ' destructive' : '') +
+                       '" data-idx="' + i + '">' + esc(r.label) + '</div>').join('') +
+    '<div class="action-row cancel" id="sheetCancel">Cancel</div>';
+  document.body.appendChild(s);
+  rows.forEach((r, i) => {
+    s.querySelector('[data-idx="' + i + '"]').onclick = () => { closeOverlays(); r.onClick(); };
+  });
+  s.querySelector('#sheetCancel').onclick = closeOverlays;
+}
+
+/* ============================================================
+   LIBRARY PACK + BACKUP (v3)
+   A library pack is one file made on the Mac (captions, creators, lengths and cover
+   images for the whole library). Importing it fills this phone's own store, so the grid
+   and search no longer wait on the network. Importing only ADDS: nothing already on the
+   phone is replaced, so a newer pack can be imported any time.
+   Layout: 'FAVPACK1' + uint32 (little-endian) length of the index + index JSON + cover bytes.
+   Index: { v, made, items: [[id, creator, handle, caption, seconds, offset, length, gone], ...] }.
+   ============================================================ */
+function pickFile(cb) {
+  const inp = document.getElementById('filePick');
+  inp.value = ''; inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) cb(f); };
+  inp.click();
+}
+function progressModal(title) {
+  closeOverlays();
+  const b = document.createElement('div'); b.className = 'modal-backdrop'; b.id = 'progModal';
+  b.innerHTML = '<div class="modal-card"><div class="modal-title">' + esc(title) + '</div><div class="modal-message" id="progMsg">Reading the file…</div></div>';
+  document.body.appendChild(b);
+  return { set(t) { const m = b.querySelector('#progMsg'); if (m) m.textContent = t; }, close() { b.remove(); } };
+}
+async function importPack(file, onProgress) {
+  const head = new DataView(await file.slice(0, 12).arrayBuffer());
+  let magic = ''; for (let i = 0; i < 8; i++) magic += String.fromCharCode(head.getUint8(i));
+  if (magic !== 'FAVPACK1') throw new Error('this is not a library pack');
+  const n = head.getUint32(8, true), base = 12 + n;
+  const idx = JSON.parse(await file.slice(12, base).text());
+  const rows = idx.items || []; let metaN = 0, goneN = 0, covN = 0;
+  await Promise.all([metaReady, thumbReady, LIB.ready]);
+  rows.forEach(r => {
+    const id = String(r[0]);
+    if (r[7]) { if (!LIB.has(id) && !cacheGet(id) && !isGone(id)) { thumbCache[id] = { gone: true, t: Date.now() }; goneN++; } return; }
+    const cur = metaStore[id];
+    if (!(r[1] || r[2] || r[3])) return;
+    if (!cur || (!cur.desc && r[3]) || (!cur.author && r[1]) || (r[4] && !cur.dur) || (r[8] && !cur.img)) {
+      const next = { author: (cur && cur.author) || r[1] || '', handle: (cur && cur.handle) || r[2] || '', desc: (cur && cur.desc) ? cur.desc : (r[3] || '') };
+      if (r[4]) next.dur = r[4];
+      if (r[8] || (cur && cur.img)) next.img = r[8] || cur.img;
+      metaStore[id] = next; metaN++;
+    }
+  });
+  cacheDirty = true; metaDirty = true;
+  const withCover = rows.filter(r => r[6] > 0 && !r[7]);
+  const need = withCover.filter(r => !LIB.has(r[0])).sort((a, b) => a[5] - b[5]);
+  for (let i = 0; i < need.length; i += 150) {
+    const part = need.slice(i, i + 150), from = part[0][5], last = part[part.length - 1];
+    const buf = await file.slice(base + from, base + last[5] + last[6]).arrayBuffer();
+    await LIB.putCovers(part.map(r => [String(r[0]), buf.slice(r[5] - from, r[5] - from + r[6])]));
+    covN += part.length; if (onProgress) onProgress(covN, need.length);
+    await new Promise(r => setTimeout(r, 0));
+  }
+  await flushTracked('meta', _metaTS, 'meta'); await flushTracked('thumb', _thumbTS, 'thumb-cache');
+  return { videos: rows.length, captions: metaN, covers: covN, coversAlready: withCover.length - need.length, gone: goneN, made: idx.made || 0 };
+}
+function runPackImport(file) {
+  const pm = progressModal('Importing library pack');
+  importPack(file, (a, b) => pm.set('Cover images: ' + a + ' of ' + b)).then(r => {
+    pm.close();
+    infoModal('Library pack imported', r.videos + ' videos in the pack\n' + r.covers + ' cover images added (' + r.coversAlready + ' were already here)\n' +
+      r.captions + ' captions added\n' + r.gone + ' marked unavailable');
+    if (document.getElementById('gridView').classList.contains('open')) gridVL.setItems(gridList, gridVL.rowH);
+  }).catch(e => { pm.close(); toast('Import failed: ' + ((e && e.message) || 'could not read the file')); });
+}
+// Backup file = the organizing work only (categories, which video is where, deletions).
+async function exportBackup() {
+  flushSave(true);
+  const name = 'favorites-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  const file = new File([JSON.stringify({ kind: 'favorites-backup', v: 1, at: new Date().toISOString(), app: APP_VERSION, state, x: X, shuffle: SH })], name, { type: 'application/json' });
+  try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; } }
+  catch (e) { if (e && e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  toast('Backup file saved');
+}
+function readBackup(text) {
+  let j = null; try { j = JSON.parse(text); } catch (e) {}
+  const st = j && j.kind === 'favorites-backup' ? j.state : null;
+  if (!st || !Array.isArray(st.items) || !Array.isArray(st.categories) || !st.items.every(i => i && i.id)) return null;
+  return { at: j.at, state: st, x: (j.x && typeof j.x === 'object') ? j.x : null, shuffle: (j.shuffle && typeof j.shuffle === 'object') ? j.shuffle : null };
+}
+function applyBackup(st, x, sh) {
+  LIB.putSnapAs('before-import', JSON.stringify(state));      // undo copy of what was here
+  LIB.putSnapAs('before-import-x', JSON.stringify(X));
+  st.version = DATA_VERSION; st.hydrated = true; st.purged = st.purged || [];
+  state = st; flushSave(true);
+  if (x) { X = x; normX(); saveX(); }                         // a backup from before v9 has none: keep what is here
+  if (sh) { SH = sh; normSH(); saveSH(true); }
+  renderHome();
+}
+function importBackup(file) {
+  file.text().then(t => {
+    const b = readBackup(t);
+    if (!b) { toast('That is not a Favorites backup file'); return; }
+    const st = b.state;
+    const cats = st.categories.filter(c => c !== DELETED && c !== 'Uncategorized').length;
+    const filed = st.items.filter(i => i.category && i.category !== 'Uncategorized' && i.category !== DELETED).length;
+    confirmModal({ title: 'Replace with this backup?', confirmLabel: 'Replace', destructive: true,
+      message: 'Backup from ' + formatDate(b.at) + ': ' + st.items.length + ' videos, ' + cats + ' categories, ' + filed + ' videos filed. What is on this phone now is kept as an undo copy.',
+      onConfirm: () => { applyBackup(st, b.x, b.shuffle); toast('Backup restored'); } });
+  }).catch(() => toast('Could not read that file'));
+}
+/* ---- v13: import a list of links (a whole message thread gathered on the Mac, or pasted text) ----
+   File made by _dev/tools/thread_import.py: { kind:'favorites-import', from:'Sam', items:[{url}] };
+   plain text with links in it works too. Rules (SPEC): videos already here are skipped (they only
+   get the sender label if they had none), videos deleted for good are never brought back, short
+   links are expanded through the resolver one at a time, Instagram links are counted and left out. */
+function parseImport(text) {
+  let from = '', raw = [];
+  try { const j = JSON.parse(text); const arr = Array.isArray(j) ? j : (j && Array.isArray(j.items) ? j.items : null);
+    if (arr) { from = (j && typeof j.from === 'string') ? j.from.trim().slice(0, 40) : ''; raw = arr.map(e => typeof e === 'string' ? e : String((e && (e.url || e.id)) || '')); } } catch (e) {}
+  if (!raw.length) { const m = /^\s*from:\s*(.+)$/im.exec(text); if (m) from = m[1].trim().slice(0, 40); raw = text.match(/https?:\/\/[^\s"'<>]+|\b\d{17,20}\b/g) || []; }
+  const ids = [], shorts = []; let ig = 0, bad = 0; const seen = new Set();
+  raw.forEach(u => {
+    u = String(u).trim(); if (!u || seen.has(u)) return; seen.add(u);
+    let m = /(?:\/video\/|\/photo\/|\/v\/)(\d{15,20})/.exec(u) || /^(\d{15,20})$/.exec(u);
+    if (m) { if (!ids.includes(m[1])) ids.push(m[1]); return; }
+    if (/^https?:\/\/(vm|vt)\.tiktok\.com\/\w+|^https?:\/\/(www\.)?tiktok\.com\/t\/\w+/i.test(u)) { shorts.push(u.replace(/[).,]+$/, '')); return; }
+    if (/instagram\.com\/(reel|reels|p|tv)\//i.test(u)) { ig++; return; }
+    if (/tiktok/i.test(u)) bad++;
+  });
+  return { from, ids, shorts, ig, bad };
+}
+async function runImport(p, onProgress) {
+  const res = { added: 0, already: 0, deletedForGood: 0, unreadable: p.bad, instagram: p.ig, labelled: 0, from: p.from };
+  const ids = p.ids.slice();
+  for (let i = 0; i < p.shorts.length; i++) {                 // short links: ask the resolver, politely
+    if (onProgress) onProgress('Reading short link ' + (i + 1) + ' of ' + p.shorts.length);
+    const wait = MIN_GAP - (Date.now() - _lastRes); if (wait > 0) await new Promise(r => setTimeout(r, wait)); _lastRes = Date.now();
+    try { const j = await (await fetch(RESOLVER + encodeURIComponent(p.shorts[i]))).json(); const vid = j && j.code === 0 && j.data && j.data.id ? String(j.data.id) : '';
+      if (vid) { if (j.data.author) metaSet(vid, { author: j.data.author.nickname || '', handle: j.data.author.unique_id || '', desc: j.data.title || '' }); if (!ids.includes(vid)) ids.push(vid); } else res.unreadable++; }
+    catch (e) { res.unreadable++; }
+  }
+  const have = new Map(state.items.map(i => [i.id, i])), purged = new Set(state.purged || []), now = new Date().toISOString().replace('T', ' ').slice(0, 19), fresh = [];
+  ids.forEach(id => {
+    if (purged.has(id)) { res.deletedForGood++; return; }
+    if (have.has(id)) { res.already++; if (p.from && !X.from[id]) { X.from[id] = p.from; res.labelled++; } return; }
+    fresh.push({ id, date: now, category: SHARED_CAT }); if (p.from) X.from[id] = p.from; res.added++;
+  });
+  if (fresh.length) { state.items = fresh.concat(state.items); if (!state.categories.includes(SHARED_CAT)) state.categories.unshift(SHARED_CAT); }
+  if (res.added || res.labelled) { flushSave(true); saveX(); renderHome(); }
+  return res;
+}
+function importList(text) {
+  const p = parseImport(text);
+  if (!p.ids.length && !p.shorts.length) { toast(p.ig ? 'Only Instagram links in there; those are not supported yet' : 'No TikTok links found in that'); return; }
+  const pm = progressModal('Importing links'); pm.set((p.ids.length + p.shorts.length) + ' links found…');
+  runImport(p, t => pm.set(t)).then(r => { pm.close();
+    infoModal('Links imported' + (r.from ? ' from ' + r.from : ''), 'Added to “Shared with me”: ' + r.added + '\nAlready in your library: ' + r.already + (r.labelled ? ' (' + r.labelled + ' now marked as sent by ' + r.from + ')' : '') +
+      (r.deletedForGood ? '\nDeleted for good earlier, left out: ' + r.deletedForGood : '') + (r.instagram ? '\nInstagram links, not supported yet: ' + r.instagram : '') + (r.unreadable ? '\nCould not be read: ' + r.unreadable : '')); })
+    .catch(() => { pm.close(); toast('Import failed'); });
+}
+
+/* ---- v5: automatic library ----
+   The Mac publishes the harvested library on the site as ENCRYPTED parts (lib/manifest.json +
+   lib/*.bin, AES-256-GCM). The key comes from a 16-digit code typed here once. With a key, the
+   app fetches any part it has not imported yet, unlocks it and feeds it to importPack(), in
+   the background, never while a video is on screen, and again whenever new parts appear. */
+const LIBSYNC = (() => {
+  const KEY = 'lib-key', DONE = 'lib-parts';
+  let running = false, status = '', lastRun = 0, available = false;
+  const b64 = (t) => Uint8Array.from(atob(t), c => c.charCodeAt(0));
+  const doneList = () => { try { return JSON.parse(localStorage.getItem(DONE) || '[]'); } catch (e) { return []; } };
+  const hasKey = () => { try { return !!localStorage.getItem(KEY); } catch (e) { return false; } };
+  const feedOpen = () => document.getElementById('feed').classList.contains('open');
+  function paint() {
+    const b = document.getElementById('libBtn'); if (!b) return;
+    b.textContent = 'Library & backup' + (status ? '  ·  ' + status : (available && !hasKey() ? '  ·  enter code to load every thumbnail' : ''));
+  }
+  async function manifest() { const r = await fetch('lib/manifest.json?t=' + Date.now(), { cache: 'no-store' }); return r.ok ? r.json() : null; }
+  const importKey = (raw) => crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+  const unlock = (key, buf) => { const u = new Uint8Array(buf); return crypto.subtle.decrypt({ name: 'AES-GCM', iv: u.subarray(0, 12) }, key, u.subarray(12)); };
+  async function setCode(code) {                // '' when accepted, otherwise what went wrong
+    code = String(code).replace(/\D/g, ''); if (code.length < 12) return 'Enter the whole code.';
+    if (!(window.crypto && crypto.subtle)) return 'This page cannot unlock the library here.';
+    const m = await manifest().catch(() => null); if (!m) return 'No library is published yet.';
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(code), 'PBKDF2', false, ['deriveBits']);
+    const raw = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: b64(m.salt), iterations: m.iter }, base, 256));
+    try { const t = await unlock(await importKey(raw), b64(m.check).buffer); if (new TextDecoder().decode(t) !== 'favlib-ok') throw 0; } catch (e) { return 'That code does not match.'; }
+    localStorage.setItem(KEY, btoa(String.fromCharCode.apply(null, raw)));
+    run(); return '';
+  }
+  async function run() {
+    if (running || !hasKey() || !(window.crypto && crypto.subtle)) return;
+    running = true; lastRun = Date.now();
+    try {
+      const m = await manifest(); if (!m) return;
+      const key = await importKey(b64(localStorage.getItem(KEY)));
+      let have = doneList(); const todo = m.parts.filter(p => !have.includes(p.f));
+      for (let i = 0; i < todo.length; i++) {
+        while (feedOpen()) await new Promise(r => setTimeout(r, 2000));       // never compete with a video on screen
+        status = 'loading library, part ' + (m.parts.length - todo.length + i + 1) + ' of ' + m.parts.length; paint();
+        const r = await fetch('lib/' + todo[i].f); if (!r.ok) throw new Error('part unavailable');
+        await importPack(new Blob([await unlock(key, await r.arrayBuffer())]));
+        have = doneList(); have.push(todo[i].f); localStorage.setItem(DONE, JSON.stringify(have));
+        if (document.getElementById('gridView').classList.contains('open') && !feedOpen()) gridVL.setItems(gridList, gridVL.rowH);
+      }
+      status = '';
+    } catch (e) { status = 'library paused, will retry'; setTimeout(run, 60000); }
+    finally { running = false; paint(); }
+  }
+  async function start() {
+    if (hasKey()) { run(); return; }
+    try { available = !!(await manifest()); } catch (e) {} paint();
+  }
+  setTimeout(start, 2500);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && hasKey() && Date.now() - lastRun > 600000) run(); });
+  return { setCode, run, hasKey, state: () => ({ running, status, parts: doneList().length, key: hasKey(), available }) };
+})();
+function askLibraryCode() {
+  inputModal({ title: 'Library code', placeholder: '16 digits', confirmLabel: 'Load',
+    onSubmit: (val) => { toast('Checking the code…'); LIBSYNC.setCode(val).then(err => toast(err || 'Library is loading in the background')); } });
+  const inp = document.getElementById('modalInput'); if (inp) { inp.setAttribute('inputmode', 'numeric'); inp.setAttribute('autocomplete', 'off'); }
+}
+document.getElementById('libBtn').onclick = () => {
+  const st = LIBSYNC.state();
+  actionSheet({ title: 'On this phone: ' + LIB.count() + ' cover images, ' + Object.keys(_metaTS.target).length + ' captions', rows: [
+    st.key ? { label: 'Automatic library: on (' + st.parts + ' parts loaded)', onClick: () => { LIBSYNC.run(); toast('Checking for new library parts'); } }
+           : { label: 'Turn on automatic library (enter code)', onClick: askLibraryCode },
+    { label: 'Import library pack', onClick: () => pickFile(runPackImport) },
+    { label: 'Import a list of links (file)', onClick: () => pickFile(f => f.text().then(importList).catch(() => toast('Could not read that file'))) },
+    { label: 'Paste links', onClick: () => inputModal({ title: 'Paste links', placeholder: 'One or many TikTok links', confirmLabel: 'Import', onSubmit: (v) => { setTimeout(() => importList(v), 60); } }) },
+    { label: 'Save a backup of my categories', onClick: exportBackup },
+    { label: 'Restore categories from a backup', onClick: () => pickFile(importBackup) },
+    { label: 'App status', onClick: appStatus }
+  ]});
+};
+
+/* ---- v10: keep a copy (Ian, Nov 15 2026: for videos he wants to preserve long term) ----
+   Only ever on his explicit action for one video: the app never downloads video by itself.
+   Step 1 fetches the file (video, or every picture of a photo post) into memory with a
+   progress line. Step 2 is a second tap, because iOS opens its share sheet only straight
+   from a tap: from there "Save Video" puts it in Photos, "Save to Files" in Files. */
+async function saveCopy(item) {
+  const id = item.id, pm = progressModal('Saving a copy'); pm.set('Getting the video…');
+  try {
+    const r = await requestResolve(id, 0); const m = metaStore[id] || {};
+    const base = ((m.handle || 'video') + '-' + id).replace(/[^\w.-]+/g, '_'); let files = [], bytes = 0;
+    const pull = async (url, label) => {
+      const res = await fetch(url, { referrerPolicy: 'no-referrer', credentials: 'omit' }); if (!res.ok) throw new Error('the server refused');
+      const total = Number(res.headers.get('content-length')) || 0;
+      if (!(res.body && res.body.getReader)) { const b = await res.blob(); bytes += b.size; return b; }
+      const rd = res.body.getReader(), parts = []; let got = 0;
+      for (;;) { const x = await rd.read(); if (x.done) break; parts.push(x.value); got += x.value.length; pm.set(label + (total ? Math.round(got / total * 100) + '% of ' + (total / 1e6).toFixed(1) + ' MB' : (got / 1e6).toFixed(1) + ' MB')); }
+      bytes += got; return new Blob(parts);
+    };
+    if (r.images && r.images.length) {
+      for (let i = 0; i < r.images.length; i++) files.push(new File([await pull(r.images[i], 'Picture ' + (i + 1) + ' of ' + r.images.length + ': ')], base + '-' + String(i + 1).padStart(2, '0') + '.jpg', { type: 'image/jpeg' }));
+    } else files.push(new File([await pull(r.play, '')], base + '.mp4', { type: 'video/mp4' }));
+    pm.close(); saveReady(item, files, bytes);
+  } catch (e) { pm.close(); toast('Could not save a copy: ' + ((e && e.message) || 'no connection')); }
+}
+function saveReady(item, files, bytes) {
+  closeOverlays();
+  const b = document.createElement('div'); b.className = 'modal-backdrop'; b.id = 'saveModal';
+  b.innerHTML = '<div class="modal-card"><div class="modal-title">Copy ready</div><div class="modal-message">' + (files.length > 1 ? files.length + ' pictures' : 'Video') + ', ' + (bytes / 1e6).toFixed(1) +
+    ' MB. Tap Save, then choose “Save Video” (Photos) or “Save to Files”.</div><div class="modal-actions"><button class="modal-btn" id="modalCancel">Cancel</button><button class="modal-btn primary" id="saveGo">Save</button></div></div>';
+  document.body.appendChild(b);
+  b.querySelector('#modalCancel').onclick = closeOverlays;
+  const done = () => { X.saved[item.id] = Date.now(); saveX(); closeOverlays(); toast('Saved');
+    document.querySelectorAll('.slide[data-id="' + CSS.escape(item.id) + '"] .slide-cat').forEach(c => { c.textContent = catLine(item); }); };
+  b.querySelector('#saveGo').onclick = () => {
+    if (navigator.canShare && navigator.canShare({ files })) { navigator.share({ files }).then(done).catch(e => { if (!e || e.name !== 'AbortError') toast('The phone did not open the save sheet'); }); return; }
+    files.forEach(f => { const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); });   // browsers without file sharing (a computer)
+    done();
+  };
+}
+
+/* ---- debug overlay ---- */
+let DEBUG = false;
+const dlines = [];
+function dlog(m) {
+  if (!DEBUG) return;
+  dlines.unshift(m);
+  if (dlines.length > 40) dlines.pop();
+  const el = document.getElementById('debugLog');
+  if (el) el.textContent = dlines.join('\n');
+}
+
+// Per-video lifecycle recorder. Each entry is timestamped from the moment the
+// slide became current, so a single screenshot of the overlay after a failing
+// swipe shows exactly where playback stalled: whether the player never handshook
+// (no "ready"), handshook then got an autoplay error (ERR:3002), or reached
+// buffering (state:3) but never playing (state:1). Always records; the overlay
+// just reveals it.
+function diag(el, msg) {
+  if (!el) return;
+  if (!el._diag) el._diag = [];
+  const t = el._becameCurrentAt ? (Date.now() - el._becameCurrentAt) : 0;
+  el._diag.push(t + 'ms ' + msg);
+  if (el._diag.length > 30) el._diag.shift();
+  renderDiag();
+}
+function renderDiag() {
+  const box = document.getElementById('debugLog');
+  if (!box || !DEBUG) return;
+  const el = slotEls['0'];
+  if (!el) { box.textContent = '(no current video)'; return; }
+  const id = el.dataset.id || '?';
+  const st = el._state === undefined || el._state === null ? '—' : el._state;
+  const stName = ({1:'PLAYING',2:'paused',3:'buffering',0:'ended'})[el._state] || 'no-handshake';
+  const v = el._vid || null;
+  const header =
+    'video …' + id.slice(-8) + '   idx ' + curIndex + '/' + (feedList.length - 1) + '\n' +
+    'state ' + st + ' (' + stName + ')   vid:' + (v ? 'yes' : 'NO') +
+    '   vmuted:' + (v ? v.muted : '?') + '   want:' + (desiredMuted ? 'muted' : 'sound') + '\n' +
+    '─────────────\n';
+  box.textContent = header + (el._diag || []).join('\n');
+}
+document.getElementById('debugToggle').onclick = () => {
+  DEBUG = !DEBUG;
+  document.getElementById('debugLog').classList.toggle('show', DEBUG);
+  if (DEBUG) renderDiag();
+};
+
+/* ---- keep the grid virtual list correct across rotation / resize ---- */
+window.addEventListener('resize', () => {
+  if (document.getElementById('gridView').classList.contains('open')) {
+    gridVL.setItems(gridList, gridRowHeight());
+    gridScroll.scrollTop = gridScrollMemory[gridLabel] || 0;
+    gridVL.update(true);
+  }
+});
+
+/* ---- test telemetry (off unless ?telemetry=<url>; only localhost / .local / LAN / same origin) ---- */
+const TELEMETRY = (() => {
+  try {
+    const raw = new URLSearchParams(location.search).get('telemetry'); if (!raw) return null;
+    const u = new URL(raw, location.href), h = u.hostname;
+    const ok = u.origin === location.origin || h === 'localhost' || h === '127.0.0.1' || h === '[::1]' ||
+      h.endsWith('.local') || /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h);
+    return ok ? u.href : null;
+  } catch (e) { return null; }
+})();
+let _tq = [], _tt = null;
+function tlog(evt, data) {
+  if (!TELEMETRY) return;
+  _tq.push(Object.assign({ t: Math.round(performance.now()), wall: Date.now(), evt, idx: curIndex,
+    cur: slotEls['0'] ? slotEls['0'].dataset.id : null }, data || {}));
+  if (!_tt) _tt = setTimeout(() => { _tt = null; const body = JSON.stringify(_tq); _tq = [];
+    try { fetch(TELEMETRY, { method: 'POST', body, keepalive: true, headers: { 'Content-Type': 'text/plain' } }).catch(() => {}); } catch (e) {} }, 250);
+}
+if (TELEMETRY) {
+  ['playing', 'waiting', 'pause', 'error', 'volumechange'].forEach(type => document.addEventListener(type, e => {
+    const v = e.target; if (!(v instanceof HTMLVideoElement)) return; const el = v.closest('.slide');
+    tlog('v-' + type, { vid: el ? el.dataset.id : null, current: el === slotEls['0'], muted: v.muted, t: Math.round(v.currentTime * 100) / 100 });
+  }, true));
+}
+
+/* ---- automation hooks for the test runners (harmless in normal use) ---- */
+window.__fav = {
+  version: 'app-v' + APP_VERSION,
+  open(i) { openFeed(liveItems(), 'All Videos', i || 0); tlog('open', { start: i || 0 }); return true; },
+  go(dir) {
+    if (animating || dragging) return false;
+    const ni = curIndex + dir; if (ni < 0 || ni >= feedList.length) return false;
+    animating = true; startIncoming(dir); setTrack(dir > 0 ? -stageHeight() : stageHeight(), true);
+    afterTransition(() => { animating = false; commitAdvance(dir); tlog('commit', { dir, to: curIndex }); });
+    return true;
+  },
+  next() { return this.go(1); },
+  prev() { return this.go(-1); },
+  setSound(on) { desiredMuted = !on; return !desiredMuted; },
+  snap() {
+    const el = slotEls['0']; if (!el) return null;
+    const v = el.querySelector('video'), m = el.querySelector('.slide-media');
+    return { idx: curIndex, id: el.dataset.id, state: el._state == null ? null : el._state,
+      muted: v ? v.muted : null, paused: v ? v.paused : null, ready: v ? v.readyState : null,
+      t: v ? Math.round(v.currentTime * 100) / 100 : null, desiredMuted,
+      revealed: !!(m && m.classList.contains('is-playing')), needsTap: !!(m && m.classList.contains('needs-tap')),
+      videos: document.querySelectorAll('video').length };
+  },
+  async storage() {
+    let ls = 0; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); ls += k.length + (localStorage.getItem(k) || '').length; }
+    const out = { localStorageChars: ls, idbOk: KV.ok, covers: LIB.count(), coverFailures: LIB.failed(), resolverInFlight: _flying.size };
+    if (KV.ok) for (const s of ['thumb', 'meta', 'rv']) { try { out['idb_' + s] = await KV.count(s); } catch (e) { out['idb_' + s] = -1; } }
+    return out;
+  },
+  ready() { return Promise.all([metaReady, thumbReady]); },
+  libsync: LIBSYNC, health: HEALTH
+};
+
+boot();
+</script>
+<script>
+/* ---- Version badge + auto-update (Nov 15 2026; replaces per-build NATO filenames) ----
+   One address for the app. On open, on return to the app and every minute, it asks for
+   version.json with caching disabled; if a newer version exists it reloads itself at a
+   fresh URL (?v=N, which no cache has seen). Never mid-video: while the feed is open the
+   reload waits until the feed closes. A per-tab guard stops reload loops if a CDN still
+   serves the old page. APP_VERSION / APP_BUILT are stamped by _dev/tools/release.py. */
+(function () {
+  const badge = document.getElementById('verBadge');
+  const tag = document.getElementById('verTag');
+  const show = (extra) => { if (badge) badge.textContent = 'v' + APP_VERSION + ' · ' + APP_BUILT + (extra || ''); if (tag) tag.textContent = 'v' + APP_VERSION + (extra ? ' *' : ''); };
+  show();
+  let pendingV = null;
+  const feedOpen = () => { const f = document.getElementById('feed'); return !!(f && f.classList.contains('open')); };
+  function go(v) {
+    let tried = null; try { tried = sessionStorage.getItem('upd-tried'); } catch (e) {}
+    if (tried === String(v)) { show(' · v' + v + ' pending'); return; }
+    try { sessionStorage.setItem('upd-tried', String(v)); } catch (e) {}
+    try { if (typeof flushSave === 'function') flushSave(); } catch (e) {}
+    try { if (document.getElementById('gridView').classList.contains('open')) sessionStorage.setItem('resume-grid', JSON.stringify({ label: gridLabel, scroll: gridScroll.scrollTop })); } catch (e) {}
+    const q = new URLSearchParams(location.search); q.set('v', v);
+    location.replace(location.pathname + '?' + q.toString());
+  }
+  async function check() {
+    if (document.hidden) return;
+    try {
+      const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) return;
+      const v = Number((await r.json()).v);
+      if (!(v > APP_VERSION)) return;
+      if (feedOpen()) { pendingV = v; return; }
+      go(v);
+    } catch (e) {}
+  }
+  window.__appUpdate = { check, version: () => APP_VERSION };
+  check();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+  setInterval(check, 60000);
+  setInterval(() => { if (pendingV && !feedOpen()) { const v = pendingV; pendingV = null; go(v); } }, 1500);
+})();
+</script>
+<script>/* TRIAL copy of the app (benchmark gap 4): only the slide animation differs: TikTok-like curve and ~210 ms floor. Same saved data as the app. */
+setTimeout(() => { const t = document.getElementById('verTag'); if (t) t.textContent += ' · TRY slide curve'; }, 1500);</script>
+</body>
+</html>
