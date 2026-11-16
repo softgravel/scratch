@@ -419,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 19, APP_BUILT = 'Nov 15 11:16 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 20, APP_BUILT = 'Nov 15 11:23 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2168,6 +2168,15 @@ function cacheDrop(id){ _rvMem.delete(String(id)); if (KV.ok) KV.write('rv', [],
 // video the resolver can't find). So calls now start on a steady clock without waiting
 // for the previous answer: a slow or dead video no longer holds up the one you tapped.
 const MIN_GAP = 1150, MAX_FLIGHT = 4, RESOLVE_TIMEOUT = 12000;
+// v20 (benchmark gap 2, Nov 16): the resolver sometimes hangs for 12 s or more per call. For the
+// video on screen and its neighbours (prio <= 1): (1) if MAX_FLIGHT calls are already out, the
+// oldest warmer / prefetch call is aborted and put back in the queue (no penalty), so it never
+// holds them up (aborting rather than adding calls: a browser opens at most 6 connections per
+// host, and hung calls hold theirs); (2) if their call has not answered after HEDGE_MS, a second
+// call for the same video goes out on the next clock tick (one extra slot at most); whichever
+// answers first wins (the slow one is left to finish or time out on its own).
+const HEDGE_MS = 3000, URGENT = 1;   // normal answers take 0.5-2.5 s
+const _flightT = new Map();   // id -> { t0, job, hedgeTimer } for primary calls in flight
 let _queue = [];              // [{id, prio, tries}]
 let _timer = null, _lastRes = 0, _lastOk = 0;
 const _flying = new Set();    // ids with a call in flight
@@ -2198,12 +2207,32 @@ function requestResolve(id, prio){
   const existing = _queue.find(q => q.id === id);
   if (existing) { if (prio < existing.prio) existing.prio = prio; }
   else if (!_flying.has(id)) _queue.push({ id, prio, tries: 0 });
+  else { const f = _flightT.get(id); if (f && prio < f.job.prio) { f.job.prio = prio; _armHedge(id); } }
   const p = new Promise((res, rej) => { const a=_waiters.get(id)||[]; a.push({res,rej}); _waiters.set(id,a); });
   _pump();
   return p;
 }
+function _armHedge(id){
+  const f = _flightT.get(id); if (!f || f.job.prio > URGENT || f.hedgeTimer || f.job.hedged) return;
+  f.hedgeTimer = setTimeout(() => {
+    const g = _flightT.get(id); if (g !== f || f.job.hedged || cacheGet(id)) return;
+    f.job.hedged = true; _queue.push({ id, prio: f.job.prio, tries: f.job.tries, hedge: true }); _pump();
+  }, Math.max(0, HEDGE_MS - (Date.now() - f.t0)));
+}
+function _preempt(){
+  let old = null;
+  _flightT.forEach(f => { if (f.job.prio > URGENT && f.ac && !f.job.preempted && (!old || f.t0 < old.t0)) old = f; });
+  if (!old) return false;
+  old.job.preempted = true; try { old.ac.abort(); } catch (e) {}
+  return true;
+}
 function _pump(){
-  if (_timer || !_queue.length || _flying.size >= MAX_FLIGHT) return;
+  if (_timer || !_queue.length) return;
+  if (_flying.size >= MAX_FLIGHT) {
+    if (!_queue.some(q => q.prio <= URGENT)) return;
+    if (_preempt()) return;                        // its slot frees in a moment (the aborted call's .then pumps again)
+    if (_flying.size >= MAX_FLIGHT + 1) return;
+  }
   _timer = setTimeout(() => { _timer = null; _fire(); _pump(); }, Math.max(0, MIN_GAP - (Date.now() - _lastRes)));
 }
 function _fire(){
@@ -2212,8 +2241,11 @@ function _fire(){
   if (!job) return;
   const hit = cacheGet(job.id);
   if (hit && !_thumbWaiters.has(job.id)) { _emit(job.id, hit); return; }   // nothing sent, no wait owed
-  _lastRes = Date.now(); _flying.add(job.id);
-  _run(job).then(() => { _flying.delete(job.id); _pump(); });
+  if (job.hedge && hit) return;                                          // the first call answered meanwhile
+  const key = job.hedge ? job.id + '#hedge' : job.id;
+  _lastRes = Date.now(); _flying.add(key);
+  if (!job.hedge) { _flightT.set(job.id, { t0: _lastRes, job, hedgeTimer: null }); _armHedge(job.id); }
+  _run(job).then(() => { _flying.delete(key); if (!job.hedge) { const f = _flightT.get(job.id); if (f && f.job === job) { clearTimeout(f.hedgeTimer); _flightT.delete(job.id); } } _pump(); });
 }
 // A video the resolver says it can't find is remembered as gone only when (a) it said so
 // twice, (b) ANOTHER video then succeeds within 2 minutes (the resolver demonstrably works),
@@ -2233,6 +2265,7 @@ function markGone(id){
 async function _run(job){
   const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   const to = setTimeout(() => { if (ac) ac.abort(); }, RESOLVE_TIMEOUT);
+  const fl = _flightT.get(job.id); if (fl && fl.job === job) fl.ac = ac;
   try {
     const res = await fetch(RESOLVER + encodeURIComponent('https://www.tiktok.com/@i/video/' + job.id), ac ? { signal: ac.signal } : undefined);
     const j = await res.json();
@@ -2254,6 +2287,9 @@ async function _run(job){
     _suspect.clear();
   } catch (e) {
     const msg = e && e.msg || '';
+    if (job.hedge) { if (/limit/i.test(msg)) _lastRes = Date.now(); return; }   // v20: the first call owns retries and verdicts
+    if (job.preempted) { job.preempted = false; _queue.push(job); return; }      // v20: stepped aside for the video on screen
+    if (cacheGet(job.id)) return;                                            // v20: a hedge call already answered
     if (/limit/i.test(msg)) { _lastRes = Date.now(); job.tries += 0.34; }   // refused for pace (something else on this network is calling too): wait a full gap
     else job.tries++;
     if (!/limit/i.test(msg)) healthFail(msg || (e && e.message), /parsing is failed/i.test(msg));
