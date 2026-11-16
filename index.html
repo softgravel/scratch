@@ -419,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 23, APP_BUILT = 'Nov 15 11:55 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 24, APP_BUILT = 'Nov 16 12:08 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2507,6 +2507,11 @@ function mountSlot(el, active){
   el._token=(el._token||0)+1; const tok=el._token;
   // Show the spinner while resolving so a cold video reads as loading, not frozen.
   if(active && el._state!==1) media.classList.add('resolving');
+  // v24 (benchmark outage note, Nov 16): when the source hangs, calls time out or are cancelled
+  // without an error answer, so the 'not answering' notice (4 failed answers in a row) could take
+  // a minute while the screen shows only a spinner. Say so after 6 s of waiting for the video on
+  // screen; the next answer from the source clears it (healthOk).
+  if(active){ clearTimeout(el._slowT); el._slowT=setTimeout(()=>{ if(slotEls['0']===el && el._token===tok && el._vidId!==id && navigator.onLine!==false && document.getElementById('feed').classList.contains('open')) showNotice('resolver', 'The video source is slow or not answering right now. Videos already prepared still play; this one starts when it answers.'); }, 6000); }
   resolve(id, active ? 0 : 1).then(r=>{
     if(!r) throw new Error('null');
     if(el._token!==tok || el._vid!==v) return;
