@@ -419,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 15, APP_BUILT = 'Nov 15 2:15 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 16, APP_BUILT = 'Nov 15 10:51 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1779,23 +1779,37 @@ function toggleCurrent() {
 
 // v4: hold = real 2x playback (native playbackRate, sound included), the way TikTok does it.
 // Before, this nudged the playhead forward every 200 ms, which stuttered.
-let _ffCheck = null;
+// v16 (Ian's phone report, Nov 15: "videos don't start playing 2x smoothly, they freeze / hop back a
+// couple frames"). The v4 code checked for a stall after only 300 ms and, if the picture had
+// barely moved, toggled pitch correction and SEEKED by 0.02 s. On the phone the normal
+// speed change takes a moment, so that check fired on a healthy video, and the seek is what
+// froze it and jumped it back to an earlier frame. Now: set the speed and leave the video
+// alone. A real stall (no movement at all for a full second, seen only in desktop test
+// WebKit) switches pitch correction off and re-applies the speed, still without seeking; the
+// seek is a last resort another second later. Once a stall has been seen, later holds start
+// without pitch correction straight away, and muted videos never use it (inaudible anyway).
+let _ffCheck = null, _ffNoPitch = false;
+try { _ffNoPitch = sessionStorage.getItem('ff-nopitch') === '1'; } catch (e) {}
 function ffNudge(v) { try { v.currentTime = v.currentTime + 0.02; const p = v.play(); if (p) p.catch(()=>{}); } catch (e) {} }
 function startFF() {
   const el = slotEls['0']; if (!el || !el._vid) return;
   const v = el._vid; holding = true;
   el.querySelector('.slide-media').classList.add('ffwd');
   if (v.paused && el.dataset.userPaused !== 'true') { const p = v.play(); if (p) p.catch(()=>{}); }
+  // Pitch correction only matters when the sound is on; while muted it is pure risk (desktop
+  // test WebKit freezes at 2x with it on and plays smoothly from the first frame with it off).
+  const noPitch = _ffNoPitch || v.muted;
+  try { v.preservesPitch = !noPitch; v.webkitPreservesPitch = !noPitch; } catch (e) {}
   const t0 = v.currentTime;
   try { v.playbackRate = 2; } catch (e) {}
-  // Some WebKit builds freeze at 2x while pitch correction is on (seen in desktop test WebKit,
-  // Nov 15 2026). If the picture has not moved shortly after, retry without pitch correction.
   clearTimeout(_ffCheck);
   _ffCheck = setTimeout(() => {
-    if (!holding || el._vid !== v || v.paused || v.currentTime - t0 > 0.08 || v.currentTime < t0) return;
+    if (!holding || el._vid !== v || v.paused || v.readyState < 3 || Math.abs(v.currentTime - t0) > 0.02) return;      // moving, or simply buffering: leave it alone
+    _ffNoPitch = true; try { sessionStorage.setItem('ff-nopitch', '1'); } catch (e) {}
     try { v.preservesPitch = false; v.webkitPreservesPitch = false; v.playbackRate = 1; v.playbackRate = 2; } catch (e) {}
-    ffNudge(v);
-  }, 300);
+    const t1 = v.currentTime;
+    _ffCheck = setTimeout(() => { if (holding && el._vid === v && !v.paused && Math.abs(v.currentTime - t1) < 0.02) ffNudge(v); }, 1000);
+  }, 1000);
 }
 function stopFF() {
   holding = false; clearTimeout(_ffCheck);
@@ -1805,7 +1819,7 @@ function stopFF() {
   const v = el._vid; if (!v) return;
   try { v.playbackRate = 1; } catch (e) {}
   const t1 = v.currentTime;
-  setTimeout(() => { if (el._vid === v && !v.paused && slotEls['0'] === el && Math.abs(v.currentTime - t1) < 0.03) ffNudge(v); }, 350);
+  setTimeout(() => { if (el._vid === v && !v.paused && !holding && slotEls['0'] === el && v.readyState >= 3 && Math.abs(v.currentTime - t1) < 0.02) ffNudge(v); }, 1200);
 }
 
 /* ---------- slide construction ---------- */
