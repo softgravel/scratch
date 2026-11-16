@@ -421,7 +421,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 29, APP_BUILT = 'Nov 16 10:47 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 30, APP_BUILT = 'Nov 16 12:39 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2186,6 +2186,7 @@ function appStatus() {
     '\nVideo links currently last: ' + (HEALTH.linkHours ? HEALTH.linkHours + ' h' : 'unknown') +
     '\nCovers saved this session: ' + HEALTH.coverOk + (HEALTH.coverFail ? ' (' + HEALTH.coverFail + ' could not be saved)' : '') +
     '\nOn this phone: ' + LIB.count() + ' cover images, ' + Object.keys(_metaTS.target).length + ' captions, ' + state.items.length + ' videos in the list' +
+    '\nTikTok link list: ' + (linksAge() < 0 ? 'none' : 'made ' + Math.round(linksAge()) + ' h ago (' + [..._rvMem.values()].filter(x => x.src === 'tt').length + ' links)') +
     '\nAutomatic library: ' + (ls.key ? 'on, ' + ls.parts + ' parts loaded' : (ls.available ? 'available, no code entered' : 'not published')) +
     (_notices.size ? '\n\nCurrent notices:\n' + [..._notices.values()].join('\n') : '\n\nNo problems detected.'));
 }
@@ -2195,11 +2196,19 @@ const _rvMem = new Map();
 // v2: a video link carries its expiry as a hex timestamp in its path (about 6 h, measured
 // Nov 14 2026). Use it, minus 15 minutes so a video never starts on a link about to die.
 function playExpiry(u){
-  const m = /^https?:\/\/[^/]+\/[0-9a-f]{32}\/([0-9a-f]{8})\//.exec(u || ''); const x = m ? parseInt(m[1], 16) * 1000 : 0;
-  return (x > Date.now() + 60000 && x < Date.now() + 48 * 3600e3) ? x : 0;
+  const m = /^https?:\/\/[^/]+\/[0-9a-f]{32}\/([0-9a-f]{8})\//.exec(u || ''); let x = m ? parseInt(m[1], 16) * 1000 : 0;
+  if (!x) { const e = /[?&]expire=(\d{9,11})(?:&|$)/.exec(u || ''); if (e) x = Number(e[1]) * 1000; }      // v30: links handed out by TikTok itself (48 h)
+  return (x > Date.now() + 60000 && x < Date.now() + 72 * 3600e3) ? x : 0;
 }
 function rvFresh(r){ return !!r && Date.now() < (r.exp ? r.exp - 900000 : r.ts + RESOLVE_TTL); }
-function cacheGet(id){ const r=_rvMem.get(String(id)); return rvFresh(r) ? r : null; }
+// v30: an entry from a TikTok link list (src 'tt') has `play` (the 48 h direct link) and may have `redir`
+// (TikTok's redirect-style link, no visible expiry). When the direct link has expired the redirect one is
+// tried for up to 30 days; if it is dead the video's error handler drops the entry and the resolver takes over.
+function cacheGet(id){
+  const r=_rvMem.get(String(id)); if (rvFresh(r)) return r;
+  if (r && r.redir && Date.now() - r.ts < 30 * 86400e3) return { play: r.redir, ts: r.ts, poster: r.poster, src: 'tt', viaRedir: true };
+  return null;
+}
 function cacheSet(id,d){ const r={play:d.play,ts:Date.now(),exp:playExpiry(d.play)}; if (d.poster) r.poster=d.poster;
   if (d.images && d.images.length) { r.images = d.images; const x = coverExpiry(d.images[0]); if (x) r.exp = r.exp ? Math.min(r.exp, x) : x; }   // picture links expire too
   _rvMem.set(String(id),r); if (KV.ok) KV.write('rv', [[String(id), r]], []).catch(()=>{}); }
@@ -2402,6 +2411,9 @@ function newVideo(){
     } });
   v.addEventListener('error',()=>{ const el=slideOf(); if(!el) return; el._state=undefined;
     // v2: links are now trusted for hours, so one that died early gets one fresh resolve before asking for a tap
+    const ce = el._vidId ? _rvMem.get(String(el._vidId)) : null;
+    if (ce && ce.redir && ce.play !== ce.redir && !el._triedRedir) {          // v30: TikTok's second link before anything else
+      el._triedRedir = true; ce.play = ce.redir; ce.exp = 0; ce.ts = Date.now(); el._vidId = null; mountSlot(el, slotEls['0']===el); return; }
     if (el._vidId && !el._retried) { el._retried = true; cacheDrop(el._vidId); el._vidId = null; mountSlot(el, slotEls['0']===el); return; }
     el.querySelector('.slide-media').classList.add('needs-tap'); });
   return v;
@@ -2949,6 +2961,42 @@ async function importPack(file, onProgress) {
   await flushTracked('meta', _metaTS, 'meta'); await flushTracked('thumb', _thumbTS, 'thumb-cache');
   return { videos: rows.length, captions: metaN, covers: covN, coversAlready: withCover.length - need.length, gone: goneN, made: idx.made || 0 };
 }
+/* ---- v30: TikTok link lists ----
+   The Mac asks TikTok's own embed-player data endpoint for each video's link (a web page is not allowed to
+   ask; see LEARNINGS 33) and hands the answers to the phone as one small file:
+     'FAVLINK1' + JSON { v:1, made: ms, items: [[id, direct48hLink, redirectLink, gone(0/1)], ...] }
+   Links are stored in the same link cache the resolver fills, marked src 'tt', and used first. With a fresh
+   list every video already has its link when it is tapped: no resolver wait at all. Stale or dead links
+   simply fall back to the resolver. A video TikTok itself reports as deleted is marked unavailable. */
+async function importLinks(blob) {
+  const txt = await blob.text(); if (txt.slice(0, 8) !== 'FAVLINK1') throw new Error('this is not a link list');
+  const j = JSON.parse(txt.slice(8)), made = Number(j.made) || Date.now(), puts = []; let n = 0, gone = 0, stale = 0;
+  await thumbReady;
+  (j.items || []).forEach(r => {
+    const id = String(r[0]), v19 = r[1] || '', redir = r[2] || '';
+    if (r[3]) { if (!isGone(id)) { thumbCache[id] = { gone: true, t: made }; gone++; } return; }
+    if (!v19 && !redir) return;
+    const old = _rvMem.get(id), exp = v19 ? playExpiry(v19) : 0;
+    if (v19 && !exp && !redir) { stale++; return; }                                   // the 48 h are over and there is no second link
+    if (old && rvFresh(old) && old.src === 'tt' && old.ts >= made) return;            // already have this list or a newer one
+    const e = { play: (v19 && exp) ? v19 : redir, ts: made, exp: (v19 && exp) ? exp : 0, src: 'tt' };
+    if (redir) e.redir = redir; if (old && old.poster) e.poster = old.poster; if (old && old.images) return;     // photo posts keep their resolver entry
+    if (!e.exp && e.play === redir) e.exp = Math.min(made + 40 * 3600e3, Date.now() + 40 * 3600e3);
+    _rvMem.set(id, e); puts.push([id, e]); n++;
+  });
+  cacheDirty = true;
+  if (KV.ok) for (let i = 0; i < puts.length; i += 400) { try { await KV.write('rv', puts.slice(i, i + 400), []); } catch (e) {} }
+  try { localStorage.setItem('links-made', String(made)); } catch (e) {}
+  return { links: n, gone, stale, made };
+}
+function linksAge() { let m = 0; try { m = Number(localStorage.getItem('links-made')) || 0; } catch (e) {} return m ? (Date.now() - m) / 3600e3 : -1; }
+async function runPackOrLinks(file) {
+  const head = await file.slice(0, 8).text();
+  if (head !== 'FAVLINK1') { runPackImport(file); return; }
+  try { const r = await importLinks(file);
+    infoModal('TikTok link list imported', 'Links ready: ' + r.links + '\nMarked unavailable (deleted on TikTok): ' + r.gone + (r.stale ? '\nAlready expired, skipped: ' + r.stale : '') + '\nList made ' + Math.max(0, Math.round((Date.now() - r.made) / 3600e3)) + ' h ago; direct links last 48 h from then.'); }
+  catch (e) { toast('Import failed: ' + ((e && e.message) || 'could not read the file')); }
+}
 function runPackImport(file) {
   const pm = progressModal('Importing library pack');
   importPack(file, (a, b) => pm.set('Cover images: ' + a + ' of ' + b)).then(r => {
@@ -3090,6 +3138,14 @@ const LIBSYNC = (() => {
         have = doneList(); have.push(todo[i].f); localStorage.setItem(DONE, JSON.stringify(have));
         if (document.getElementById('gridView').classList.contains('open') && !feedOpen()) gridVL.setItems(gridList, gridVL.rowH);
       }
+      // v30: the newest TikTok link list, replaced as a whole each time the Mac refreshes it
+      if (m.links && m.links.f && String(m.links.made) !== localStorage.getItem('lib-links-made')) {
+        while (feedOpen()) await new Promise(r => setTimeout(r, 2000));
+        status = 'loading fresh video links'; paint();
+        const lr = await fetch('lib/' + m.links.f); if (!lr.ok) throw new Error('links unavailable');
+        await importLinks(new Blob([await unlock(key, await lr.arrayBuffer())]));
+        localStorage.setItem('lib-links-made', String(m.links.made));
+      }
       status = '';
     } catch (e) { status = 'library paused, will retry'; setTimeout(run, 60000); }
     finally { running = false; paint(); }
@@ -3100,6 +3156,7 @@ const LIBSYNC = (() => {
   }
   setTimeout(start, 2500);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && hasKey() && Date.now() - lastRun > 600000) run(); });
+  setInterval(() => { if (!document.hidden && hasKey() && Date.now() - lastRun > 1800000) run(); }, 300000);     // v30: link lists change every day or two
   return { setCode, run, hasKey, state: () => ({ running, status, parts: doneList().length, key: hasKey(), available }) };
 })();
 function askLibraryCode() {
@@ -3112,7 +3169,7 @@ document.getElementById('libBtn').onclick = () => {
   actionSheet({ title: 'On this phone: ' + LIB.count() + ' cover images, ' + Object.keys(_metaTS.target).length + ' captions', rows: [
     st.key ? { label: 'Automatic library: on (' + st.parts + ' parts loaded)', onClick: () => { LIBSYNC.run(); toast('Checking for new library parts'); } }
            : { label: 'Turn on automatic library (enter code)', onClick: askLibraryCode },
-    { label: 'Import library pack', onClick: () => pickFile(runPackImport) },
+    { label: 'Import library pack or link list', onClick: () => pickFile(runPackOrLinks) },
     { label: 'Import a list of links (file)', onClick: () => pickFile(f => f.text().then(importList).catch(() => toast('Could not read that file'))) },
     { label: 'Paste links', onClick: () => inputModal({ title: 'Paste links', placeholder: 'One or many TikTok links', confirmLabel: 'Import', onSubmit: (v) => { setTimeout(() => importList(v), 60); } }) },
     { label: 'Save a backup of my categories', onClick: exportBackup },
