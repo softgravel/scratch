@@ -419,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 22, APP_BUILT = 'Nov 15 11:47 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 23, APP_BUILT = 'Nov 15 11:55 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1734,26 +1734,27 @@ function startIncoming(dir) {
   if (out) { out._wantPlay = false; pauseSlide(out); }
   if (!inc) return;
   inc._wantPlay = true; delete inc.dataset.userPaused;
-  if (inc._vid && inc._vidId === inc.dataset.id) {
-    const v = inc._vid;
-    // v22 (benchmark gap 6): starting with sound costs ~0.3 s before the picture moves (WebKit:
-    // first moving frame ~400 ms after the finger lifts with sound, ~110 ms muted). So start
-    // muted and turn the sound on as soon as the first frame is shown (~115 ms): the picture
-    // moves ~0.23 s sooner and the sound comes on no later than before.
-    if (desiredMuted || !audioUnlocked) { v.muted = true; const p = v.play(); if (p) p.catch(()=>{}); return; }
-    v.muted = true; const tok = inc._deferUnmute = (inc._deferUnmute || 0) + 1;
-    const p = v.play(); if (p) p.catch(()=>{});
-    const unmute = () => {
-      if (inc._deferUnmute !== tok) return; inc._deferUnmute = 0;
-      if (inc._vid !== v || !inc._wantPlay || desiredMuted || !audioUnlocked) return;
-      v.muted = false;
-      // if the phone refuses sound here it pauses the video: play muted rather than sit frozen (as elsewhere)
-      setTimeout(() => { if (inc._vid === v && inc._wantPlay && v.paused && inc.dataset.userPaused !== 'true') { v.muted = true; const q = v.play(); if (q) q.catch(()=>{}); } }, 400);
-    };
-    if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) { try { v.requestVideoFrameCallback(unmute); } catch (e) { setTimeout(unmute, 150); } }
-    else v.addEventListener('timeupdate', unmute, { once: true });
-    setTimeout(unmute, 700);                       // never leave it muted if no frame is reported
-  }
+  if (inc._vid && inc._vidId === inc.dataset.id) playWithSound(inc, inc._vid);
+}
+// v22 (benchmark gap 6): starting a paused video WITH sound costs ~0.3 s before the picture
+// moves (WebKit: first moving frame ~400 ms after the finger lifts with sound, ~110 ms muted;
+// v23: opening from the grid 475 vs 238 ms). So start it muted and turn the sound on as soon as
+// its first frame is shown: the picture moves ~0.25 s sooner and the sound is no later.
+function playWithSound(el, v) {
+  if (desiredMuted || !audioUnlocked) { el._deferUnmute = 0; v.muted = true; const p = v.play(); if (p) p.catch(()=>{}); return; }
+  const refused = () => setTimeout(() => {        // if the phone refuses sound it pauses the video: play muted rather than sit frozen
+    if (el._vid === v && el._wantPlay && v.paused && el.dataset.userPaused !== 'true') { v.muted = true; const q = v.play(); if (q) q.catch(()=>{}); } }, 400);
+  if (!v.paused) { if (!el._deferUnmute && v.muted) { v.muted = false; refused(); } return; }   // already moving
+  v.muted = true; const tok = el._deferUnmute = (el._deferUnmute || 0) + 1;
+  const p = v.play(); if (p) p.catch(()=>{});
+  const unmute = () => {
+    if (el._deferUnmute !== tok) return; el._deferUnmute = 0;
+    if (el._vid !== v || !el._wantPlay || desiredMuted || !audioUnlocked) return;
+    v.muted = false; refused();
+  };
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) { try { v.requestVideoFrameCallback(unmute); } catch (e) { setTimeout(unmute, 150); } }
+  else v.addEventListener('timeupdate', unmute, { once: true });
+  setTimeout(unmute, 700);                         // never leave it muted if no frame is reported
 }
 function slideTo(dir) {
   const H = stageHeight();
@@ -2499,13 +2500,7 @@ function mountSlot(el, active){
     media.classList.remove('resolving');
     if(active){
       el._wantPlay = true;
-      v.muted = desiredMuted || !audioUnlocked;
-      const p=v.play(); if(p)p.catch(()=>{});
-      // Safety: if we asked for SOUND but the platform refused (video still
-      // paused shortly after), fall back to muted playback so it never freezes.
-      if(!v.muted){
-        setTimeout(()=>{ if(slotEls['0']===el && el.dataset.userPaused!=='true' && v.paused){ v.muted=true; const q=v.play(); if(q)q.catch(()=>{}); } }, 900);
-      }
+      playWithSound(el, v);   // v23: muted start, sound at the first frame (falls back to muted if sound is refused)
     } else { v.muted=true; primeFrame(el, v); }
   };
   if(el._vidId===id && v.src){ const c=cacheGet(id); if(c){ upgradePoster(el, c.poster); if(c.images) mountPhotos(el, c.images); } applyState(); return; }         // already mounted
