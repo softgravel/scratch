@@ -419,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 25, APP_BUILT = 'Nov 16 1:01 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 26, APP_BUILT = 'Nov 16 1:20 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1726,12 +1726,46 @@ stage.addEventListener('pointermove', (e) => {
   if (curIndex === 0 && dy > 0) dy *= 0.3;
   if (curIndex === feedList.length - 1 && dy < 0) dy *= 0.3;
   setTrack(dy, false);
+  // v26: once letting go here would change videos, start the incoming one (muted) already
+  const far = Math.abs(dragDY) > stageHeight() * 0.18;
+  earlyStart(far && dragDY < 0 && curIndex < feedList.length - 1 ? 1 : far && dragDY > 0 && curIndex > 0 ? -1 : 0);
 });
+
+// v26 (benchmark gap 6): start the video being swiped to while the finger is still dragging,
+// as soon as the drag has gone far enough to change videos on release (the same 18 % rule as
+// endDrag). It plays muted; on release startIncoming → playWithSound just turns its sound on
+// (no restart cost: it is already moving). If the drag comes back, it is paused and put back
+// exactly where it was (v17 keeps places).
+let _earlyDir = 0;
+function earlyStart(dir) {
+  if (dir === _earlyDir) return;
+  earlyStop(); if (!dir) return;
+  const inc = slotEls[String(dir)]; if (!inc || !inc._vid || inc._vidId !== inc.dataset.id || inc.classList.contains('unavailable-slide')) return;
+  const v = inc._vid; inc._earlyPos = v.currentTime; inc._wantPlay = true; _earlyDir = dir;
+  // Same muted start as v22 (its sound comes on at its first frame, still during the drag: turning
+  // the sound on later, at the lift, stalled the picture ~0.15 s in WebKit); the video being left
+  // is muted meanwhile so the two never sound together.
+  const cur = slotEls['0'];
+  if (!(desiredMuted || !audioUnlocked) && cur && cur._vid && !cur._vid.muted) { cur._vid.muted = true; cur._earlyMuted = true; }
+  playWithSound(inc, v);
+}
+function earlyStop() {
+  if (!_earlyDir) return;
+  const inc = slotEls[String(_earlyDir)]; _earlyDir = 0;
+  const cur = slotEls['0']; if (cur && cur._earlyMuted) { cur._earlyMuted = false; if (cur._vid && !desiredMuted && audioUnlocked) cur._vid.muted = false; }
+  if (!inc || !inc._vid) return;
+  const v = inc._vid; inc._wantPlay = false; inc._deferUnmute = 0;
+  try { v.pause(); v.muted = true; if (inc._earlyPos != null && Math.abs(v.currentTime - inc._earlyPos) > 0.03) v.currentTime = inc._earlyPos; } catch (e) {}
+}
 
 // Start the video being swiped to (and stop the one leaving) as soon as the swipe is decided.
 function startIncoming(dir) {
+  const early = _earlyDir === dir;
+  if (early) { _earlyDir = 0; const c = slotEls['0']; if (c) c._earlyMuted = false; } else earlyStop();   // v26: already started during the drag: keep it going
   const inc = slotEls[String(dir)], out = slotEls['0'];
-  if (out) { out._wantPlay = false; pauseSlide(out); }
+  // v26: an early-started swipe has already muted the video being left; pausing it right at the
+  // lift froze the incoming picture when its sound came on, so it is paused once it has slid away
+  if (out) { out._wantPlay = false; if (early) setTimeout(() => { if (!out._wantPlay) pauseSlide(out); }, 300); else pauseSlide(out); }
   if (!inc) return;
   inc._wantPlay = true; delete inc.dataset.userPaused;
   if (inc._vid && inc._vidId === inc.dataset.id) playWithSound(inc, inc._vid);
@@ -1748,7 +1782,8 @@ function playWithSound(el, v) {
   v.muted = true; const tok = el._deferUnmute = (el._deferUnmute || 0) + 1;
   const p = v.play(); if (p) p.catch(()=>{});
   const unmute = () => {
-    if (el._deferUnmute !== tok) return; el._deferUnmute = 0;
+    if (el._deferUnmute !== tok) return;
+    el._deferUnmute = 0;
     if (el._vid !== v || !el._wantPlay || desiredMuted || !audioUnlocked) return;
     v.muted = false; refused();
   };
@@ -1769,20 +1804,20 @@ function endDrag(e) {
   if (!dragging) return;
   dragging = false; _stageGestureEnd = Date.now();
   clearTimeout(holdTimer);
-  if (holding) { stopFF(); setTrack(0, false); return; }
+  if (holding) { earlyStop(); stopFF(); setTrack(0, false); return; }
   const dt = Date.now() - dragStartT;
   const H = stageHeight();
   // a tap: little movement, short time → toggle play/pause (or the name / caption / hashtag's own action)
-  if (!dragMoved && dt < 400) { setTrack(0, false); if (!overlayTap(dragStartEl)) toggleCurrent(); return; }
+  if (!dragMoved && dt < 400) { earlyStop(); setTrack(0, false); if (!overlayTap(dragStartEl)) toggleCurrent(); return; }
   if (performance.now() - lastMoveT > 90) dragVel = 0;          // the finger stopped before lifting
   const far = Math.abs(dragDY) > H * 0.18;
   const flick = Math.abs(dragVel) > 0.35 && Math.abs(dragDY) > 24 && (dragVel < 0) === (dragDY < 0);
   if (dragDY < 0 && (far || flick) && curIndex < feedList.length - 1) slideTo(1);
   else if (dragDY > 0 && (far || flick) && curIndex > 0) slideTo(-1);
-  else setTrack(0, true, 180);   // snap back
+  else { earlyStop(); setTrack(0, true, 180); }   // snap back
 }
 stage.addEventListener('pointerup', endDrag);
-stage.addEventListener('pointercancel', () => { dragging = false; _stageGestureEnd = Date.now(); clearTimeout(holdTimer); if (holding) stopFF(); setTrack(0, true, 180); });
+stage.addEventListener('pointercancel', () => { dragging = false; _stageGestureEnd = Date.now(); clearTimeout(holdTimer); earlyStop(); if (holding) stopFF(); setTrack(0, true, 180); });
 
 function afterTransition(fn, ms) {
   let done = false;
