@@ -419,7 +419,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 17, APP_BUILT = 'Nov 15 10:56 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 18, APP_BUILT = 'Nov 15 11:10 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1801,25 +1801,24 @@ function toggleCurrent() {
 // WebKit) switches pitch correction off and re-applies the speed, still without seeking; the
 // seek is a last resort another second later. Once a stall has been seen, later holds start
 // without pitch correction straight away, and muted videos never use it (inaudible anyway).
-let _ffCheck = null, _ffNoPitch = false;
-try { _ffNoPitch = sessionStorage.getItem('ff-nopitch') === '1'; } catch (e) {}
+// v18: pitch correction is off for every hold, sound on too. Measured in WebKit with sound on
+// (Nov 16): changing speed with it on froze the picture ~0.5 s at press and again at release
+// and sometimes hopped back 0.33 s; with it off: no hop back, ~0.28 s at press, ~0.15 s at
+// release. The price: higher-pitched sound while held. (At 1x the setting makes no difference.)
+let _ffCheck = null;
 function ffNudge(v) { try { v.currentTime = v.currentTime + 0.02; const p = v.play(); if (p) p.catch(()=>{}); } catch (e) {} }
 function startFF() {
   const el = slotEls['0']; if (!el || !el._vid) return;
   const v = el._vid; holding = true;
   el.querySelector('.slide-media').classList.add('ffwd');
   if (v.paused && el.dataset.userPaused !== 'true') { const p = v.play(); if (p) p.catch(()=>{}); }
-  // Pitch correction only matters when the sound is on; while muted it is pure risk (desktop
-  // test WebKit freezes at 2x with it on and plays smoothly from the first frame with it off).
-  const noPitch = _ffNoPitch || v.muted;
-  try { v.preservesPitch = !noPitch; v.webkitPreservesPitch = !noPitch; } catch (e) {}
+  try { v.preservesPitch = false; v.webkitPreservesPitch = false; } catch (e) {}
   const t0 = v.currentTime;
   try { v.playbackRate = 2; } catch (e) {}
   clearTimeout(_ffCheck);
   _ffCheck = setTimeout(() => {
     if (!holding || el._vid !== v || v.paused || v.readyState < 3 || Math.abs(v.currentTime - t0) > 0.02) return;      // moving, or simply buffering: leave it alone
-    _ffNoPitch = true; try { sessionStorage.setItem('ff-nopitch', '1'); } catch (e) {}
-    try { v.preservesPitch = false; v.webkitPreservesPitch = false; v.playbackRate = 1; v.playbackRate = 2; } catch (e) {}
+    try { v.playbackRate = 1; v.playbackRate = 2; } catch (e) {}
     const t1 = v.currentTime;
     _ffCheck = setTimeout(() => { if (holding && el._vid === v && !v.paused && Math.abs(v.currentTime - t1) < 0.02) ffNudge(v); }, 1000);
   }, 1000);
