@@ -421,7 +421,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 30, APP_BUILT = 'Nov 16 12:39 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 31, APP_BUILT = 'Nov 16 4:52 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2969,7 +2969,11 @@ async function importPack(file, onProgress) {
    list every video already has its link when it is tapped: no resolver wait at all. Stale or dead links
    simply fall back to the resolver. A video TikTok itself reports as deleted is marked unavailable. */
 async function importLinks(blob) {
-  const txt = await blob.text(); if (txt.slice(0, 8) !== 'FAVLINK1') throw new Error('this is not a link list');
+  // v31: the published list is gzip-compressed before it is encrypted (a full list is several MB of links)
+  const h2 = new Uint8Array(await blob.slice(0, 2).arrayBuffer());
+  const txt = (h2[0] === 0x1f && h2[1] === 0x8b && typeof DecompressionStream !== 'undefined')
+    ? await new Response(blob.stream().pipeThrough(new DecompressionStream('gzip'))).text() : await blob.text();
+  if (txt.slice(0, 8) !== 'FAVLINK1') throw new Error('this is not a link list');
   const j = JSON.parse(txt.slice(8)), made = Number(j.made) || Date.now(), puts = []; let n = 0, gone = 0, stale = 0;
   await thumbReady;
   (j.items || []).forEach(r => {
