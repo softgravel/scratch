@@ -421,7 +421,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 31, APP_BUILT = 'Nov 16 4:52 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 32, APP_BUILT = 'Nov 16 10:24 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1350,6 +1350,7 @@ function openGrid(list, label, keepChips) {
   gridScroll.scrollTop = saved;
   gridVL.update(true);
   startHarvest();   // resume filling search metadata while browsing the library
+  gridTouchSoon();
 }
 
 // ---- Search over creator / description / category / date ----
@@ -1390,6 +1391,7 @@ document.getElementById('searchClear').onclick = () => { const si=document.getEl
 gridScroll.addEventListener('scroll', () => {
   gridScrollMemory[gridLabel] = gridScroll.scrollTop;
   gridVL.update();
+  gridTouchSoon();
 }, { passive:true });
 
 // v4: grids opened from inside another view (a creator's videos) go back to where they came from
@@ -1504,6 +1506,7 @@ function openFeed(list, label, startIndex) {
   document.getElementById('feed').classList.add('open');
   curIndex = Math.max(0, Math.min(startIndex || 0, list.length - 1));
   buildAllSlots();
+  _travel = 1; TOUCH.stop(); DIAG.arm(slotEls['0'], 'open');
   layoutSlots();
   setTrack(0, false);
   // Opening the feed is a deliberate tap on a specific video, so load it
@@ -1514,6 +1517,7 @@ function openFeed(list, label, startIndex) {
 function closeFeed() {
   if (dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; }
   clearResolveQueue();   // stop resolver work so it doesn't compete with the library's thumbnail loading
+  DIAG.left(slotEls['0']); TOUCH.stop(); dropWarm(); _travel = 1;
   ['-1','0','1'].forEach(k => { if (slotEls[k]) destroyPlayer(slotEls[k]); });
   track.innerHTML = '';
   slotEls = { '-1': null, '0': null, '1': null };
@@ -1589,10 +1593,11 @@ function commitAdvance(dir) {
     next['-1'] = makeSlotSlide(curIndex - 1);
   }
 
-  slotEls = next;
+  slotEls = next; _travel = dir;
   // v17 (Ian, Nov 15: "when back scrolling videos should also start where they left off"):
   // the video you leave keeps its place, so swiping back resumes it (v4 restarted it at 0).
   const left = slotEls[dir === 1 ? '-1' : '1'];
+  DIAG.left(left);
   removeOfficial(left);   // v27: never keep a TikTok player off screen (iOS can't resume it; TikTok throttles extra players)
   if (left && left._vid) { try { left._vid.pause(); left._primedSrc = left._vid.src; } catch (e) {} rememberPlace(left); }
   ['-1','0','1'].forEach(k => { if (slotEls[k]) slotEls[k].dataset.slot = k; });
@@ -1772,6 +1777,7 @@ function startIncoming(dir) {
   if (out) { out._wantPlay = false; if (early) setTimeout(() => { if (!out._wantPlay) pauseSlide(out); }, 300); else pauseSlide(out); }
   if (!inc) return;
   inc._wantPlay = true; delete inc.dataset.userPaused;
+  DIAG.arm(inc, 'swipe');
   if (inc._vid && inc._vidId === inc.dataset.id) playWithSound(inc, inc._vid);
 }
 // v22 (benchmark gap 6): starting a paused video WITH sound costs ~0.3 s before the picture
@@ -1781,7 +1787,7 @@ function startIncoming(dir) {
 function playWithSound(el, v) {
   if (desiredMuted || !audioUnlocked) { el._deferUnmute = 0; v.muted = true; const p = v.play(); if (p) p.catch(()=>{}); return; }
   const refused = () => setTimeout(() => {        // if the phone refuses sound it pauses the video: play muted rather than sit frozen
-    if (el._vid === v && el._wantPlay && v.paused && el.dataset.userPaused !== 'true') { v.muted = true; const q = v.play(); if (q) q.catch(()=>{}); } }, 400);
+    if (el._vid === v && el._wantPlay && v.paused && el.dataset.userPaused !== 'true') { DIAG.note(el.dataset.id, 'sound refused by the phone: playing muted'); v.muted = true; const q = v.play(); if (q) q.catch(()=>{}); } }, 400);
   if (!v.paused) { if (!el._deferUnmute && v.muted) { v.muted = false; refused(); } return; }   // already moving
   v.muted = true; const tok = el._deferUnmute = (el._deferUnmute || 0) + 1;
   const p = v.play(); if (p) p.catch(()=>{});
@@ -1845,7 +1851,9 @@ function toggleCurrent() {
   if (media.classList.contains('needs-tap') || !v) {
     // Manual recovery: re-resolve and try again. Clear any cached-but-dead URL.
     media.classList.remove('needs-tap');
-    cacheDrop(el.dataset.id);
+    const ce = _rvMem.get(String(el.dataset.id));
+    if (ce && ce.src === 'tt') { el._tried = null; _ttDead.delete(String(el.dataset.id)); _deadLink.delete(ce.play); _deadLink.delete(ce.redir); }   // v32: listed links are kept; the tap just tries them afresh
+    else cacheDrop(el.dataset.id);
     el._vidId = null;
     mountSlot(el, true); ensurePlaying(el);
     return;
@@ -2188,6 +2196,7 @@ function appStatus() {
     '\nOn this phone: ' + LIB.count() + ' cover images, ' + Object.keys(_metaTS.target).length + ' captions, ' + state.items.length + ' videos in the list' +
     '\nTikTok link list: ' + (linksAge() < 0 ? 'none' : 'made ' + Math.round(linksAge()) + ' h ago (' + [..._rvMem.values()].filter(x => x.src === 'tt').length + ' links)') +
     '\nAutomatic library: ' + (ls.key ? 'on, ' + ls.parts + ' parts loaded' : (ls.available ? 'available, no code entered' : 'not published')) +
+    '\n\nHow videos start (measured on this phone):\n' + DIAG.summary() +
     (_notices.size ? '\n\nCurrent notices:\n' + [..._notices.values()].join('\n') : '\n\nNo problems detected.'));
 }
 const RESOLVER = 'https://www.tikwm.com/api/?url=';
@@ -2204,8 +2213,10 @@ function rvFresh(r){ return !!r && Date.now() < (r.exp ? r.exp - 900000 : r.ts +
 // v30: an entry from a TikTok link list (src 'tt') has `play` (the 48 h direct link) and may have `redir`
 // (TikTok's redirect-style link, no visible expiry). When the direct link has expired the redirect one is
 // tried for up to 30 days; if it is dead the video's error handler drops the entry and the resolver takes over.
+const _deadLink = new Set(), _ttDead = new Set();   // v32: links that failed, and videos whose TikTok links all failed, this session only (nothing is deleted)
 function cacheGet(id){
-  const r=_rvMem.get(String(id)); if (rvFresh(r)) return r;
+  const r=_rvMem.get(String(id)); if (r && r.src === 'tt' && _ttDead.has(String(id))) return null;
+  if (rvFresh(r)) return r;
   if (r && r.redir && Date.now() - r.ts < 30 * 86400e3) return { play: r.redir, ts: r.ts, poster: r.poster, src: 'tt', viaRedir: true };
   return null;
 }
@@ -2382,6 +2393,162 @@ function clearResolveQueue(){ _queue.forEach(q => _emitThumb(q.id, 'dropped')); 
 function resolve(id, prio){ return requestResolve(id, prio == null ? 1 : prio); }
 function prefetch(idx, prio){ const it = feedList[idx]; if (it && !cacheGet(it.id)) requestResolve(it.id, prio == null ? 4 : prio).catch(() => {}); }
 
+/* ---- v32 (Nov 16 2026): the phone measures where the wait is, and four ways to shorten it ----
+   Measured from the Mac that evening (26 videos, first bytes only): the FIRST request for a video takes TikTok
+   0.1-4.4 s to answer (it fetches the file from its own storage); a repeat a second or minutes later takes
+   0.02-0.1 s, and that holds across both of its link types. So:
+   (1) TOUCH asks for the first 64 KB of the next few videos (and of the videos a resting grid shows) ahead of
+       time and drops the answer, so the player's own request is a repeat. One in eight videos is left out on
+       purpose: DIAG compares the two groups, which is how the phone says whether this helps there.
+   (2) WARM keeps one more video loaded with its first picture, two ahead in the direction of travel.
+   (3) The video on screen loads first; its neighbours start after its first picture (syncSlots).
+   (4) If the link in use has produced nothing after a moment, TikTok's other link is tried (armLinkHedge), and
+       if the direct links keep failing on this network the redirect links go first (pickLink).
+   DIAG counts all of it per source and keeps the last 250 events in its own key ('gallery-diag': not in
+   backups, safe to lose), shown under Library & backup → App status and sent with Share diagnostics. */
+function onFrame(v, cb) {
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) { try { v.requestVideoFrameCallback(() => cb()); return; } catch (e) {} }
+  v.addEventListener('timeupdate', () => cb(), { once: true });
+}
+const KIND_NAME = { ttd: 'TikTok direct link', ttr: 'TikTok redirect link', tw: 'tikwm', off: 'TikTok player' };
+const DIAG = (() => {
+  const KEY = 'gallery-diag'; let d = null, dirty = false;
+  const blank = () => ({ v: 1, since: Date.now(), k: {}, open: { n: 0, ms: [] }, sw: { n: 0, ready: 0, left: 0, ms: [] }, touch: { n: 0, fail: 0, ms: [] }, stall: 0, log: [] });
+  const get = () => { if (!d) { try { d = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) {} if (!d || d.v !== 1 || !d.k || !d.log || !d.sw || !d.open || !d.touch) d = blank(); } return d; };
+  const K = (k) => get().k[k] || (get().k[k] = { n: 0, err: 0, sw: 0, ms: [], msT: [], mt: [], last: [] });
+  const push = (a, x, max) => { a.push(Math.round(x)); if (a.length > max) a.splice(0, a.length - max); };
+  const q = (a, f) => { if (!a || !a.length) return null; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(s.length * f))]; };
+  const save = () => { if (!dirty || !d) return; dirty = false; try { localStorage.setItem(KEY, JSON.stringify(d)); } catch (e) {} };
+  setInterval(save, 15000); document.addEventListener('visibilitychange', () => { if (document.hidden) save(); }); window.addEventListener('pagehide', save);
+  function note(id, what, ms, kind) { const x = get(); x.log.push([Date.now(), String(id || '').slice(-6), what, ms == null ? '' : Math.round(ms), kind || '']); if (x.log.length > 250) x.log.splice(0, x.log.length - 250); dirty = true; }
+  // one load = from handing the link to a player until its first picture
+  function loadStart(v, id, kind, role) {
+    const ld = v._ld = { t0: performance.now(), id, kind, role, T: TOUCH.was(id), end: 0 }; v._dk = kind;
+    v.addEventListener('loadedmetadata', () => { if (v._ld === ld && !ld.mt) { ld.mt = performance.now() - ld.t0; push(K(kind).mt, ld.mt, 20); dirty = true; } }, { once: true });
+    onFrame(v, () => { if (v._ld !== ld || ld.end) return; ld.end = 1; try { v.dispatchEvent(new Event('firstpicture')); } catch (e) {}
+      if (role !== 'on screen' && _primeOff) return;      // not prepared ahead: the time would include the wait for the swipe
+      const ms = performance.now() - ld.t0, k = K(kind); k.n++; push(ld.T ? k.msT : k.ms, ms, 40); push(k.last, 1, 8);
+      note(id, 'loaded (' + role + (ld.T ? ', warmed' : '') + (ld.mt ? ', header after ' + Math.round(ld.mt) + ' ms' : '') + ')', ms, kind); });
+  }
+  function loadEnd(v, why) { const ld = v && v._ld; if (!ld || ld.end) return; ld.end = 1; const k = K(ld.kind); k.n++;
+    if (why === 'err') { k.err++; if (navigator.onLine !== false) push(k.last, 0, 8); } else k.sw++;
+    note(ld.id, why === 'err' ? 'link failed' : 'nothing yet from this link: trying the other one', performance.now() - ld.t0, ld.kind); }
+  const bad = (kind) => { const l = K(kind).last.slice(-6); return l.filter(x => !x).length >= 3; };
+  const hedgeMs = () => { const m = q(K('ttd').mt.concat(K('ttr').mt), 0.5); return Math.max(1200, Math.min(5000, m ? m * 4 : 1200)); };
+  // one start = from the tap or the finger lifting until the picture moves
+  function arm(el, why) { if (!el) return; const c = cacheGet(el.dataset.id); if (c && c.images) { el._dg = null; return; }     // photo posts have no moving picture to time
+    const v = el._vid, m = !!(v && el._vidId === el.dataset.id);
+    el._dg = { t0: performance.now(), why, done: 0, ready: m ? v.readyState : -1, moving: m && !v.paused && v.readyState >= 3 }; if (m) watch(el, v); }
+  function watch(el, v) { const g = el && el._dg; if (!g || g.done || g.w === v) return; g.w = v;
+    const f = () => { if (el._dg !== g || g.done || el._vid !== v) return;
+      if (v.paused) { g.tries = (g.tries || 0) + 1; if (g.tries < 100) onFrame(v, f); return; }
+      g.done = 1; const ms = performance.now() - g.t0, open = g.why === 'open', o = get()[open ? 'open' : 'sw'], rdy = g.ready >= 3 || g.moving; o.n++; push(o.ms, ms, 60); if (!open && rdy) o.ready++;
+      note(el.dataset.id, (open ? 'opened' : 'swiped to') + (open || rdy ? '' : g.ready < 0 ? ' (had no link yet)' : ' (not loaded yet)'), ms, v._dk || ''); };
+    onFrame(v, f); }
+  function left(el) { const g = el && el._dg; if (!g || g.done) return; g.done = 1; get().sw.left++; note(el.dataset.id, 'left before it started', performance.now() - g.t0, (el._vid && el._vid._dk) || ''); }
+  function stalled(el, v) { const g = el._dg; if (slotEls['0'] !== el || !g || !g.done || el._scrubbing || holding || v.seeking || v.currentTime < 0.3) return; get().stall++; note(el.dataset.id, 'buffering at ' + v.currentTime.toFixed(1) + ' s', null, v._dk || ''); }
+  function touched(ms, ok) { const t = get().touch; t.n++; if (ok) push(t.ms, ms, 60); else t.fail++; dirty = true; }
+  const line = (label, a) => a && a.length ? label + ': median ' + q(a, 0.5) + ' ms, 9 in 10 within ' + q(a, 0.9) + ' ms, slowest ' + Math.max.apply(null, a) + ' ms (' + a.length + ' timed)' : label + ': none yet';
+  function summary() { const x = get(), out = [];
+    out.push(line('Tap in a grid → picture moving', x.open.ms));
+    out.push(line('Swipe → next video moving', x.sw.ms) + (x.sw.n ? '\n  ' + x.sw.ready + ' of ' + x.sw.n + ' were loaded before the swipe; left before it started: ' + x.sw.left : ''));
+    Object.keys(KIND_NAME).forEach(k => { const s = x.k[k]; if (!s || !s.n) return;
+      out.push(KIND_NAME[k] + ': ' + s.n + ' loads, ' + s.err + ' failed, ' + s.sw + ' switched for being slow'); out.push('  ' + line('link → first picture, not warmed', s.ms)); out.push('  ' + line('link → first picture, warmed first', s.msT)); });
+    out.push('Warm-up requests: ' + x.touch.n + (x.touch.ms.length ? ', answered in a median ' + q(x.touch.ms, 0.5) + ' ms' : '') + (x.touch.fail ? ', ' + x.touch.fail + ' failed' : ''));
+    out.push('Buffering in the middle of a video: ' + x.stall + ' times');
+    if (_primeOff) out.push('Preparing videos ahead is OFF until the app restarts (the phone paused the video on screen when another was prepared).');
+    return out.join('\n'); }
+  function text() { const x = get(), p = (n) => String(n).padStart(2, '0'), when = (t) => { const z = new Date(t); return p(z.getHours()) + ':' + p(z.getMinutes()) + ':' + p(z.getSeconds()); };
+    return 'Favorites diagnostics, v' + APP_VERSION + ', ' + new Date().toString() + '\nCounting since ' + new Date(x.since).toString() + '\n' + navigator.userAgent +
+      '\nOnline: ' + (navigator.onLine !== false) + '; TikTok link list: ' + (linksAge() < 0 ? 'none' : Math.round(linksAge()) + ' h old, ' + [..._rvMem.values()].filter(e => e.src === 'tt').length + ' links') +
+      '; tikwm this session: ' + HEALTH.ok + ' answers, ' + HEALTH.fail + ' failures\n\n' + summary() + '\n\nLast ' + x.log.length + ' events (time, video, what, ms, source):\n' +
+      x.log.map(l => when(l[0]) + ' ' + l[1] + ' ' + l[2] + (l[3] === '' ? '' : ' ' + l[3] + ' ms') + (l[4] ? ' [' + l[4] + ']' : '')).join('\n') + '\n'; }
+  function share() { save(); const f = new File([text()], 'favorites-diagnostics-v' + APP_VERSION + '.txt', { type: 'text/plain' });
+    if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f] }).catch(e => { if (!e || e.name !== 'AbortError') toast('The phone did not open the share sheet'); }); return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); }
+  return { note, loadStart, loadEnd, bad, hedgeMs, arm, watch, left, stalled, touched, summary, text, share, data: get, reset() { d = blank(); dirty = true; save(); } };
+})();
+// Which of a video's links to hand to the player. `tried` = kinds already tried on this slide.
+let _pickN = 0;
+function pickLink(id, r, tried) {
+  if (!r || !r.play) return null;
+  if (r.src !== 'tt') return { url: r.play, kind: 'tw' };
+  const c = [];
+  if (!r.viaRedir && r.play !== r.redir) c.push({ url: r.play, kind: 'ttd' });
+  const rd = r.viaRedir ? r.play : r.redir; if (rd) c.push({ url: rd, kind: 'ttr' });
+  const ok = c.filter(x => !_deadLink.has(x.url) && !(tried && tried[x.kind]));
+  if (!ok.length) return null;
+  if (ok.length > 1 && DIAG.bad('ttd') && (++_pickN % 6)) ok.reverse();   // direct links keep failing here: redirect first, with a direct one retried now and then
+  return ok[0];
+}
+// The video on screen has a link but nothing has come back (not even its header) after a moment: try TikTok's
+// other link. The wait is at least 1.2 s and stretches to 4x this network's usual time to the header.
+function armLinkHedge(el) {
+  clearTimeout(el._hedgeT); const v = el._vid, id = el.dataset.id; if (!v || v.readyState >= 1) return;
+  el._hedgeT = setTimeout(() => {
+    if (slotEls['0'] !== el || el._vid !== v || el._vidId !== id || v.readyState >= 1 || navigator.onLine === false || document.hidden) return;
+    const r = cacheGet(id); if (!r || r.src !== 'tt') return;
+    const t = Object.assign({}, el._tried); t[v._dk] = 1; if (!pickLink(id, r, t)) return;
+    el._tried = t; DIAG.loadEnd(v, 'slow'); el._vidId = null; mountSlot(el, true);
+  }, DIAG.hedgeMs());
+}
+const TOUCH = (() => {
+  const at = new Map(); let q = [], busy = 0, lanes = 2, hour = [];
+  const fresh = (id) => (at.get(id) || 0) > Date.now() - 20 * 60e3;
+  const control = (id) => Number(String(id).slice(-2)) % 8 === 0;          // the comparison group: never warmed
+  function pump() {
+    while (q.length && busy < lanes) {
+      if (navigator.onLine === false || document.hidden) { q = []; return; }
+      const now = Date.now(); hour = hour.filter(t => t > now - 3600e3); if (hour.length >= 400) { q = []; return; }
+      const id = q.shift(), r = cacheGet(id), pk = (r && r.src === 'tt' && !r.images && !fresh(id) && !control(id)) ? pickLink(id, r) : null;
+      if (!pk) continue;
+      at.set(id, now); hour.push(now); busy++;
+      const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null, t0 = performance.now(), to = setTimeout(() => { try { ac && ac.abort(); } catch (e) {} }, 6000); let ok = true;
+      const opt = { mode: 'no-cors', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', headers: { Range: 'bytes=0-65535' } }; if (ac) opt.signal = ac.signal;
+      let p; try { p = fetch(pk.url, opt); } catch (e) { p = Promise.reject(e); }
+      p.catch(() => { ok = false; }).then(() => { clearTimeout(to); DIAG.touched(performance.now() - t0, ok); try { ac && ac.abort(); } catch (e) {} busy--; setTimeout(pump, 60); });
+    }
+  }
+  return { feed(ids) { lanes = 2; q = ids.concat(q.filter(id => ids.indexOf(id) < 0)).slice(0, 20); pump(); }, grid(ids) { lanes = 3; q = ids.slice(0, 12); pump(); },
+           was: (id) => at.has(String(id)), stop() { q = []; }, state: () => ({ done: at.size, queued: q.length, busy }) };
+})();
+// A grid that has rested for half a second: warm the videos it shows, so the one that gets tapped answers at once.
+let _gridTouchT = null;
+function gridTouchSoon() {
+  clearTimeout(_gridTouchT); TOUCH.stop();
+  _gridTouchT = setTimeout(() => {
+    if (document.getElementById('feed').classList.contains('open') || !document.getElementById('gridView').classList.contains('open')) return;
+    const H = window.innerHeight, ids = [];
+    document.querySelectorAll('#gridScroll .thumb-tile[data-id]').forEach(t => { const b = t.getBoundingClientRect(); if (b.bottom > 0 && b.top < H) ids.push(t.dataset.id); });
+    TOUCH.grid(ids);
+  }, 500);
+}
+// One more player, kept loaded two videos ahead in the direction of travel and handed to that video's slide
+// when it is built (mountSlot → takeWarm). It always comes from the pool primed in the opening tap, so its
+// sound is allowed like the others'; if the pool is empty it simply is not used.
+const WARM = { v: null, id: null }; let _travel = 1;
+// Open connections to TikTok's video hosts early (not under test: tests must never reach TikTok, not even to connect).
+if (!window.__officialBase) ['https://v19-webapp-prime.us.tiktok.com', 'https://www.tiktok.com', 'https://v16m-default.tiktokcdn-us.com'].forEach(h => { const l = document.createElement('link'); l.rel = 'preconnect'; l.href = h; document.head.appendChild(l); });
+function warmHolder() { let h = document.getElementById('warmHolder');
+  if (!h) { h = document.createElement('div'); h.id = 'warmHolder'; h.style.cssText = 'position:absolute;left:-300vw;top:0;width:100vw;height:100vh;overflow:hidden;pointer-events:none'; document.getElementById('feed').appendChild(h); }
+  return h; }
+function warmAhead() {
+  if (_primeOff) { dropWarm(); return; }                 // its player goes back to the pool for the slides
+  if (!document.getElementById('feed').classList.contains('open')) return;
+  const it = feedList[curIndex + 2 * _travel]; if (!it) return;
+  const id = String(it.id); if (WARM.v && WARM.id === id) return;
+  const r = cacheGet(id); if (!r || r.images || isGone(id)) return;
+  const pk = pickLink(id, r); if (!pk) return;
+  if (!WARM.v) { if (!vpool.length) return; WARM.v = vpool.pop(); warmHolder().appendChild(WARM.v); }
+  const v = WARM.v; WARM.id = id; v.muted = true; v._url = pk.url; v.src = pk.url; DIAG.loadStart(v, id, pk.kind, 'two ahead'); try { v.load(); v.playbackRate = 1; } catch (e) {}
+  _lastPrimeAt = Date.now();
+  const settle = () => { if (WARM.v === v && v._url === pk.url) { try { v.pause(); if (v.currentTime > 0.4) v.currentTime = 0; } catch (e) {} } };   // if no picture was reported it ran on: back to the start
+  const p = v.play(); if (p) p.catch(() => {});
+  onFrame(v, settle); setTimeout(settle, 2500);
+}
+function takeWarm(id) { if (!WARM.v || WARM.id !== String(id)) return null; const v = WARM.v; WARM.v = null; WARM.id = null; try { v.pause(); if (v.currentTime > 0.4) v.currentTime = 0; } catch (e) {} return v; }
+function dropWarm() { if (WARM.v) releaseVideo(WARM.v); WARM.v = null; WARM.id = null; }
+
 /* ---- pool of reusable <video> elements (prev/current/next ring) ----
    The next clip is preloaded (src set, buffering, paused) so a swipe promotes
    an already-ready element instead of re-downloading — the fix for slow+freezy.
@@ -2399,21 +2566,29 @@ function newVideo(){
   // src swap, which showed as audio-over-black. Revealing is gated on a real
   // painted frame instead (see revealWhenPainted).
   v.addEventListener('playing',()=>{ const el=slideOf(); if(!el)return; el._state=1; const m=el.querySelector('.slide-media'); if(m) m.classList.remove('paused','needs-tap','buffering'); revealWhenPainted(el, v); });
-  v.addEventListener('waiting',()=>{ const el=slideOf(); if(el){ el._state=3; const m=el.querySelector('.slide-media'); if(m) m.classList.add('buffering'); } });
+  v.addEventListener('waiting',()=>{ const el=slideOf(); if(el){ DIAG.stalled(el, v); el._state=3; const m=el.querySelector('.slide-media'); if(m) m.classList.add('buffering'); } });
   v.addEventListener('loadedmetadata',()=>{ if(v.videoWidth>0 && v.videoHeight>0) v.style.objectFit = fitFor(v.videoWidth / v.videoHeight); });
   v.addEventListener('pause',()=>{ const el=slideOf(); if(el&&el._state===1) el._state=2;
     // v4: if the system pauses the video on screen (not the user, not us), resume it. If that happens
     // right after a neighbour was primed, stop priming for this session: this phone doesn't tolerate it.
     if (el && slotEls['0']===el && el._wantPlay && !el._scrubbing && el.dataset.userPaused!=='true' && !document.hidden && !v.ended && (el._resumes||0) < 3) {
       el._resumes = (el._resumes||0) + 1;
-      if (Date.now() - _lastPrimeAt < 1500) _primeOff = true;
+      if (Date.now() - _lastPrimeAt < 1500 && !_primeOff) { _primeOff = true; DIAG.note(el.dataset.id, 'the phone paused the video on screen right after another was prepared: preparing ahead is off until the app restarts'); }
       setTimeout(()=>{ if (slotEls['0']===el && el._vid===v && v.paused && el.dataset.userPaused!=='true') { const p=v.play(); if(p)p.catch(()=>{}); } }, 60);
     } });
-  v.addEventListener('error',()=>{ const el=slideOf(); if(!el) return; el._state=undefined;
+  v.addEventListener('error',()=>{
+    DIAG.loadEnd(v, 'err'); if (v._url && navigator.onLine !== false) _deadLink.add(v._url);
+    if (WARM.v === v) { WARM.id = null; return; }
+    const el=slideOf(); if(!el) return; el._state=undefined;
+    // v30/v32: TikTok's other link first; when both have failed the resolver is asked (the listed links are kept
+    // for the next session: a bad moment on the network must not cost the list)
+    const r = el._vidId ? cacheGet(el._vidId) : null;
+    if (r && r.src === 'tt') {
+      if (navigator.onLine === false) { el.querySelector('.slide-media').classList.add('needs-tap'); return; }
+      if (!pickLink(el._vidId, r)) _ttDead.add(String(el._vidId));
+      el._vidId = null; mountSlot(el, slotEls['0']===el); return;
+    }
     // v2: links are now trusted for hours, so one that died early gets one fresh resolve before asking for a tap
-    const ce = el._vidId ? _rvMem.get(String(el._vidId)) : null;
-    if (ce && ce.redir && ce.play !== ce.redir && !el._triedRedir) {          // v30: TikTok's second link before anything else
-      el._triedRedir = true; ce.play = ce.redir; ce.exp = 0; ce.ts = Date.now(); el._vidId = null; mountSlot(el, slotEls['0']===el); return; }
     if (el._vidId && !el._retried) { el._retried = true; cacheDrop(el._vidId); el._vidId = null; mountSlot(el, slotEls['0']===el); return; }
     el.querySelector('.slide-media').classList.add('needs-tap'); });
   return v;
@@ -2436,7 +2611,7 @@ function revealWhenPainted(el, v){
   }
 }
 function acquireVideo(){ return vpool.pop() || newVideo(); }
-function releaseVideo(v){ if(!v) return; try{ v.pause(); v.playbackRate=1; v.removeAttribute('src'); v.load(); }catch(e){} if(v.parentNode) v.parentNode.removeChild(v); if(vpool.length<2) vpool.push(v); }
+function releaseVideo(v){ if(!v) return; v._url=''; v._ld=null; try{ v.pause(); v.playbackRate=1; v.removeAttribute('src'); v.load(); }catch(e){} if(v.parentNode) v.parentNode.removeChild(v); if(vpool.length<4) vpool.push(v); }
 
 // Called SYNCHRONOUSLY from the tap that opens the feed (a real user gesture),
 // so the feed can start with sound ON. We pre-create the pooled <video>
@@ -2482,6 +2657,7 @@ function startOfficial(el, id, why) {
   const media = el.querySelector('.slide-media'); if (!media) return;
   document.querySelectorAll('.slide').forEach(o => { if (o !== el) removeOfficial(o); });   // never two players
   el._official = true; el._offMuted = true; el._offWhy = why; delete el.dataset.userPaused;
+  DIAG.note(id, "no playable link: TikTok's own player shown (" + why + ')'); if (el._dg) el._dg.done = 1;
   if (el._vid) { try { el._vid.pause(); } catch (e) {} }
   const f = document.createElement('iframe');
   f.setAttribute('allow', 'autoplay; encrypted-media; fullscreen; picture-in-picture'); f.setAttribute('playsinline', '');
@@ -2533,7 +2709,7 @@ function stopPrimer(v) {
 }
 function primeAudioOnGesture(){
   desiredMuted = false; audioUnlocked = true;
-  while (vpool.length < 3) vpool.push(newVideo());
+  while (vpool.length < 4) vpool.push(newVideo());   // v32: three on the slides and one kept loaded two ahead
   vpool.forEach(v => { try { v.muted = true; if (!v.src) v.src = 'clips/silent.mp4'; const p = v.play(); if (p) p.then(() => stopPrimer(v), () => {}); } catch(e){} });
   audioPrimed = true;
 }
@@ -2565,7 +2741,7 @@ function mountPhotos(el, urls) {
   el._photoGo = (i) => { auto = true; box.scrollTo({ left: i * box.clientWidth, behavior: 'smooth' }); setTimeout(() => { auto = false; }, 700); };
   if (imgs.length > 1) el._photoTimer = setInterval(() => {
     if (slotEls['0'] !== el || el.dataset.userPaused === 'true' || el._scrubbing || holding || Date.now() - touched < 6000) return;
-    if (!el._vid || el._vid.paused) return;
+    if (!el._silent && (!el._vid || el._vid.paused)) return;
     el._photoGo((idx + 1) % imgs.length);
   }, 3500);
 }
@@ -2626,8 +2802,10 @@ function primeFrame(el, v) {
 function mountSlot(el, active){
   if(!el || el.classList.contains('unavailable-slide')) return;
   const media=el.querySelector('.slide-media'); if(!media) return;
-  if(!el._vid){ el._vid=acquireVideo(); media.appendChild(el._vid); media.classList.add('has-player'); }
-  const v=el._vid, id=el.dataset.id;
+  const id=el.dataset.id;
+  if(!el._vid){ const w=takeWarm(id); el._vid=w||acquireVideo(); media.appendChild(el._vid); media.classList.add('has-player');
+    if(w){ el._vidId=id; el._primedSrc=w.src; resumePlace(w, id); } }   // v32: the video kept loaded two ahead arrives with its data and first picture
+  const v=el._vid;
   const applyState=()=>{
     media.classList.remove('resolving');
     if(active){
@@ -2635,7 +2813,7 @@ function mountSlot(el, active){
       playWithSound(el, v);   // v23: muted start, sound at the first frame (falls back to muted if sound is refused)
     } else { v.muted=true; primeFrame(el, v); }
   };
-  if(el._vidId===id && v.src){ const c=cacheGet(id); if(c){ upgradePoster(el, c.poster); if(c.images) mountPhotos(el, c.images); } applyState(); return; }         // already mounted
+  if(el._vidId===id && v.src){ const c=cacheGet(id); if(c){ upgradePoster(el, c.poster); if(c.images) mountPhotos(el, c.images); } applyState(); if(active){ DIAG.watch(el, v); armLinkHedge(el); } return; }         // already mounted
   el._token=(el._token||0)+1; const tok=el._token;
   // Show the spinner while resolving so a cold video reads as loading, not frozen.
   if(active && el._state!==1) media.classList.add('resolving');
@@ -2648,12 +2826,22 @@ function mountSlot(el, active){
   resolve(id, active ? 0 : 1).then(r=>{
     if(!r) throw new Error('null');
     if(el._token!==tok || el._vid!==v) return;
+    const pk = pickLink(id, r, el._tried);
+    if (!pk && r.images && r.images.length) {            // v32: a photo post whose sound TikTok hands out only in a 6-hour form: the pictures, without sound
+      mountPhotos(el, r.images); media.classList.remove('resolving', 'needs-tap'); el._vidId = id; el._silent = true; el._state = 1;
+      try { v.pause(); v.removeAttribute('src'); v.load(); v._url = ''; } catch (e) {}        // nothing to play: do not leave the primer clip looping
+      clearTimeout(el._offT1); clearTimeout(el._offT2); if (el._official) removeOfficial(el);
+      return;
+    }
+    if (!pk) { if (r.src === 'tt' && !_ttDead.has(String(id))) { _ttDead.add(String(id)); mountSlot(el, active); return; } throw new Error('no link'); }
     upgradePoster(el, r.poster);
     if (r.images) mountPhotos(el, r.images);
-    if(v.src!==r.play){ media.classList.remove('is-playing'); el._revealTok=(el._revealTok||0)+1; v.src=r.play; try{v.load(); v.playbackRate=1;}catch(e){} resumePlace(v, id); }
+    if(v._url!==pk.url || !v.src){ media.classList.remove('is-playing'); el._revealTok=(el._revealTok||0)+1; v._url=pk.url; v.src=pk.url; DIAG.loadStart(v, id, pk.kind, (active || slotEls['0']===el) ? 'on screen' : 'neighbour'); try{v.load(); v.playbackRate=1;}catch(e){} resumePlace(v, id);
+      if (el._dg && !el._dg.done && slotEls['0']===el) DIAG.note(id, el._dg.why === 'open' ? 'tap → link handed to the player' : 'swipe → link handed to the player', performance.now() - el._dg.t0, pk.kind); }
     el._vidId=id;
     if (el._official) { if (el._offPlaying) return; removeOfficial(el); }   // v27: whichever starts first wins; if TikTok's player is already playing, this view stays on it
     applyState();
+    if (active || slotEls['0']===el) { DIAG.watch(el, v); armLinkHedge(el); }
   }).catch((e)=>{ media.classList.remove('resolving');
     if (e && e.gone) {                       // v2: remembered as unavailable; a tap re-checks
       unmountSlot(el); el.classList.add('unavailable-slide');
@@ -2683,10 +2871,20 @@ function pauseSlide(el){ if(el && el._vid){ el._vid.pause(); if(el._state===1) e
 // ~1/sec resolver. Prune the queue to just this neighbourhood so the rate budget
 // isn't wasted on videos already scrolled past.
 function syncSlots(){
-  if(slotEls['0']) mountSlot(slotEls['0'], true);
-  ['-1','1'].forEach(k=>{ if(slotEls[k]) mountSlot(slotEls[k], false); });
+  const cur = slotEls['0'];
+  if(cur) mountSlot(cur, true);
+  // v32: the video on screen has the connection and the decoder to itself until its first picture (0.9 s at
+  // most); then the neighbour in the direction of travel, the other one, and the video two ahead.
+  const rest = () => { if (slotEls['0'] !== cur || !document.getElementById('feed').classList.contains('open')) return;
+    [String(_travel), String(-_travel)].forEach(k=>{ if(slotEls[k]) mountSlot(slotEls[k], false); }); warmAhead();
+    const ahead = []; for (let d = 2; d <= 6; d++) { const it = feedList[curIndex + d * _travel]; if (it && String(it.id) !== WARM.id) ahead.push(String(it.id)); }
+    TOUCH.feed(ahead); };
+  const cv = cur && cur._vid, id0 = cur && cur.dataset.id;
+  const loading = !!cv && !cur.classList.contains('unavailable-slide') && !!cacheGet(id0) && (cur._vidId !== id0 || !!(cv._ld && !cv._ld.end));   // it has a link and its first picture is still to come
+  if (loading) { let done = false; const go = () => { if (done) return; done = true; rest(); }; cv.addEventListener('firstpicture', go, { once: true }); setTimeout(go, 900); }
+  else rest();
   const keep = new Set();
-  const cur = slotEls['0']; if(cur) keep.add(cur.dataset.id);
+  if(cur) keep.add(cur.dataset.id);
   ['-1','1'].forEach(k=>{ if(slotEls[k]) keep.add(slotEls[k].dataset.id); });
   for(let d=2; d<=8; d++){ const it=feedList[curIndex+d]; if(it){ keep.add(it.id); prefetch(curIndex+d, 3+d); } }   // v4: links live 6 h, so look further ahead
   const back=feedList[curIndex-2]; if(back){ keep.add(back.id); prefetch(curIndex-2, 8); }
@@ -2701,7 +2899,7 @@ function ensurePlaying(el){
   delete el.dataset.userPaused;
   if(el._playGrace) clearTimeout(el._playGrace);
   el._playGrace=setTimeout(()=>{
-    if(slotEls['0']!==el || el.dataset.userPaused==='true' || el._state===1 || el._scrubbing || el._official) return;
+    if(slotEls['0']!==el || el.dataset.userPaused==='true' || el._state===1 || el._scrubbing || el._official || el._silent) return;
     const v=el._vid;
     if(v && v.paused){ v.muted=desiredMuted||!audioUnlocked; const p=v.play(); if(p)p.catch(()=>{}); }
     if(el._state!==1 && media) media.classList.add('needs-tap');
@@ -2979,10 +3177,15 @@ async function importLinks(blob) {
   (j.items || []).forEach(r => {
     const id = String(r[0]), v19 = r[1] || '', redir = r[2] || '';
     if (r[3]) { if (!isGone(id)) { thumbCache[id] = { gone: true, t: made }; gone++; } return; }
+    if (Array.isArray(r[5]) && r[5].length) {            // v32: a photo post: its pictures (48 h) and, when TikTok names a lasting one, its sound
+      const x = coverExpiry(r[5][0]), was = _rvMem.get(id); if (!x) { stale++; return; }
+      if (was && rvFresh(was) && (was.src !== 'tt' ? !!was.images : (was.ts >= made && !!was.images && was.images[0] === r[5][0]))) return;      // a fresh resolver entry (it has the sound), or this list already
+      const pe = { play: r[4] || '', ts: made, exp: x, src: 'tt', images: r[5] }; _rvMem.set(id, pe); puts.push([id, pe]); n++; return;
+    }
     if (!v19 && !redir) return;
     const old = _rvMem.get(id), exp = v19 ? playExpiry(v19) : 0;
     if (v19 && !exp && !redir) { stale++; return; }                                   // the 48 h are over and there is no second link
-    if (old && rvFresh(old) && old.src === 'tt' && old.ts >= made) return;            // already have this list or a newer one
+    if (old && rvFresh(old) && old.src === 'tt' && old.ts >= made && old.play === ((v19 && exp) ? v19 : redir)) return;            // already have this very link from this list or a newer one
     const e = { play: (v19 && exp) ? v19 : redir, ts: made, exp: (v19 && exp) ? exp : 0, src: 'tt' };
     if (redir) e.redir = redir; if (old && old.poster) e.poster = old.poster; if (old && old.images) return;     // photo posts keep their resolver entry
     if (!e.exp && e.play === redir) e.exp = Math.min(made + 40 * 3600e3, Date.now() + 40 * 3600e3);
@@ -3143,12 +3346,13 @@ const LIBSYNC = (() => {
         if (document.getElementById('gridView').classList.contains('open') && !feedOpen()) gridVL.setItems(gridList, gridVL.rowH);
       }
       // v30: the newest TikTok link list, replaced as a whole each time the Mac refreshes it
-      if (m.links && m.links.f && String(m.links.made) !== localStorage.getItem('lib-links-made')) {
+      const ltag = m.links && m.links.f ? m.links.f + ':' + m.links.made : '';     // v32: the file name changes with the content; `made` alone does not when only some links were renewed
+      if (ltag && ltag !== localStorage.getItem('lib-links-made')) {
         while (feedOpen()) await new Promise(r => setTimeout(r, 2000));
         status = 'loading fresh video links'; paint();
         const lr = await fetch('lib/' + m.links.f); if (!lr.ok) throw new Error('links unavailable');
         await importLinks(new Blob([await unlock(key, await lr.arrayBuffer())]));
-        localStorage.setItem('lib-links-made', String(m.links.made));
+        localStorage.setItem('lib-links-made', ltag);
       }
       status = '';
     } catch (e) { status = 'library paused, will retry'; setTimeout(run, 60000); }
@@ -3178,7 +3382,8 @@ document.getElementById('libBtn').onclick = () => {
     { label: 'Paste links', onClick: () => inputModal({ title: 'Paste links', placeholder: 'One or many TikTok links', confirmLabel: 'Import', onSubmit: (v) => { setTimeout(() => importList(v), 60); } }) },
     { label: 'Save a backup of my categories', onClick: exportBackup },
     { label: 'Restore categories from a backup', onClick: () => pickFile(importBackup) },
-    { label: 'App status', onClick: appStatus }
+    { label: 'App status', onClick: appStatus },
+    { label: 'Share diagnostics (a small text file)', onClick: () => DIAG.share() }
   ]});
 };
 
@@ -3333,7 +3538,7 @@ window.__fav = {
     return out;
   },
   ready() { return Promise.all([metaReady, thumbReady]); },
-  libsync: LIBSYNC, health: HEALTH
+  libsync: LIBSYNC, health: HEALTH, diag: DIAG, touch: TOUCH, warm: () => ({ id: WARM.id, has: !!WARM.v, ready: WARM.v ? WARM.v.readyState : -1 })
 };
 
 boot();
