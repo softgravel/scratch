@@ -427,7 +427,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 35, APP_BUILT = 'Nov 19 1:35 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 36, APP_BUILT = 'Nov 19 2:24 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1763,7 +1763,7 @@ function earlyStart(dir) {
   // is muted meanwhile so the two never sound together.
   const cur = slotEls['0'];
   if (!(desiredMuted || !audioUnlocked) && cur && cur._vid && !cur._vid.muted) { cur._vid.muted = true; cur._earlyMuted = true; }
-  playWithSound(inc, v);
+  inc._deferUnmute = 0; v.muted = true; const p = v.play(); if (p) p.catch(()=>{});   // v36: muted while dragging; the sound comes on at the lift (a gesture)
 }
 function earlyStop() {
   if (!_earlyDir) return;
@@ -1786,24 +1786,27 @@ function startIncoming(dir) {
   if (!inc) return;
   inc._wantPlay = true; delete inc.dataset.userPaused;
   DIAG.arm(inc, 'swipe');
-  if (inc._vid && inc._vidId === inc.dataset.id) playWithSound(inc, inc._vid);
+  blessPool();
+  if (inc._vid && inc._vidId === inc.dataset.id) playWithSound(inc, inc._vid, true);
+  else if (!inc.classList.contains('unavailable-slide') && cacheGet(inc.dataset.id)) { inc._gestureSound = true; mountSlot(inc, false); }   // v36: a cold video gets its link at the lift, not after the slide
 }
 // v22 (benchmark gap 6): starting a paused video WITH sound costs ~0.3 s before the picture
 // moves (WebKit: first moving frame ~400 ms after the finger lifts with sound, ~110 ms muted;
 // v23: opening from the grid 475 vs 238 ms). So start it muted and turn the sound on as soon as
 // its first frame is shown: the picture moves ~0.25 s sooner and the sound is no later.
-function playWithSound(el, v) {
+function playWithSound(el, v, gesture) {
   if (desiredMuted || !audioUnlocked) { el._deferUnmute = 0; v.muted = true; const p = v.play(); if (p) p.catch(()=>{}); return; }
   const refused = () => setTimeout(() => {        // if the phone refuses sound it pauses the video: play muted rather than sit frozen
     if (el._vid === v && el._wantPlay && v.paused && el.dataset.userPaused !== 'true') { DIAG.note(el.dataset.id, 'sound refused by the phone: playing muted'); v.muted = true; const q = v.play(); if (q) q.catch(()=>{}); } }, 400);
-  if (!v.paused) { if (!el._deferUnmute && v.muted) { v.muted = false; refused(); } return; }   // already moving
+  if (gesture) { el._deferUnmute = 0; el._unmuteAt = Date.now(); v.muted = false; if (v.paused) { const p = v.play(); if (p) p.catch(()=>{}); } refused(); return; }   // v36: inside the gesture
+  if (!v.paused) { if (!el._deferUnmute && v.muted) { el._unmuteAt = Date.now(); v.muted = false; refused(); } return; }   // already moving
   v.muted = true; const tok = el._deferUnmute = (el._deferUnmute || 0) + 1;
   const p = v.play(); if (p) p.catch(()=>{});
   const unmute = () => {
     if (el._deferUnmute !== tok) return;
     el._deferUnmute = 0;
     if (el._vid !== v || !el._wantPlay || desiredMuted || !audioUnlocked) return;
-    v.muted = false; refused();
+    el._unmuteAt = Date.now(); v.muted = false; refused();
   };
   if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) { try { v.requestVideoFrameCallback(unmute); } catch (e) { setTimeout(unmute, 150); } }
   else v.addEventListener('timeupdate', unmute, { once: true });
@@ -2443,6 +2446,11 @@ const DIAG = (() => {
     if (why === 'err') { k.err++; if (navigator.onLine !== false) push(k.last, 0, 8); } else k.sw++;
     note(ld.id, why === 'err' ? 'link failed' : 'nothing yet from this link: trying the other one', performance.now() - ld.t0, ld.kind); }
   const bad = (kind) => { const l = K(kind).last.slice(-6); return l.filter(x => !x).length >= 3; };
+  // v36 (Ian's diagnostics, Nov 19): on his iPhone the direct links' host answered in 1.6-6 s (median ~2.7 s, warmed or
+  // not), while TikTok's video CDN (where tikwm's links and TikTok's redirect links lead) answered in ~0.25-1.3 s. On the
+  // Mac both were fast. So redirect links go first until each kind has 4 timings on this phone; then the faster one does.
+  const faster = () => { if (window.__linkPref) return window.__linkPref;
+    const a = K('ttd').mt, b = K('ttr').mt; return (a.length >= 4 && b.length >= 4 && q(a, 0.5) < q(b, 0.5)) ? 'ttd' : 'ttr'; };
   const hedgeMs = () => { const m = q(K('ttd').mt.concat(K('ttr').mt), 0.5); return Math.max(1200, Math.min(5000, m ? m * 4 : 1200)); };
   // one start = from the tap or the finger lifting until the picture moves
   function arm(el, why) { if (!el) return; const c = cacheGet(el.dataset.id); if (c && c.images) { el._dg = null; return; }     // photo posts have no moving picture to time
@@ -2475,7 +2483,7 @@ const DIAG = (() => {
   function share() { save(); const f = new File([text()], 'favorites-diagnostics-v' + APP_VERSION + '.txt', { type: 'text/plain' });
     if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f] }).catch(e => { if (!e || e.name !== 'AbortError') toast('The phone did not open the share sheet'); }); return; }
     const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); }
-  return { note, loadStart, loadEnd, bad, hedgeMs, arm, watch, left, stalled, touched, summary, text, share, data: get, reset() { d = blank(); dirty = true; save(); } };
+  return { note, loadStart, loadEnd, bad, faster, timing(kind, ms) { push(K(kind).mt, ms, 20); }, hedgeMs, arm, watch, left, stalled, touched, summary, text, share, data: get, reset() { d = blank(); dirty = true; save(); } };
 })();
 // Which of a video's links to hand to the player. `tried` = kinds already tried on this slide.
 let _pickN = 0;
@@ -2487,7 +2495,12 @@ function pickLink(id, r, tried) {
   const rd = r.viaRedir ? r.play : r.redir; if (rd) c.push({ url: rd, kind: 'ttr' });
   const ok = c.filter(x => !_deadLink.has(x.url) && !(tried && tried[x.kind]));
   if (!ok.length) return null;
-  if (ok.length > 1 && DIAG.bad('ttd') && (++_pickN % 6)) ok.reverse();   // direct links keep failing here: redirect first, with a direct one retried now and then
+  if (ok.length > 1) {
+    const other = (k) => k === 'ttd' ? 'ttr' : 'ttd'; let first = DIAG.faster();
+    if (DIAG.bad(first)) first = other(first);                                                       // that kind keeps failing here
+    else if (!window.__linkPref && Number(String(id).slice(-2)) % 8 === 5) first = other(first);   // 1 video in 8 keeps measuring the other kind
+    if (ok[0].kind !== first) ok.reverse();
+  }
   return ok[0];
 }
 // The video on screen has a link but nothing has come back (not even its header) after a moment: try TikTok's
@@ -2608,7 +2621,7 @@ function newVideo(){
     // right after a neighbour was primed, stop priming for this session: this phone doesn't tolerate it.
     if (el && slotEls['0']===el && el._wantPlay && !el._scrubbing && el.dataset.userPaused!=='true' && !document.hidden && !v.ended && (el._resumes||0) < 3) {
       el._resumes = (el._resumes||0) + 1;
-      if (Date.now() - _lastPrimeAt < 1500 && !_primeOff) { _primeOff = true; DIAG.note(el.dataset.id, 'the phone paused the video on screen right after another was prepared: preparing ahead is off until the app restarts'); }
+      if (Date.now() - _lastPrimeAt < 1500 && !_primeOff && !(el._unmuteAt && Date.now() - el._unmuteAt < 1500) && ++_primeStrikes >= 2) { _primeOff = true; DIAG.note(el.dataset.id, 'the phone paused the video on screen right after another was prepared: preparing ahead is off until the app restarts'); }
       setTimeout(()=>{ if (slotEls['0']===el && el._vid===v && v.paused && el.dataset.userPaused!=='true') { const p=v.play(); if(p)p.catch(()=>{}); } }, 60);
     } });
   v.addEventListener('error',()=>{
@@ -2745,8 +2758,12 @@ function stopPrimer(v) {
 function primeAudioOnGesture(){
   desiredMuted = false; audioUnlocked = true;
   while (vpool.length < 4) vpool.push(newVideo());   // v32: three on the slides and one kept loaded two ahead
-  vpool.forEach(v => { try { v.muted = true; if (!v.src) v.src = 'clips/silent.mp4'; const p = v.play(); if (p) p.then(() => stopPrimer(v), () => {}); } catch(e){} });
+  vpool.forEach(v => { try { v.muted = true; if (!v.src) v.src = 'clips/silent.mp4'; const p = v.play(); v._blessed = true; if (p) p.then(() => stopPrimer(v), () => {}); } catch(e){} });
   audioPrimed = true;
+}
+// v36: called inside each swipe's gesture: any spare player not yet started inside a gesture is started once (the primer clip)
+function blessPool() {
+  vpool.forEach(v => { if (v._blessed) return; try { v.muted = true; if (!v.src) v.src = 'clips/silent.mp4'; const p = v.play(); v._blessed = true; if (p) p.then(() => stopPrimer(v), () => {}); } catch (e) {} });
 }
 
 // v4: videos close to phone-shaped fill the screen (as before); anything else (landscape, square)
@@ -2824,7 +2841,7 @@ document.addEventListener('visibilitychange', () => {
 // v4: a waiting neighbour shows its real first frame (not only the cover) and has data
 // buffered: play it muted until one frame has been presented, then pause it. An iPhone shows
 // nothing for a video that has never played. Skipped once it is the video being swiped to.
-let _primeOff = false, _lastPrimeAt = 0;
+let _primeOff = false, _lastPrimeAt = 0, _primeStrikes = 0;   // v36: two strikes (one wrongly switched it off 3 times on Ian's phone)
 function primeFrame(el, v) {
   const src = v.src;
   const settle = () => { if (v.src !== src || el._vid !== v) return; if (el._wantPlay || slotEls['0'] === el) return; v.pause(); };
@@ -2850,7 +2867,8 @@ function mountSlot(el, active){
     if(active){
       el._wantPlay = true;
       playWithSound(el, v);   // v23: muted start, sound at the first frame (falls back to muted if sound is refused)
-    } else { v.muted=true; primeFrame(el, v); }
+    } else if (el._gestureSound && el._wantPlay) { el._gestureSound = false; playWithSound(el, v, true); }   // v36: mounted at the lift
+    else { v.muted=true; primeFrame(el, v); }
   };
   if(el._vidId===id && v.src){ const c=cacheGet(id); if(c){ upgradePoster(el, c.poster); if(c.images) mountPhotos(el, c.images); } applyState(); if(active){ DIAG.watch(el, v); armLinkHedge(el); } return; }         // already mounted
   el._token=(el._token||0)+1; const tok=el._token;
