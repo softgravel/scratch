@@ -421,7 +421,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 33, APP_BUILT = 'Nov 16 10:36 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 34, APP_BUILT = 'Nov 19 1:07 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1105,6 +1105,7 @@ function VirtualList(opts) {
    HOME
    ============================================================ */
 function renderHome() {
+  homeTouchSoon();
   document.getElementById('allCount').textContent = liveItems().length + ' saved';
   { const el = shuffleEligible(), un = el.filter(i => !SH.s[i.id]).length, sc = document.getElementById('shuffleCount');
     if (sc) sc.textContent = el.length ? (un ? un + ' not seen yet' : 'all seen; oldest views first') + (SH[SH.mode].served.length ? '  ·  continues where you left off' : '') : 'nothing to shuffle yet'; }
@@ -1607,8 +1608,9 @@ function commitAdvance(dir) {
   // mount/preload the newly-exposed edge after a short settle so fast flicks
   // don't fire a burst of resolves.
   promoteCurrent();
+  if (feedMode === 'shuffle') shuffleMoved();          // (tops the list up first, so the videos ahead exist)
+  aheadNow();
   scheduleCurrentPlayer(DWELL_MS);
-  if (feedMode === 'shuffle') shuffleMoved();
 }
 
 function promoteCurrent() {
@@ -2398,7 +2400,7 @@ function prefetch(idx, prio){ const it = feedList[idx]; if (it && !cacheGet(it.i
    0.1-4.4 s to answer (it fetches the file from its own storage); a repeat a second or minutes later takes
    0.02-0.1 s, and that holds across both of its link types. So:
    (1) TOUCH asks for the first 64 KB of the next few videos (and of the videos a resting grid shows) ahead of
-       time and drops the answer, so the player's own request is a repeat. One in eight videos is left out on
+       time and drops the answer, so the player's own request is a repeat. One video in twenty is left out on
        purpose: DIAG compares the two groups, which is how the phone says whether this helps there.
    (2) WARM keeps one more video loaded with its first picture, two ahead in the direction of travel.
    (3) The video on screen loads first; its neighbours start after its first picture (syncSlots).
@@ -2495,7 +2497,7 @@ function armLinkHedge(el) {
 const TOUCH = (() => {
   const at = new Map(); let q = [], busy = 0, lanes = 2, hour = [];
   const fresh = (id) => (at.get(id) || 0) > Date.now() - 20 * 60e3;
-  const control = (id) => Number(String(id).slice(-2)) % 8 === 0;          // the comparison group: never warmed
+  const control = (id) => Number(String(id).slice(-2)) % 20 === 0;         // the comparison group, 1 video in 20: never warmed (v32 had 1 in 8; the Mac runs showed 780 ms against 134 ms, so fewer suffice)
   function pump() {
     while (q.length && busy < lanes) {
       if (navigator.onLine === false || document.hidden) { q = []; return; }
@@ -2509,7 +2511,7 @@ const TOUCH = (() => {
       p.catch(() => { ok = false; }).then(() => { clearTimeout(to); DIAG.touched(performance.now() - t0, ok); try { ac && ac.abort(); } catch (e) {} busy--; setTimeout(pump, 60); });
     }
   }
-  return { feed(ids) { lanes = 2; q = ids.concat(q.filter(id => ids.indexOf(id) < 0)).slice(0, 20); pump(); }, grid(ids) { lanes = 3; q = ids.slice(0, 12); pump(); },
+  return { feed(ids) { lanes = 3; q = ids.concat(q.filter(id => ids.indexOf(id) < 0)).slice(0, 20); pump(); }, grid(ids) { lanes = 3; q = ids.slice(0, 12); pump(); },
            was: (id) => at.has(String(id)), stop() { q = []; }, state: () => ({ done: at.size, queued: q.length, busy }) };
 })();
 // A grid that has rested for half a second: warm the videos it shows, so the one that gets tapped answers at once.
@@ -2522,6 +2524,15 @@ function gridTouchSoon() {
     document.querySelectorAll('#gridScroll .thumb-tile[data-id]').forEach(t => { const b = t.getBoundingClientRect(); if (b.bottom > 0 && b.top < H) ids.push(t.dataset.id); });
     TOUCH.grid(ids);
   }, 500);
+}
+// Home at rest: warm the videos Shuffle will show first (its session is already drawn), so the first one answers at once.
+let _homeTouchT = null;
+function homeTouchSoon() {
+  clearTimeout(_homeTouchT);
+  _homeTouchT = setTimeout(() => {
+    if (document.getElementById('feed').classList.contains('open') || document.getElementById('gridView').classList.contains('open')) return;
+    try { const sess = SH[SH.mode]; if (sess && sess.served && sess.served.length) TOUCH.grid(sess.served.slice(sess.pos, sess.pos + 3).map(String)); } catch (e) {}
+  }, 900);
 }
 // One more player, kept loaded two videos ahead in the direction of travel and handed to that video's slide
 // when it is built (mountSlot → takeWarm). It always comes from the pool primed in the opening tap, so its
@@ -2545,6 +2556,19 @@ function warmAhead() {
   const settle = () => { if (WARM.v === v && v._url === pk.url) { try { v.pause(); if (v.currentTime > 0.4) v.currentTime = 0; } catch (e) {} } };   // if no picture was reported it ran on: back to the start
   const p = v.play(); if (p) p.catch(() => {});
   onFrame(v, settle); setTimeout(settle, 2500);
+}
+function touchAhead() { const ahead = []; for (let d = 2; d <= 8; d++) { const it = feedList[curIndex + d * _travel]; if (it && String(it.id) !== WARM.id) ahead.push(String(it.id)); } TOUCH.feed(ahead); }
+// v34: real TikTok is swiped in bursts (Ian's screen recording, Nov 17: 37 swipes in 24 s, often 0.3 s apart) and
+// still shows a moving picture after most of them. Until v33 the next videos were prepared only once the feed had
+// rested 250 ms, which never happens inside a burst (measured at that pace on the real network: 22 of 26 videos
+// were passed before they started). So at every swipe, at once: the next video in the direction of travel gets its
+// player (the one kept two ahead, when it holds that video), the fourth player moves on, and the warm-ups run
+// further ahead. Only for videos whose link is already on the phone: the resolver's one-per-second pace still
+// waits for the rest (syncSlots).
+function aheadNow() {
+  const e = slotEls[String(_travel)];
+  if (e && !e.classList.contains('unavailable-slide') && !(e._vid && e._vidId === e.dataset.id) && cacheGet(e.dataset.id)) mountSlot(e, false);
+  warmAhead(); touchAhead();
 }
 function takeWarm(id) { if (!WARM.v || WARM.id !== String(id)) return null; const v = WARM.v; WARM.v = null; WARM.id = null; try { v.pause(); if (v.currentTime > 0.4) v.currentTime = 0; } catch (e) {} return v; }
 function dropWarm() { if (WARM.v) releaseVideo(WARM.v); WARM.v = null; WARM.id = null; }
@@ -2876,9 +2900,7 @@ function syncSlots(){
   // v32: the video on screen has the connection and the decoder to itself until its first picture (0.9 s at
   // most); then the neighbour in the direction of travel, the other one, and the video two ahead.
   const rest = () => { if (slotEls['0'] !== cur || !document.getElementById('feed').classList.contains('open')) return;
-    [String(_travel), String(-_travel)].forEach(k=>{ if(slotEls[k]) mountSlot(slotEls[k], false); }); warmAhead();
-    const ahead = []; for (let d = 2; d <= 6; d++) { const it = feedList[curIndex + d * _travel]; if (it && String(it.id) !== WARM.id) ahead.push(String(it.id)); }
-    TOUCH.feed(ahead); };
+    [String(_travel), String(-_travel)].forEach(k=>{ if(slotEls[k]) mountSlot(slotEls[k], false); }); warmAhead(); touchAhead(); };
   const cv = cur && cur._vid, id0 = cur && cur.dataset.id;
   const loading = !!cv && !cur.classList.contains('unavailable-slide') && !!cacheGet(id0) && (cur._vidId !== id0 || !!(cv._ld && !cv._ld.end));   // it has a link and its first picture is still to come
   if (loading) { let done = false; const go = () => { if (done) return; done = true; rest(); }; cv.addEventListener('firstpicture', go, { once: true }); setTimeout(go, 900); }
