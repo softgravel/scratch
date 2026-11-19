@@ -198,15 +198,21 @@
   .slide-media img.loaded { opacity:1; }
   /* v4: the stored grid thumbnail is a small 3:4 crop; as a full-screen start frame it is shown
      blurred until the full-frame poster (or the video itself) takes over */
-  .slide-media img.lowres { filter:blur(14px); transform:scale(1.12); }
+  /* v35 (Ian, Nov 19: 'they jump to a blurry zoomed in frame at the beginning'): the crop is no longer shown blurred and
+     enlarged; the slide stays black until TikTok's full-frame cover (from the link list) or the video's first frame */
+  .slide-media img.lowres { opacity:0 !important; }
   /* v6: photo posts (slideshows): pictures side by side, swiped sideways, with the post's sound */
   .photos { position:absolute; inset:0; z-index:2; display:flex; overflow-x:auto; overflow-y:hidden; scroll-snap-type:x mandatory;
     touch-action:pan-x; -webkit-overflow-scrolling:touch; scrollbar-width:none; background:#000; }
   .photos::-webkit-scrollbar { display:none; }
   .slide-media .photos img { position:relative; inset:auto; flex:0 0 100%; width:100%; height:100%; object-fit:contain; opacity:1 !important;
     scroll-snap-align:center; scroll-snap-stop:always; filter:none; transform:none; transition:none; }
-  .photo-count { position:absolute; top:calc(env(safe-area-inset-top) + 54px); left:50%; transform:translateX(-50%); z-index:6; font-size:12px; font-weight:600;
-    background:rgba(0,0,0,.45); padding:3px 10px; border-radius:12px; pointer-events:none; }
+  /* v35 (Ian, Nov 19): dots as on TikTok, no automatic advance */
+  .photo-dots { position:absolute; left:0; right:0; bottom:calc(max(26px,env(safe-area-inset-bottom)) + 4px); z-index:7; display:flex; justify-content:center; gap:5px; pointer-events:none; }
+  .photo-dots i { width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,.4); box-shadow:0 0 2px rgba(0,0,0,.5); transition:background .15s; }
+  .photo-dots i.on { background:#fff; }
+  .photo-dots.many i { width:4px; height:4px; }
+  .photo-dots.many { gap:3px; }
   .thumb-photos { position:absolute; right:4px; top:4px; font-size:9px; color:#fff; background:rgba(0,0,0,.55); padding:1px 5px; border-radius:3px; }
   /* v4: progress / scrub bar along the bottom of every video */
   .scrub { position:absolute; left:0; right:0; bottom:max(2px,calc(env(safe-area-inset-bottom) - 12px)); height:30px; z-index:8; touch-action:none; }
@@ -421,7 +427,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 34, APP_BUILT = 'Nov 19 1:07 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 35, APP_BUILT = 'Nov 19 1:35 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1951,6 +1957,7 @@ function buildSlide(item, i) {
     if (pimg.dataset.hi || r <= 0.66) pimg.style.objectFit = fitFor(r);
   });
   bindScrub(el);
+  { const c = cacheGet(item.id); if (c && c.poster) upgradePoster(el, c.poster); }     // v35: TikTok's full-frame cover, ahead of time
   bindThumb(el.querySelector('img'), item.id,
     () => Math.abs(i - curIndex),
     () => { el.classList.add('unavailable-slide');
@@ -2566,6 +2573,10 @@ function touchAhead() { const ahead = []; for (let d = 2; d <= 8; d++) { const i
 // further ahead. Only for videos whose link is already on the phone: the resolver's one-per-second pace still
 // waits for the rest (syncSlots).
 function aheadNow() {
+  const cur = slotEls['0'], cv = cur && cur._vid;      // v35: only once the video on screen is moving (it was usually prepared, so ~0.1 s)
+  if (cv && (cv.paused || cv.readyState < 3) && cur._vidId === cur.dataset.id && !cur._aheadWait) { cur._aheadWait = true; let done = false;
+    const go = () => { if (done) return; done = true; cur._aheadWait = false; if (slotEls['0'] === cur) aheadNow(); };
+    cv.addEventListener('playing', go, { once: true }); setTimeout(go, 3000); return; }
   const e = slotEls[String(_travel)];
   if (e && !e.classList.contains('unavailable-slide') && !(e._vid && e._vidId === e.dataset.id) && cacheGet(e.dataset.id)) mountSlot(e, false);
   warmAhead(); touchAhead();
@@ -2756,18 +2767,15 @@ function mountPhotos(el, urls) {
   const media = el.querySelector('.slide-media'); if (!media || media.querySelector('.photos')) return;
   const box = document.createElement('div'); box.className = 'photos';
   const imgs = urls.map(u => { const im = document.createElement('img'); im.alt = ''; im.decoding = 'async'; im.dataset.src = u; box.appendChild(im); return im; });
-  const count = document.createElement('div'); count.className = 'photo-count';
+  const count = document.createElement('div'); count.className = 'photo-count photo-dots' + (imgs.length > 12 ? ' many' : '');
+  const dots = imgs.map(() => { const d = document.createElement('i'); count.appendChild(d); return d; });
   let idx = 0, touched = 0, auto = false;
-  const show = (i) => { idx = i; count.textContent = (i + 1) + ' / ' + imgs.length;
+  const show = (i) => { idx = i; dots.forEach((d, k) => d.classList.toggle('on', k === i)); count.dataset.at = String(i + 1);
     imgs.forEach((im, k) => { if (Math.abs(k - i) <= 1) { if (!im.getAttribute('src')) im.src = im.dataset.src; } else if (Math.abs(k - i) > 2 && im.getAttribute('src')) im.removeAttribute('src'); }); };
   box.addEventListener('scroll', () => { const i = Math.round(box.scrollLeft / Math.max(1, box.clientWidth)); if (!auto) touched = Date.now(); if (i !== idx && i >= 0 && i < imgs.length) show(i); }, { passive: true });
   media.appendChild(box); if (imgs.length > 1) media.appendChild(count); show(0);
   el._photoGo = (i) => { auto = true; box.scrollTo({ left: i * box.clientWidth, behavior: 'smooth' }); setTimeout(() => { auto = false; }, 700); };
-  if (imgs.length > 1) el._photoTimer = setInterval(() => {
-    if (slotEls['0'] !== el || el.dataset.userPaused === 'true' || el._scrubbing || holding || Date.now() - touched < 6000) return;
-    if (!el._silent && (!el._vid || el._vid.paused)) return;
-    el._photoGo((idx + 1) % imgs.length);
-  }, 3500);
+  // v35 (Ian, Nov 19: 'still frame galleries should not auto-scroll'): pictures change only when swiped
 }
 function fmtTime(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 // v4: scrub bar. Drag anywhere along the bottom edge to move through the video; the picture
@@ -2798,8 +2806,15 @@ function bindScrub(el) {
   requestAnimationFrame(scrubLoop);
 })();
 // v4: coming back to the app resumes the video (if the phone refuses, the pause icon shows so a tap is obviously needed).
+// v35 (Ian, Nov 19: 'videos should stop playing when the app is closed')
+function pauseForBackground() {
+  TOUCH.stop();
+  document.querySelectorAll('video').forEach(v => { try { if (!v.paused) v.pause(); } catch (e) {} });
+  const el = slotEls['0']; if (el && el._official && el._offFrame) offPost(el._offFrame, 'pause');
+}
+window.addEventListener('pagehide', pauseForBackground);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return; const el = slotEls['0'];
+  if (document.hidden) { pauseForBackground(); return; } const el = slotEls['0'];
   if (!el || !el._vid || el.dataset.userPaused === 'true' || !document.getElementById('feed').classList.contains('open')) return;
   const v = el._vid; if (!v.paused) return;
   const p = v.play(); if (p) p.catch(()=>{});
@@ -2903,7 +2918,7 @@ function syncSlots(){
     [String(_travel), String(-_travel)].forEach(k=>{ if(slotEls[k]) mountSlot(slotEls[k], false); }); warmAhead(); touchAhead(); };
   const cv = cur && cur._vid, id0 = cur && cur.dataset.id;
   const loading = !!cv && !cur.classList.contains('unavailable-slide') && !!cacheGet(id0) && (cur._vidId !== id0 || !!(cv._ld && !cv._ld.end));   // it has a link and its first picture is still to come
-  if (loading) { let done = false; const go = () => { if (done) return; done = true; rest(); }; cv.addEventListener('firstpicture', go, { once: true }); setTimeout(go, 900); }
+  if (loading) { let done = false; const go = () => { if (done) return; done = true; rest(); }; cv.addEventListener('firstpicture', go, { once: true }); cv.addEventListener('playing', go, { once: true }); setTimeout(go, 3000); }
   else rest();
   const keep = new Set();
   if(cur) keep.add(cur.dataset.id);
@@ -3207,9 +3222,9 @@ async function importLinks(blob) {
     if (!v19 && !redir) return;
     const old = _rvMem.get(id), exp = v19 ? playExpiry(v19) : 0;
     if (v19 && !exp && !redir) { stale++; return; }                                   // the 48 h are over and there is no second link
-    if (old && rvFresh(old) && old.src === 'tt' && old.ts >= made && old.play === ((v19 && exp) ? v19 : redir)) return;            // already have this very link from this list or a newer one
+    if (old && rvFresh(old) && old.src === 'tt' && old.ts >= made && old.play === ((v19 && exp) ? v19 : redir) && (!r[6] || old.poster === r[6])) return;            // already have this very link from this list or a newer one
     const e = { play: (v19 && exp) ? v19 : redir, ts: made, exp: (v19 && exp) ? exp : 0, src: 'tt' };
-    if (redir) e.redir = redir; if (old && old.poster) e.poster = old.poster; if (old && old.images) return;     // photo posts keep their resolver entry
+    if (redir) e.redir = redir; if (r[6] && coverExpiry(r[6])) e.poster = r[6]; else if (old && old.poster) e.poster = old.poster;     // v35: TikTok's full-frame cover (48 h) if (old && old.images) return;     // photo posts keep their resolver entry
     if (!e.exp && e.play === redir) e.exp = Math.min(made + 40 * 3600e3, Date.now() + 40 * 3600e3);
     _rvMem.set(id, e); puts.push([id, e]); n++;
   });
