@@ -427,7 +427,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 36, APP_BUILT = 'Nov 19 2:24 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 37, APP_BUILT = 'Nov 19 4:00 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2450,7 +2450,8 @@ const DIAG = (() => {
   // not), while TikTok's video CDN (where tikwm's links and TikTok's redirect links lead) answered in ~0.25-1.3 s. On the
   // Mac both were fast. So redirect links go first until each kind has 4 timings on this phone; then the faster one does.
   const faster = () => { if (window.__linkPref) return window.__linkPref;
-    const a = K('ttd').mt, b = K('ttr').mt; return (a.length >= 4 && b.length >= 4 && q(a, 0.5) < q(b, 0.5)) ? 'ttd' : 'ttr'; };
+    // v37: the last 6 of each kind only (Ian's phone: direct links took ~2.7 s at 1 AM PT and ~0.2 s at 3 PM PT, so old times mislead)
+    const a = K('ttd').mt.slice(-6), b = K('ttr').mt.slice(-6); return (a.length >= 4 && b.length >= 4 && q(a, 0.5) < q(b, 0.5)) ? 'ttd' : 'ttr'; };
   const hedgeMs = () => { const m = q(K('ttd').mt.concat(K('ttr').mt), 0.5); return Math.max(1200, Math.min(5000, m ? m * 4 : 1200)); };
   // one start = from the tap or the finger lifting until the picture moves
   function arm(el, why) { if (!el) return; const c = cacheGet(el.dataset.id); if (c && c.images) { el._dg = null; return; }     // photo posts have no moving picture to time
@@ -2526,7 +2527,10 @@ const TOUCH = (() => {
       if (!pk) continue;
       at.set(id, now); hour.push(now); busy++;
       const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null, t0 = performance.now(), to = setTimeout(() => { try { ac && ac.abort(); } catch (e) {} }, 6000); let ok = true;
-      const opt = { mode: 'no-cors', credentials: 'include', referrerPolicy: 'no-referrer', cache: 'no-store', headers: { Range: 'bytes=0-65535' } };   // 'include' as the player's own requests are, so the browser can reuse this connection for the player if (ac) opt.signal = ac.signal;
+      const opt = { mode: 'no-cors', credentials: 'include', referrerPolicy: 'no-referrer', cache: 'no-store', headers: { Range: 'bytes=0-65535' } };   // 'include' as the player's own requests are, so the browser can reuse this connection for the player
+      // v37: v33's comment above swallowed this line, so no warm-up was ever cancelled: WebKit drops the Range header on
+      // these, so each one downloaded the WHOLE video in the background (up to 7 per swipe), competing with the video on screen
+      if (ac) opt.signal = ac.signal;
       let p; try { p = fetch(pk.url, opt); } catch (e) { p = Promise.reject(e); }
       p.catch(() => { ok = false; }).then(() => { clearTimeout(to); DIAG.touched(performance.now() - t0, ok); try { ac && ac.abort(); } catch (e) {} busy--; setTimeout(pump, 60); });
     }
@@ -2557,7 +2561,9 @@ function homeTouchSoon() {
 // One more player, kept loaded two videos ahead in the direction of travel and handed to that video's slide
 // when it is built (mountSlot → takeWarm). It always comes from the pool primed in the opening tap, so its
 // sound is allowed like the others'; if the pool is empty it simply is not used.
-const WARM = { v: null, id: null }; let _travel = 1;
+// v37 (Ian's v36 diagnostics, Nov 19: he swipes up to 3 a second and most videos were passed before they started):
+// two such players, two AND three ahead. WARM stays the name of the first for the code and tests that use it.
+const WARMS = [{ v: null, id: null }, { v: null, id: null }], WARM = WARMS[0]; let _travel = 1;
 // Open connections to TikTok's video hosts early (not under test: tests must never reach TikTok, not even to connect).
 if (!window.__officialBase) ['https://v19-webapp-prime.us.tiktok.com', 'https://www.tiktok.com', 'https://v16m-default.tiktokcdn-us.com'].forEach(h => { const l = document.createElement('link'); l.rel = 'preconnect'; l.href = h; document.head.appendChild(l); });
 function warmHolder() { let h = document.getElementById('warmHolder');
@@ -2566,18 +2572,24 @@ function warmHolder() { let h = document.getElementById('warmHolder');
 function warmAhead() {
   if (_primeOff) { dropWarm(); return; }                 // its player goes back to the pool for the slides
   if (!document.getElementById('feed').classList.contains('open')) return;
-  const it = feedList[curIndex + 2 * _travel]; if (!it) return;
-  const id = String(it.id); if (WARM.v && WARM.id === id) return;
-  const r = cacheGet(id); if (!r || r.images || isGone(id)) return;
-  const pk = pickLink(id, r); if (!pk) return;
-  if (!WARM.v) { if (!vpool.length) return; WARM.v = vpool.pop(); warmHolder().appendChild(WARM.v); }
-  const v = WARM.v; WARM.id = id; v.muted = true; v._url = pk.url; v.src = pk.url; DIAG.loadStart(v, id, pk.kind, 'two ahead'); try { v.load(); v.playbackRate = 1; } catch (e) {}
+  const want = [];
+  [2, 3].forEach(d => { const it = feedList[curIndex + d * _travel]; if (!it) return; const id = String(it.id), r = cacheGet(id); if (r && !r.images && !isGone(id)) want.push(id); });
+  // a player already holding a wanted video keeps it (after a swipe, the one three ahead is now two ahead); the others take the rest
+  const n1 = feedList[curIndex + _travel], next = n1 ? String(n1.id) : null;      // and one that is now the next video waits for its slide to take it
+  const free = WARMS.filter(w => want.indexOf(w.id) < 0 && w.id !== next);
+  want.forEach(id => { if (WARMS.some(w => w.id === id && w.v)) return; const w = free.shift(); if (w) loadWarm(w, id, want.indexOf(id) === 0 ? 'two ahead' : 'three ahead'); });
+}
+function loadWarm(w, id, role) {
+  const r = cacheGet(id); const pk = r && pickLink(id, r); if (!pk) return;
+  if (!w.v) { if (!vpool.length) return; w.v = vpool.pop(); warmHolder().appendChild(w.v); }
+  const v = w.v; w.id = id; v.muted = true; v._url = pk.url; v.src = pk.url; DIAG.loadStart(v, id, pk.kind, role); try { v.load(); v.playbackRate = 1; } catch (e) {}
   _lastPrimeAt = Date.now();
-  const settle = () => { if (WARM.v === v && v._url === pk.url) { try { v.pause(); if (v.currentTime > 0.4) v.currentTime = 0; } catch (e) {} } };   // if no picture was reported it ran on: back to the start
+  const settle = () => { if (w.v === v && v._url === pk.url) { try { v.pause(); if (v.currentTime > 0.4) v.currentTime = 0; } catch (e) {} } };   // if no picture was reported it ran on: back to the start
   const p = v.play(); if (p) p.catch(() => {});
   onFrame(v, settle); setTimeout(settle, 2500);
 }
-function touchAhead() { const ahead = []; for (let d = 2; d <= 8; d++) { const it = feedList[curIndex + d * _travel]; if (it && String(it.id) !== WARM.id) ahead.push(String(it.id)); } TOUCH.feed(ahead); }
+function warmOf(id) { return WARMS.find(w => w.v && w.id === String(id)) || null; }
+function touchAhead() { const ahead = []; for (let d = 2; d <= 8; d++) { const it = feedList[curIndex + d * _travel]; if (it && !warmOf(it.id)) ahead.push(String(it.id)); } TOUCH.feed(ahead); }
 // v34: real TikTok is swiped in bursts (Ian's screen recording, Nov 17: 37 swipes in 24 s, often 0.3 s apart) and
 // still shows a moving picture after most of them. Until v33 the next videos were prepared only once the feed had
 // rested 250 ms, which never happens inside a burst (measured at that pace on the real network: 22 of 26 videos
@@ -2585,17 +2597,21 @@ function touchAhead() { const ahead = []; for (let d = 2; d <= 8; d++) { const i
 // player (the one kept two ahead, when it holds that video), the fourth player moves on, and the warm-ups run
 // further ahead. Only for videos whose link is already on the phone: the resolver's one-per-second pace still
 // waits for the rest (syncSlots).
+// v37: no longer waits for the video on screen to move (v35 did): on Ian's phone the links answer in 0.2-3 s each,
+// so videos must be asked for side by side; waiting made a quick swiper land on videos with no link asked yet.
 function aheadNow() {
-  const cur = slotEls['0'], cv = cur && cur._vid;      // v35: only once the video on screen is moving (it was usually prepared, so ~0.1 s)
-  if (cv && (cv.paused || cv.readyState < 3) && cur._vidId === cur.dataset.id && !cur._aheadWait) { cur._aheadWait = true; let done = false;
-    const go = () => { if (done) return; done = true; cur._aheadWait = false; if (slotEls['0'] === cur) aheadNow(); };
-    cv.addEventListener('playing', go, { once: true }); setTimeout(go, 3000); return; }
+  const cur = slotEls['0'], ld = cur && cur._vid && cur._vid._ld;      // the video on screen still gets a 150 ms head start if it was only just asked for
+  const wait = !cur ? 0 : (cur._vidId !== cur.dataset.id && cacheGet(cur.dataset.id)) ? 150 : (ld && !ld.end && String(ld.id) === cur.dataset.id) ? Math.max(0, 150 - (performance.now() - ld.t0)) : 0;
+  if (wait > 0) { clearTimeout(aheadNow._t); aheadNow._t = setTimeout(() => { if (slotEls['0'] === cur) aheadNow2(); }, wait); return; }
+  aheadNow2();
+}
+function aheadNow2() {
   const e = slotEls[String(_travel)];
   if (e && !e.classList.contains('unavailable-slide') && !(e._vid && e._vidId === e.dataset.id) && cacheGet(e.dataset.id)) mountSlot(e, false);
   warmAhead(); touchAhead();
 }
-function takeWarm(id) { if (!WARM.v || WARM.id !== String(id)) return null; const v = WARM.v; WARM.v = null; WARM.id = null; try { v.pause(); if (v.currentTime > 0.4) v.currentTime = 0; } catch (e) {} return v; }
-function dropWarm() { if (WARM.v) releaseVideo(WARM.v); WARM.v = null; WARM.id = null; }
+function takeWarm(id) { const w = warmOf(id); if (!w) return null; const v = w.v; w.v = null; w.id = null; try { v.pause(); if (v.currentTime > 0.4) v.currentTime = 0; } catch (e) {} return v; }
+function dropWarm() { WARMS.forEach(w => { if (w.v) releaseVideo(w.v); w.v = null; w.id = null; }); }
 
 /* ---- pool of reusable <video> elements (prev/current/next ring) ----
    The next clip is preloaded (src set, buffering, paused) so a swipe promotes
@@ -2626,7 +2642,7 @@ function newVideo(){
     } });
   v.addEventListener('error',()=>{
     DIAG.loadEnd(v, 'err'); if (v._url && navigator.onLine !== false) _deadLink.add(v._url);
-    if (WARM.v === v) { WARM.id = null; return; }
+    { const w = WARMS.find(x => x.v === v); if (w) { w.id = null; return; } }
     const el=slideOf(); if(!el) return; el._state=undefined;
     // v30/v32: TikTok's other link first; when both have failed the resolver is asked (the listed links are kept
     // for the next session: a bad moment on the network must not cost the list)
@@ -2659,7 +2675,7 @@ function revealWhenPainted(el, v){
   }
 }
 function acquireVideo(){ return vpool.pop() || newVideo(); }
-function releaseVideo(v){ if(!v) return; v._url=''; v._ld=null; try{ v.pause(); v.playbackRate=1; v.removeAttribute('src'); v.load(); }catch(e){} if(v.parentNode) v.parentNode.removeChild(v); if(vpool.length<4) vpool.push(v); }
+function releaseVideo(v){ if(!v) return; v._url=''; v._ld=null; try{ v.pause(); v.playbackRate=1; v.removeAttribute('src'); v.load(); }catch(e){} if(v.parentNode) v.parentNode.removeChild(v); if(vpool.length<5) vpool.push(v); }
 
 // Called SYNCHRONOUSLY from the tap that opens the feed (a real user gesture),
 // so the feed can start with sound ON. We pre-create the pooled <video>
@@ -2757,7 +2773,7 @@ function stopPrimer(v) {
 }
 function primeAudioOnGesture(){
   desiredMuted = false; audioUnlocked = true;
-  while (vpool.length < 4) vpool.push(newVideo());   // v32: three on the slides and one kept loaded two ahead
+  while (vpool.length < 5) vpool.push(newVideo());   // v32: three on the slides and one kept loaded two ahead; v37: and one three ahead
   vpool.forEach(v => { try { v.muted = true; if (!v.src) v.src = 'clips/silent.mp4'; const p = v.play(); v._blessed = true; if (p) p.then(() => stopPrimer(v), () => {}); } catch(e){} });
   audioPrimed = true;
 }
@@ -2824,14 +2840,28 @@ function bindScrub(el) {
 })();
 // v4: coming back to the app resumes the video (if the phone refuses, the pause icon shows so a tap is obviously needed).
 // v35 (Ian, Nov 19: 'videos should stop playing when the app is closed')
+// v37 (Ian, Nov 19: 'it still plays after app closes'): pausing once was not enough. Several timers in the app restart a
+// paused video on screen (the restart after the phone pauses it, the muted retry after a refused sound, the neighbour's
+// first-frame play); one of them could fire after the pause. So while the app is in the background no video may start
+// at all, and anything found playing is paused again for a few seconds.
+let _bg = false;
+const _play0 = HTMLMediaElement.prototype.play;
+HTMLMediaElement.prototype.play = function () {
+  if (_bg || document.hidden) { try { this.pause(); } catch (e) {} if (this.src && this.src.indexOf('clips/silent') < 0) DIAG.note('', 'the app asked a video to start while in the background: refused'); return Promise.reject(new DOMException('the app is in the background', 'AbortError')); }
+  return _play0.apply(this, arguments);
+};
+document.addEventListener('play', e => { if ((_bg || document.hidden) && e.target && e.target.pause) { try { e.target.pause(); } catch (x) {} DIAG.note('', 'a video started while the app was in the background: stopped'); } }, true);
+function pauseAllMedia() { document.querySelectorAll('video, audio').forEach(v => { try { if (!v.paused) v.pause(); } catch (e) {} }); }
 function pauseForBackground() {
-  TOUCH.stop();
-  document.querySelectorAll('video').forEach(v => { try { if (!v.paused) v.pause(); } catch (e) {} });
+  _bg = true; TOUCH.stop(); pauseAllMedia();
   const el = slotEls['0']; if (el && el._official && el._offFrame) offPost(el._offFrame, 'pause');
+  [250, 1000, 3000].forEach(ms => setTimeout(() => { if (_bg) pauseAllMedia(); }, ms));
 }
 window.addEventListener('pagehide', pauseForBackground);
+window.addEventListener('pageshow', () => { if (!document.hidden) _bg = false; });
+DIAG.note('', 'app opened, v' + APP_VERSION);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { pauseForBackground(); return; } const el = slotEls['0'];
+  if (document.hidden) { pauseForBackground(); DIAG.note('', 'left the app'); return; } _bg = false; DIAG.note('', 'back in the app'); const el = slotEls['0'];
   if (!el || !el._vid || el.dataset.userPaused === 'true' || !document.getElementById('feed').classList.contains('open')) return;
   const v = el._vid; if (!v.paused) return;
   const p = v.play(); if (p) p.catch(()=>{});
@@ -2936,8 +2966,8 @@ function syncSlots(){
     [String(_travel), String(-_travel)].forEach(k=>{ if(slotEls[k]) mountSlot(slotEls[k], false); }); warmAhead(); touchAhead(); };
   const cv = cur && cur._vid, id0 = cur && cur.dataset.id;
   const loading = !!cv && !cur.classList.contains('unavailable-slide') && !!cacheGet(id0) && (cur._vidId !== id0 || !!(cv._ld && !cv._ld.end));   // it has a link and its first picture is still to come
-  if (loading) { let done = false; const go = () => { if (done) return; done = true; rest(); }; cv.addEventListener('firstpicture', go, { once: true }); cv.addEventListener('playing', go, { once: true }); setTimeout(go, 3000); }
-  else rest();
+  // v37: no longer waits for its first picture (v35 did; see aheadNow), only 150 ms, so the video on screen is asked for first
+  if (loading) setTimeout(rest, 150); else rest();
   const keep = new Set();
   if(cur) keep.add(cur.dataset.id);
   ['-1','1'].forEach(k=>{ if(slotEls[k]) keep.add(slotEls[k].dataset.id); });
@@ -3593,7 +3623,8 @@ window.__fav = {
     return out;
   },
   ready() { return Promise.all([metaReady, thumbReady]); },
-  libsync: LIBSYNC, health: HEALTH, diag: DIAG, touch: TOUCH, warm: () => ({ id: WARM.id, has: !!WARM.v, ready: WARM.v ? WARM.v.readyState : -1 })
+  libsync: LIBSYNC, health: HEALTH, diag: DIAG, touch: TOUCH, warm: () => { const it = feedList[curIndex + 2 * _travel], w = (it && warmOf(it.id)) || WARM; return { id: w.id, has: !!w.v, ready: w.v ? w.v.readyState : -1 }; },
+  warms: () => WARMS.map(w => ({ id: w.id, ready: w.v ? w.v.readyState : -1, role: w.v && w.v._ld ? w.v._ld.role : null }))
 };
 
 boot();
