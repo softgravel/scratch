@@ -427,7 +427,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 39, APP_BUILT = 'Nov 19 11:35 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 40, APP_BUILT = 'Nov 20 12:05 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2461,7 +2461,7 @@ const DIAG = (() => {
     const f = () => { if (el._dg !== g || g.done || el._vid !== v) return;
       if (v.paused) { g.tries = (g.tries || 0) + 1; if (g.tries < 100) onFrame(v, f); return; }
       g.done = 1; const ms = performance.now() - g.t0, open = g.why === 'open', o = get()[open ? 'open' : 'sw'], rdy = g.ready >= 3 || g.moving; o.n++; push(o.ms, ms, 60); if (!open && rdy) o.ready++;
-      note(el.dataset.id, (open ? 'opened' : 'swiped to') + (open || rdy ? '' : g.ready < 0 ? ' (had no link yet)' : ' (not loaded yet)'), ms, v._dk || ''); };
+      note(el.dataset.id, (open ? 'opened' : 'swiped to') + (open ? '' : g.moving ? ' (moving at the lift)' : rdy ? ' (loaded, started at the lift)' : g.ready < 0 ? ' (had no link yet)' : ' (not loaded yet)'), ms, v._dk || ''); };     // v38/v40: says which
     onFrame(v, f); }
   function left(el) { const g = el && el._dg; if (!g || g.done) return; g.done = 1; get().sw.left++; note(el.dataset.id, 'left before it started', performance.now() - g.t0, (el._vid && el._vid._dk) || ''); }
   function stalled(el, v) { const g = el._dg; if (slotEls['0'] !== el || !g || !g.done || el._scrubbing || holding || v.seeking || v.currentTime < 0.3) return; get().stall++; note(el.dataset.id, 'buffering at ' + v.currentTime.toFixed(1) + ' s', null, v._dk || ''); }
@@ -3567,6 +3567,65 @@ window.addEventListener('resize', () => {
     gridVL.update(true);
   }
 });
+
+/* ---- v40: diagnostics reach the Mac by themselves (Ian, Nov 19: "a way for you to get the diagnostics automatically";
+   approved: "the encrypted relay is fine as long as it's secure and doesn't require anything from me").
+   Every few minutes while the app is open, and when it is left, the diagnostics added since the last send (plus the
+   summary) are gzipped, encrypted with AES-256-GCM under a key derived from the library code already on this phone, and
+   posted to a free relay (ntfy.sh) under a topic name also derived from that code. The relay sees only ciphertext; it
+   keeps messages 12 h; the Mac pulls and decrypts them (_dev/tools/diag_pull.js). Without the library code nothing is
+   sent. Under test the relay is the test's own server (window.__diagRelay) and never ntfy.sh. */
+const DIAGSEND = (() => {
+  const SENT = 'gallery-diag-sent', MAX = 3800;
+  const base = () => window.__diagRelay || (window.__officialBase ? null : 'https://ntfy.sh/');
+  let busy = false, last = 0, lastHead = '', keyP = null;
+  const raw = () => { try { const k = localStorage.getItem('lib-key'); return k ? Uint8Array.from(atob(k), c => c.charCodeAt(0)) : null; } catch (e) { return null; } };
+  const sha = async (label, r) => new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array([...new TextEncoder().encode(label), ...r])));
+  const hex = (u) => Array.from(u, b => b.toString(16).padStart(2, '0')).join('');
+  async function keys() { const r = raw(); if (!r) return null;
+    if (!keyP) keyP = (async () => ({ topic: 'fd' + hex(await sha('favdiag-topic-1', r)).slice(0, 30), key: await crypto.subtle.importKey('raw', await sha('favdiag-key-1', r), 'AES-GCM', false, ['encrypt']) }))();
+    return keyP; }
+  async function seal(k, obj) {
+    let data = new TextEncoder().encode(JSON.stringify(obj)), z = 0;
+    if (typeof CompressionStream !== 'undefined') { data = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer()); z = 1; }
+    const iv = crypto.getRandomValues(new Uint8Array(12)), ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k.key, data));
+    const all = new Uint8Array(12 + ct.length); all.set(iv); all.set(ct, 12);
+    let s = ''; for (let i = 0; i < all.length; i += 8192) s += String.fromCharCode.apply(null, all.subarray(i, i + 8192));
+    return 'FD1' + (z ? 'z' : 'p') + '.' + btoa(s);
+  }
+  const dev = () => { try { let d = localStorage.getItem('gallery-diag-dev'); if (!d) { d = hex(crypto.getRandomValues(new Uint8Array(4))); localStorage.setItem('gallery-diag-dev', d); } return d; } catch (e) { return '?'; } };
+  async function post(k, body, leaving) {
+    const r = await fetch(base() + k.topic, { method: 'POST', body, mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store', keepalive: !!leaving });
+    if (!r.ok) throw new Error('relay ' + r.status);
+  }
+  async function send(leaving) {
+    if (busy || !base() || navigator.onLine === false || !(window.crypto && crypto.subtle)) return;
+    const k = await keys().catch(() => null); if (!k) return;
+    busy = true;
+    try {
+      let since = 0; try { since = Number(localStorage.getItem(SENT) || 0); } catch (e) {}
+      const log = DIAG.data().log.filter(e => e[0] > since);
+      const head = DIAG.text().split('\n\nLast ')[0], same = head.slice(head.indexOf('\n'));     // (its first line is the clock)
+      if (!log.length && same === lastHead) return;
+      const meta = { v: APP_VERSION, dev: dev(), at: Date.now(), leaving: !!leaving };
+      // the events in chunks that each fit in one relay message
+      let i = 0, n = 60;
+      while (i < log.length) {
+        const part = log.slice(i, i + n), body = await seal(k, Object.assign({ events: part }, meta));
+        if (body.length > MAX && n > 5) { n = Math.max(5, n >> 1); continue; }
+        await post(k, body, leaving); i += part.length;
+        try { localStorage.setItem(SENT, String(part[part.length - 1][0])); } catch (e) {}
+      }
+      if (same !== lastHead) { const body = await seal(k, Object.assign({ head: head.slice(0, 6000) }, meta)); if (body.length <= MAX) await post(k, body, leaving); lastHead = same; }
+      last = Date.now();
+    } catch (e) { /* offline or the relay refused: the same events go next time */ }
+    finally { busy = false; }
+  }
+  setTimeout(() => send(false), 8000);                                    // what the last session left (its events are still in the log)
+  setInterval(() => { if (!document.hidden && Date.now() - last > 170000) send(false); }, 30000);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) send(true); });
+  return { send, keys, state: () => ({ last, since: localStorage.getItem(SENT) }) };
+})();
 
 /* ---- test telemetry (off unless ?telemetry=<url>; only localhost / .local / LAN / same origin) ---- */
 const TELEMETRY = (() => {
