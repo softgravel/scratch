@@ -441,7 +441,7 @@
   ['loadstart', 'play', 'playing', 'volumechange'].forEach(t => document.addEventListener(t, (e) => { if (e.target instanceof HTMLMediaElement) hush(e.target); }, true));
   window.__audible = () => [...document.querySelectorAll('video, audio')].filter(v => !MD.get.call(v) && VD.get.call(v) > 0 && !v.paused).length;
 })();
-var APP_VERSION = 41, APP_BUILT = 'Nov 20 1:02 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 42, APP_BUILT = 'Nov 20 2:09 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1757,7 +1757,10 @@ stage.addEventListener('pointermove', (e) => {
   if (curIndex === feedList.length - 1 && dy < 0) dy *= 0.3;
   setTrack(dy, false);
   // v26: once letting go here would change videos, start the incoming one (muted) already
-  const far = Math.abs(dragDY) > stageHeight() * 0.18;
+  // v42: from 8 % of the screen, not 18 % (v38's early start, brought back alone after the iPhone cable runs of Nov 20
+  // showed no harm): quick short flicks never reached 18 %, so their next video always started cold at the lift.
+  // A drag that comes back puts it back where it was. The video on screen is still muted meanwhile (v37, unlike v38).
+  const far = Math.abs(dragDY) > stageHeight() * 0.08;
   earlyStart(far && dragDY < 0 && curIndex < feedList.length - 1 ? 1 : far && dragDY > 0 && curIndex > 0 ? -1 : 0);
 });
 
