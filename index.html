@@ -427,7 +427,21 @@
 
 <script>
 'use strict';
-var APP_VERSION = 40, APP_BUILT = 'Nov 20 12:05 AM';   // stamped by _dev/tools/release.py
+// v41: silent test mode for automated runs on the iPhone (?hush=1, kept for the tab's session). Every video and audio
+// element stays really muted at volume 0 whatever the app asks (the app still sees the values it set, so it behaves as
+// usual), TikTok's own player (cross-origin, so it cannot be silenced) is never used, and only the link list is loaded
+// from the library (not the 121 MB of covers). Off unless asked for; never set by the app itself.
+(() => { let on = false; try { on = /[?&]hush=1(&|$)/.test(location.search) || sessionStorage.getItem('hush') === '1'; if (on) sessionStorage.setItem('hush', '1'); } catch (e) {}
+  if (!on) return; window.__hush = true;
+  const MD = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted'), VD = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume');
+  const hush = (v) => { try { MD.set.call(v, true); VD.set.call(v, 0); } catch (e) {} };
+  Object.defineProperty(HTMLMediaElement.prototype, 'muted', { configurable: true, get() { return this.__wantMuted === undefined ? MD.get.call(this) : this.__wantMuted; }, set(x) { this.__wantMuted = !!x; hush(this); } });
+  Object.defineProperty(HTMLMediaElement.prototype, 'volume', { configurable: true, get() { return this.__wantVol === undefined ? 1 : this.__wantVol; }, set(x) { this.__wantVol = x; hush(this); } });
+  const P = HTMLMediaElement.prototype.play; HTMLMediaElement.prototype.play = function () { hush(this); return P.apply(this, arguments); };
+  ['loadstart', 'play', 'playing', 'volumechange'].forEach(t => document.addEventListener(t, (e) => { if (e.target instanceof HTMLMediaElement) hush(e.target); }, true));
+  window.__audible = () => [...document.querySelectorAll('video, audio')].filter(v => !MD.get.call(v) && VD.get.call(v) > 0 && !v.paused).length;
+})();
+var APP_VERSION = 41, APP_BUILT = 'Nov 20 1:02 AM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2718,6 +2732,7 @@ function armOfficial(el, id) {
   el._offT2 = setTimeout(() => go('tikwm slow'), OFFICIAL_SLOW_MS);
 }
 function startOfficial(el, id, why) {
+  if (window.__hush) return;          // v41: TikTok's player cannot be silenced from here, so silent test runs never use it
   const media = el.querySelector('.slide-media'); if (!media) return;
   document.querySelectorAll('.slide').forEach(o => { if (o !== el) removeOfficial(o); });   // never two players
   el._official = true; el._offMuted = true; el._offWhy = why; delete el.dataset.userPaused;
@@ -3421,7 +3436,7 @@ const LIBSYNC = (() => {
     try {
       const m = await manifest(); if (!m) return;
       const key = await importKey(b64(localStorage.getItem(KEY)));
-      let have = doneList(); const todo = m.parts.filter(p => !have.includes(p.f));
+      let have = doneList(); const todo = window.__hush ? [] : m.parts.filter(p => !have.includes(p.f));      // v41: silent test runs load only the link list
       for (let i = 0; i < todo.length; i++) {
         while (feedOpen()) await new Promise(r => setTimeout(r, 2000));       // never compete with a video on screen
         status = 'loading library, part ' + (m.parts.length - todo.length + i + 1) + ' of ' + m.parts.length; paint();
