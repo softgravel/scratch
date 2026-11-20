@@ -427,7 +427,7 @@
 
 <script>
 'use strict';
-var APP_VERSION = 38, APP_BUILT = 'Nov 19 6:45 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 39, APP_BUILT = 'Nov 19 11:35 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1719,8 +1719,8 @@ function overlayTap(t) {
   return false;
 }
 stage.addEventListener('pointerdown', (e) => {
-  if (animating && _animDone) { dragging = true; _animDone(); }   // v38: marked first, so the commit's waiting work waits for this finger
-  if (animating) { dragging = false; return; }
+  if (animating && _animDone) _animDone();
+  if (animating) return;
   dragging = true; dragMoved = false; dragStartEl = e.target;
   dragStartY = e.clientY; dragDY = 0; dragStartT = Date.now();
   dragVel = 0; lastMoveY = e.clientY; lastMoveT = performance.now();
@@ -1743,10 +1743,7 @@ stage.addEventListener('pointermove', (e) => {
   if (curIndex === feedList.length - 1 && dy < 0) dy *= 0.3;
   setTrack(dy, false);
   // v26: once letting go here would change videos, start the incoming one (muted) already
-  // v38: from 8 % of the screen, not 18 %: on Ian's phone (v37 diagnostics) a swipe whose next video was already moving
-  // at the lift showed it in 15-100 ms, and one that had to start at the lift took ~1.1 s about one time in six, so
-  // quick short flicks (which never reached 18 %) now start it too. A drag that comes back puts it back where it was.
-  const far = Math.abs(dragDY) > stageHeight() * 0.08;
+  const far = Math.abs(dragDY) > stageHeight() * 0.18;
   earlyStart(far && dragDY < 0 && curIndex < feedList.length - 1 ? 1 : far && dragDY > 0 && curIndex > 0 ? -1 : 0);
 });
 
@@ -1764,8 +1761,8 @@ function earlyStart(dir) {
   // Same muted start as v22 (its sound comes on at its first frame, still during the drag: turning
   // the sound on later, at the lift, stalled the picture ~0.15 s in WebKit); the video being left
   // is muted meanwhile so the two never sound together.
-  // v38: the video on screen keeps its sound while the finger drags (the incoming one is muted until the lift, so the
-  // two never sound together); it is muted at the lift instead (startIncoming)
+  const cur = slotEls['0'];
+  if (!(desiredMuted || !audioUnlocked) && cur && cur._vid && !cur._vid.muted) { cur._vid.muted = true; cur._earlyMuted = true; }
   inc._deferUnmute = 0; v.muted = true; const p = v.play(); if (p) p.catch(()=>{});   // v36: muted while dragging; the sound comes on at the lift (a gesture)
 }
 function earlyStop() {
@@ -1785,7 +1782,7 @@ function startIncoming(dir) {
   // v26: an early-started swipe has already muted the video being left; pausing it right at the
   // lift froze the incoming picture when its sound came on, so it is paused once it has slid away
   if (out && out._official && out._offFrame) offPost(out._offFrame, 'pause');
-  if (out) { out._wantPlay = false; if (early) { if (out._vid) out._vid.muted = true; setTimeout(() => { if (!out._wantPlay) pauseSlide(out); }, 300); } else pauseSlide(out); }
+  if (out) { out._wantPlay = false; if (early) setTimeout(() => { if (!out._wantPlay) pauseSlide(out); }, 300); else pauseSlide(out); }
   if (!inc) return;
   inc._wantPlay = true; delete inc.dataset.userPaused;
   DIAG.arm(inc, 'swipe');
@@ -1842,8 +1839,6 @@ function endDrag(e) {
 }
 stage.addEventListener('pointerup', endDrag);
 stage.addEventListener('pointercancel', () => { dragging = false; _stageGestureEnd = Date.now(); clearTimeout(holdTimer); earlyStop(); if (holding) stopFF(); setTrack(0, true, 180); });
-// v38: what waited for the finger runs once the slide's first frame is on screen
-['pointerup', 'pointercancel'].forEach(t => stage.addEventListener(t, () => requestAnimationFrame(() => setTimeout(flushLater, 0))));
 
 function afterTransition(fn, ms) {
   let done = false;
@@ -2466,7 +2461,7 @@ const DIAG = (() => {
     const f = () => { if (el._dg !== g || g.done || el._vid !== v) return;
       if (v.paused) { g.tries = (g.tries || 0) + 1; if (g.tries < 100) onFrame(v, f); return; }
       g.done = 1; const ms = performance.now() - g.t0, open = g.why === 'open', o = get()[open ? 'open' : 'sw'], rdy = g.ready >= 3 || g.moving; o.n++; push(o.ms, ms, 60); if (!open && rdy) o.ready++;
-      note(el.dataset.id, (open ? 'opened' : 'swiped to') + (open ? '' : g.moving ? ' (moving at the lift)' : rdy ? ' (loaded, started at the lift)' : g.ready < 0 ? ' (had no link yet)' : ' (not loaded yet)'), ms, v._dk || ''); };     // v38: says which
+      note(el.dataset.id, (open ? 'opened' : 'swiped to') + (open || rdy ? '' : g.ready < 0 ? ' (had no link yet)' : ' (not loaded yet)'), ms, v._dk || ''); };
     onFrame(v, f); }
   function left(el) { const g = el && el._dg; if (!g || g.done) return; g.done = 1; get().sw.left++; note(el.dataset.id, 'left before it started', performance.now() - g.t0, (el._vid && el._vid._dk) || ''); }
   function stalled(el, v) { const g = el._dg; if (slotEls['0'] !== el || !g || !g.done || el._scrubbing || holding || v.seeking || v.currentTime < 0.3) return; get().stall++; note(el.dataset.id, 'buffering at ' + v.currentTime.toFixed(1) + ' s', null, v._dk || ''); }
@@ -2574,13 +2569,6 @@ if (!window.__officialBase) ['https://v19-webapp-prime.us.tiktok.com', 'https://
 function warmHolder() { let h = document.getElementById('warmHolder');
   if (!h) { h = document.createElement('div'); h.id = 'warmHolder'; h.style.cssText = 'position:absolute;left:-300vw;top:0;width:100vw;height:100vh;overflow:hidden;pointer-events:none'; document.getElementById('feed').appendChild(h); }
   return h; }
-// v38 (Ian on v37, Nov 19: 'scrolling is no longer smooth'): v37 started two players loading and up to seven warm-ups
-// at the very moment the next drag began (a touch during the slide finishes it at once, and the new edge was prepared
-// right there), so the finger's first moves waited for the main thread. Work that can wait now waits for the finger
-// to lift; it then runs while the slide animates (the animation itself does not need the main thread).
-const _later = new Map();
-function whenFingerUp(key, fn) { if (!dragging) { _later.delete(key); fn(); return; } _later.set(key, fn); setTimeout(flushLater, 1500); }
-function flushLater() { if (dragging || !_later.size) return; const fns = Array.from(_later.values()); _later.clear(); fns.forEach(f => { try { f(); } catch (e) {} }); }
 function warmAhead() {
   if (_primeOff) { dropWarm(); return; }                 // its player goes back to the pool for the slides
   if (!document.getElementById('feed').classList.contains('open')) return;
@@ -2589,12 +2577,7 @@ function warmAhead() {
   // a player already holding a wanted video keeps it (after a swipe, the one three ahead is now two ahead); the others take the rest
   const n1 = feedList[curIndex + _travel], next = n1 ? String(n1.id) : null;      // and one that is now the next video waits for its slide to take it
   const free = WARMS.filter(w => want.indexOf(w.id) < 0 && w.id !== next);
-  want.forEach((id, i) => { if (WARMS.some(w => w.id === id && w.v)) return;
-    // v38: the one three ahead starts once the one two ahead has its first picture (v37 loaded both at once: on the
-    // phone a first picture then came up to 0.9 s after TikTok's answer), or after 1 s
-    if (i === 1) { const w2 = warmOf(want[0]), ld = w2 && w2.v._ld;
-      if (ld && !ld.end) { const again = () => whenFingerUp('warm', warmAhead); w2.v.addEventListener('firstpicture', again, { once: true }); setTimeout(again, 1000); return; } }
-    const w = free.shift(); if (w) loadWarm(w, id, i === 0 ? 'two ahead' : 'three ahead'); });
+  want.forEach(id => { if (WARMS.some(w => w.id === id && w.v)) return; const w = free.shift(); if (w) loadWarm(w, id, want.indexOf(id) === 0 ? 'two ahead' : 'three ahead'); });
 }
 function loadWarm(w, id, role) {
   const r = cacheGet(id); const pk = r && pickLink(id, r); if (!pk) return;
@@ -2625,7 +2608,7 @@ function aheadNow() {
 function aheadNow2() {
   const e = slotEls[String(_travel)];
   if (e && !e.classList.contains('unavailable-slide') && !(e._vid && e._vidId === e.dataset.id) && cacheGet(e.dataset.id)) mountSlot(e, false);
-  const cur = slotEls['0']; whenFingerUp('ahead', () => { if (slotEls['0'] === cur) { warmAhead(); touchAhead(); } });   // v38
+  warmAhead(); touchAhead();
 }
 function takeWarm(id) { const w = warmOf(id); if (!w) return null; const v = w.v; w.v = null; w.id = null; try { v.pause(); if (v.currentTime > 0.4) v.currentTime = 0; } catch (e) {} return v; }
 function dropWarm() { WARMS.forEach(w => { if (w.v) releaseVideo(w.v); w.v = null; w.id = null; }); }
@@ -2980,8 +2963,7 @@ function syncSlots(){
   // v32: the video on screen has the connection and the decoder to itself until its first picture (0.9 s at
   // most); then the neighbour in the direction of travel, the other one, and the video two ahead.
   const rest = () => { if (slotEls['0'] !== cur || !document.getElementById('feed').classList.contains('open')) return;
-    [String(_travel), String(-_travel)].forEach(k=>{ if(slotEls[k]) mountSlot(slotEls[k], false); });
-    whenFingerUp('ahead', () => { if (slotEls['0'] === cur) { warmAhead(); touchAhead(); } }); };     // v38
+    [String(_travel), String(-_travel)].forEach(k=>{ if(slotEls[k]) mountSlot(slotEls[k], false); }); warmAhead(); touchAhead(); };
   const cv = cur && cur._vid, id0 = cur && cur.dataset.id;
   const loading = !!cv && !cur.classList.contains('unavailable-slide') && !!cacheGet(id0) && (cur._vidId !== id0 || !!(cv._ld && !cv._ld.end));   // it has a link and its first picture is still to come
   // v37: no longer waits for its first picture (v35 did; see aheadNow), only 150 ms, so the video on screen is asked for first
