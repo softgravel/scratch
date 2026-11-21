@@ -441,7 +441,7 @@
   ['loadstart', 'play', 'playing', 'volumechange'].forEach(t => document.addEventListener(t, (e) => { if (e.target instanceof HTMLMediaElement) hush(e.target); }, true));
   window.__audible = () => [...document.querySelectorAll('video, audio')].filter(v => !MD.get.call(v) && VD.get.call(v) > 0 && !v.paused).length;
 })();
-var APP_VERSION = 44, APP_BUILT = 'Nov 21 1:43 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 45, APP_BUILT = 'Nov 21 2:05 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1938,7 +1938,13 @@ function stopFF() {
   const el = slotEls['0']; if (!el) return;
   el.querySelector('.slide-media').classList.remove('ffwd');
   const v = el._vid; if (!v) return;
-  try { v.playbackRate = 1; } catch (e) {}
+  // v45 (Ian, Nov 21: 'when switching back from 2x to normal speed, the video jumps back a bit'). iPhone cable runs (Nov 21,
+  // one video, 2 s holds, every frame recorded): with pitch correction on, changing ONLY the speed made the picture jump
+  // back 0.2-0.9 s when 2x ended and up to 1.5 s when it started (the start of a video's first hold too, since a new
+  // player has pitch correction on). Changing pitch correction in the same moment as the speed: no jump at either end
+  // (3 of 3; one frame held ~0.15 s). Re-seeking instead froze the picture 1.4-7 s. So pitch correction is on only
+  // during 2x (startFF sets both together), off at normal speed, where it makes no difference to the sound.
+  try { v.preservesPitch = false; v.webkitPreservesPitch = false; v.playbackRate = 1; } catch (e) {}
   const t1 = v.currentTime;
   setTimeout(() => { if (el._vid === v && !v.paused && !holding && slotEls['0'] === el && v.readyState >= 3 && Math.abs(v.currentTime - t1) < 0.02) ffNudge(v); }, 1200);
 }
@@ -2673,6 +2679,7 @@ const vpool = [];
 function newVideo(){
   const v=document.createElement('video');
   v.playsInline=true; v.loop=true; v.muted=true; v.preload='auto';
+  try { v.preservesPitch = false; v.webkitPreservesPitch = false; } catch (e) {}   // v45: see stopFF
   v.setAttribute('playsinline',''); v.setAttribute('webkit-playsinline',''); v.setAttribute('loop',''); v.setAttribute('muted','');
   const slideOf=()=>v.closest('.slide');
   // NOTE: we do NOT reveal the video (fade the thumbnail) on 'playing' — that
@@ -2725,7 +2732,7 @@ function revealWhenPainted(el, v){
   }
 }
 function acquireVideo(){ return vpool.pop() || newVideo(); }
-function releaseVideo(v){ if(!v) return; v._url=''; v._ld=null; try{ v.pause(); v.playbackRate=1; v.removeAttribute('src'); v.load(); }catch(e){} if(v.parentNode) v.parentNode.removeChild(v); if(vpool.length<5) vpool.push(v); }
+function releaseVideo(v){ if(!v) return; v._url=''; v._ld=null; try{ v.pause(); v.preservesPitch=false; v.webkitPreservesPitch=false; v.playbackRate=1; v.removeAttribute('src'); v.load(); }catch(e){} if(v.parentNode) v.parentNode.removeChild(v); if(vpool.length<5) vpool.push(v); }
 
 // Called SYNCHRONOUSLY from the tap that opens the feed (a real user gesture),
 // so the feed can start with sound ON. We pre-create the pooled <video>
