@@ -441,7 +441,7 @@
   ['loadstart', 'play', 'playing', 'volumechange'].forEach(t => document.addEventListener(t, (e) => { if (e.target instanceof HTMLMediaElement) hush(e.target); }, true));
   window.__audible = () => [...document.querySelectorAll('video, audio')].filter(v => !MD.get.call(v) && VD.get.call(v) > 0 && !v.paused).length;
 })();
-var APP_VERSION = 43, APP_BUILT = 'Nov 21 1:24 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 44, APP_BUILT = 'Nov 21 1:43 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2896,16 +2896,21 @@ function bindScrub(el) {
 // first-frame play); one of them could fire after the pause. So while the app is in the background no video may start
 // at all, and anything found playing is paused again for a few seconds.
 let _bg = false;
+// v44 (Ian, Nov 21: 'a mode switch that allows videos to keep playing with the app closed (default to switched off)'):
+// when on, the video on screen is exempt from all of the above; every other video still stops. Its own key, off unless set.
+let bgPlay = false; try { bgPlay = localStorage.getItem('bg-play') === '1'; } catch (e) {}
+function setBgPlay(on) { bgPlay = !!on; try { localStorage.setItem('bg-play', bgPlay ? '1' : '0'); } catch (e) {} }
+function bgKeeps(v) { const el = slotEls['0'], f = document.getElementById('feed'); return bgPlay && !!el && el._vid === v && !!f && f.classList.contains('open'); }
 const _play0 = HTMLMediaElement.prototype.play;
 HTMLMediaElement.prototype.play = function () {
-  if (_bg || document.hidden) { try { this.pause(); } catch (e) {} if (this.src && this.src.indexOf('clips/silent') < 0) DIAG.note('', 'the app asked a video to start while in the background: refused'); return Promise.reject(new DOMException('the app is in the background', 'AbortError')); }
+  if ((_bg || document.hidden) && !bgKeeps(this)) { try { this.pause(); } catch (e) {} if (this.src && this.src.indexOf('clips/silent') < 0) DIAG.note('', 'the app asked a video to start while in the background: refused'); return Promise.reject(new DOMException('the app is in the background', 'AbortError')); }
   return _play0.apply(this, arguments);
 };
-document.addEventListener('play', e => { if ((_bg || document.hidden) && e.target && e.target.pause) { try { e.target.pause(); } catch (x) {} DIAG.note('', 'a video started while the app was in the background: stopped'); } }, true);
-function pauseAllMedia() { document.querySelectorAll('video, audio').forEach(v => { try { if (!v.paused) v.pause(); } catch (e) {} }); }
+document.addEventListener('play', e => { if ((_bg || document.hidden) && e.target && e.target.pause && !bgKeeps(e.target)) { try { e.target.pause(); } catch (x) {} DIAG.note('', 'a video started while the app was in the background: stopped'); } }, true);
+function pauseAllMedia() { document.querySelectorAll('video, audio').forEach(v => { try { if (!v.paused && !bgKeeps(v)) v.pause(); } catch (e) {} }); }
 function pauseForBackground() {
   _bg = true; TOUCH.stop(); pauseAllMedia();
-  const el = slotEls['0']; if (el && el._official && el._offFrame) offPost(el._offFrame, 'pause');
+  const el = slotEls['0']; if (el && el._official && el._offFrame && !bgPlay) offPost(el._offFrame, 'pause');
   [250, 1000, 3000].forEach(ms => setTimeout(() => { if (_bg) pauseAllMedia(); }, ms));
 }
 window.addEventListener('pagehide', pauseForBackground);
@@ -3518,6 +3523,7 @@ document.getElementById('libBtn').onclick = () => {
     { label: 'Paste links', onClick: () => inputModal({ title: 'Paste links', placeholder: 'One or many TikTok links', confirmLabel: 'Import', onSubmit: (v) => { setTimeout(() => importList(v), 60); } }) },
     { label: 'Save a backup of my categories', onClick: exportBackup },
     { label: 'Restore categories from a backup', onClick: () => pickFile(importBackup) },
+    { label: 'Keep playing when the app is closed: ' + (bgPlay ? 'on' : 'off'), onClick: () => { setBgPlay(!bgPlay); toast(bgPlay ? 'Videos keep playing when the app is closed' : 'Videos stop when the app is closed'); } },   // v44
     { label: 'App status', onClick: appStatus },
     { label: 'Share diagnostics (a small text file)', onClick: () => DIAG.share() }
   ]});
