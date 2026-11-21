@@ -441,7 +441,7 @@
   ['loadstart', 'play', 'playing', 'volumechange'].forEach(t => document.addEventListener(t, (e) => { if (e.target instanceof HTMLMediaElement) hush(e.target); }, true));
   window.__audible = () => [...document.querySelectorAll('video, audio')].filter(v => !MD.get.call(v) && VD.get.call(v) > 0 && !v.paused).length;
 })();
-var APP_VERSION = 42, APP_BUILT = 'Nov 20 2:09 AM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 43, APP_BUILT = 'Nov 21 1:24 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2532,6 +2532,39 @@ function armLinkHedge(el) {
     el._tried = t; DIAG.loadEnd(v, 'slow'); el._vidId = null; mountSlot(el, true);
   }, DIAG.hedgeMs());
 }
+// v43: the video on screen is wanted and has its first picture, yet does not move. iPhone cable runs at night (Nov 20,
+// 1:30-2:10 AM PT) showed 22 of 48 swipes landing on a video that had loaded its first picture and then never moved,
+// with nothing logged; Ian's own phone had the same (frozen 6, 8 and 18 s). armLinkHedge only covers the time before
+// the first picture. So: after 1.5 s without movement it is restarted where it is: if paused, simply played again;
+// if waiting for data, on TikTok's other link (or the same link afresh when there is no other). At most 3 tries per
+// video; each one is logged with what the video was doing. window.__noKick turns it off (to compare in test runs).
+let _kick = { el: null, v: null, t: -1, at: 0, n: 0 };
+function kickState(v) { const b = v.buffered && v.buffered.length ? v.buffered.end(v.buffered.length - 1) : 0;
+  return 'ready ' + v.readyState + ', net ' + v.networkState + (v.paused ? ', paused' : '') + ', at ' + v.currentTime.toFixed(1) + ' s, buffered to ' + b.toFixed(1) + ' s'; }
+function kickVideo(el, v, still) {
+  const id = el.dataset.id, why = 'stuck ' + (still / 1000).toFixed(1) + ' s (' + kickState(v) + ')';
+  if (v.paused) { DIAG.note(id, why + ': played again', null, v._dk || ''); playWithSound(el, v); return; }
+  // a player still fetching holds back even with seconds buffered (WebKit waits until it expects to play through; the Mac
+  // test reproduces it: ready 3, buffered to 2 s, stuck at 0.0 s), so only a player whose loading has stopped is nudged
+  if (v.readyState >= 3 && v.networkState !== 2) { DIAG.note(id, why + ': nudged', null, v._dk || ''); ffNudge(v); return; }
+  const r = cacheGet(id); let t = Object.assign({}, el._tried); if (v._dk) t[v._dk] = 1;
+  let pk = r ? pickLink(id, r, t) : null; if (!pk && r) { t = {}; pk = pickLink(id, r, t); }       // both tried: the first one afresh
+  const pos = v.currentTime;
+  DIAG.note(id, why + (pk && pk.kind !== v._dk ? ': trying the other link' : ': reloading the link'), null, v._dk || '');
+  if (!pk) { try { v.load(); } catch (e) {} } else { el._tried = t; v._url = pk.url; v.src = pk.url; DIAG.loadStart(v, id, pk.kind, 'on screen'); try { v.load(); v.playbackRate = 1; } catch (e) {} }
+  if (pos > 0.05) { const go = () => { try { v.currentTime = pos; } catch (e) {} }; if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true }); }
+  playWithSound(el, v); DIAG.watch(el, v);
+}
+setInterval(() => {
+  const el = slotEls['0'], v = el && el._vid, feedEl = document.getElementById('feed');
+  if (window.__noKick || !el || !v || !el._wantPlay || el._official || el._silent || el.dataset.userPaused === 'true' || el._scrubbing || holding || dragging || animating
+      || document.hidden || _bg || v.ended || v.seeking || !v.src || el._vidId !== el.dataset.id || v.readyState < 1 || !feedEl || !feedEl.classList.contains('open')) { if (_kick.el !== el) _kick.el = null; _kick.at = performance.now(); return; }
+  const now = performance.now();
+  if (_kick.el !== el || _kick.v !== v) { _kick = { el, v, t: v.currentTime, at: now, n: 0 }; return; }
+  if (Math.abs(v.currentTime - _kick.t) > 0.01) { _kick.t = v.currentTime; _kick.at = now; return; }
+  if (_kick.n >= 3 || now - _kick.at < (_kick.n ? 3000 : 1500)) return;
+  _kick.n++; const still = now - _kick.at; _kick.at = now; kickVideo(el, v, still);
+}, 250);
 const TOUCH = (() => {
   const at = new Map(); let q = [], busy = 0, lanes = 2, hour = [];
   const fresh = (id) => (at.get(id) || 0) > Date.now() - 20 * 60e3;
