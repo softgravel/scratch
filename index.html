@@ -441,7 +441,7 @@
   ['loadstart', 'play', 'playing', 'volumechange'].forEach(t => document.addEventListener(t, (e) => { if (e.target instanceof HTMLMediaElement) hush(e.target); }, true));
   window.__audible = () => [...document.querySelectorAll('video, audio')].filter(v => !MD.get.call(v) && VD.get.call(v) > 0 && !v.paused).length;
 })();
-var APP_VERSION = 50, APP_BUILT = 'Nov 21 9:35 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 51, APP_BUILT = 'Nov 21 9:38 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2548,7 +2548,7 @@ const STARTS = (() => {
     ids.forEach(id => { if (!id) return; id = String(id); if (!have.has(id)) return; const u = redirOf(cacheGet(id)); if (u) items.push({ id, u }); });
     if (items.length) sw.controller.postMessage({ op: 'focus', items }); }
   return { url, prepare, focus, ok, has: (id) => have.has(String(id)), count: () => have.size, mode: () => mode,
-    depth: () => mode === 'full' ? 15 : 4, grid: () => mode === 'full' ? 12 : 4,      // v50: 15 / 4 ahead (v47: 10 / 3)
+    depth: () => mode === 'full' ? 25 : 4, grid: () => mode === 'full' ? 12 : 4,      // v51: 25 / 4 ahead (v50: 15, v47: 10 / 3)
     setMode(m) { mode = m === 'full' ? 'full' : 'few'; try { localStorage.setItem('lookahead', mode); } catch (e) {} } };
 })();
 function pickLink(id, r, tried) {
