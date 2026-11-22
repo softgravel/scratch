@@ -441,7 +441,7 @@
   ['loadstart', 'play', 'playing', 'volumechange'].forEach(t => document.addEventListener(t, (e) => { if (e.target instanceof HTMLMediaElement) hush(e.target); }, true));
   window.__audible = () => [...document.querySelectorAll('video, audio')].filter(v => !MD.get.call(v) && VD.get.call(v) > 0 && !v.paused).length;
 })();
-var APP_VERSION = 45, APP_BUILT = 'Nov 21 2:05 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 46, APP_BUILT = 'Nov 21 5:23 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2475,7 +2475,9 @@ const DIAG = (() => {
   const faster = () => { if (window.__linkPref) return window.__linkPref;
     // v37: the last 6 of each kind only (Ian's phone: direct links took ~2.7 s at 1 AM PT and ~0.2 s at 3 PM PT, so old times mislead)
     const a = K('ttd').mt.slice(-6), b = K('ttr').mt.slice(-6); return (a.length >= 4 && b.length >= 4 && q(a, 0.5) < q(b, 0.5)) ? 'ttd' : 'ttr'; };
-  const hedgeMs = () => { const m = q(K('ttd').mt.concat(K('ttr').mt), 0.5); return Math.max(1200, Math.min(5000, m ? m * 4 : 1200)); };
+  // v46: at most 2.5 s (was 5 s). Ian's session, Nov 21 4:42 PM: TikTok's first answers took 1-15 s and the other link was
+  // tried only after 9 s; the Mac reached the same videos in 0.2-0.9 s, so a long wait on one link is not worth it.
+  const hedgeMs = () => { const m = q(K('ttd').mt.concat(K('ttr').mt), 0.5); return Math.max(1200, Math.min(2500, m ? m * 3 : 1200)); };
   // one start = from the tap or the finger lifting until the picture moves
   function arm(el, why) { if (!el) return; const c = cacheGet(el.dataset.id); if (c && c.images) { el._dg = null; return; }     // photo posts have no moving picture to time
     const v = el._vid, m = !!(v && el._vidId === el.dataset.id);
@@ -2531,12 +2533,14 @@ function pickLink(id, r, tried) {
 // other link. The wait is at least 1.2 s and stretches to 4x this network's usual time to the header.
 function armLinkHedge(el) {
   clearTimeout(el._hedgeT); const v = el._vid, id = el.dataset.id; if (!v || v.readyState >= 1) return;
+  // v46: a neighbour that has already been waiting gets its turn sooner (the wait counts from when its link was handed over)
+  const age = v._ld && String(v._ld.id) === id ? performance.now() - v._ld.t0 : 0;
   el._hedgeT = setTimeout(() => {
     if (slotEls['0'] !== el || el._vid !== v || el._vidId !== id || v.readyState >= 1 || navigator.onLine === false || document.hidden) return;
     const r = cacheGet(id); if (!r || r.src !== 'tt') return;
     const t = Object.assign({}, el._tried); t[v._dk] = 1; if (!pickLink(id, r, t)) return;
     el._tried = t; DIAG.loadEnd(v, 'slow'); el._vidId = null; mountSlot(el, true);
-  }, DIAG.hedgeMs());
+  }, Math.max(400, DIAG.hedgeMs() - age));
 }
 // v43: the video on screen is wanted and has its first picture, yet does not move. iPhone cable runs at night (Nov 20,
 // 1:30-2:10 AM PT) showed 22 of 48 swipes landing on a video that had loaded its first picture and then never moved,
@@ -2555,9 +2559,12 @@ function kickVideo(el, v, still) {
   if (v.readyState >= 3 && v.networkState !== 2) { DIAG.note(id, why + ': nudged', null, v._dk || ''); ffNudge(v); return; }
   const r = cacheGet(id); let t = Object.assign({}, el._tried); if (v._dk) t[v._dk] = 1;
   let pk = r ? pickLink(id, r, t) : null; if (!pk && r) { t = {}; pk = pickLink(id, r, t); }       // both tried: the first one afresh
+  // v46: never reload the link it is already on: a fresh start waits for TikTok's first answer all over again (Ian's
+  // session, Nov 21: a tikwm video, which has one link, was reloaded and moved 20 s later instead of catching up)
+  if (!pk || pk.url === v._url) { DIAG.note(id, why + ': no other link, left to catch up', null, v._dk || ''); return; }
   const pos = v.currentTime;
-  DIAG.note(id, why + (pk && pk.kind !== v._dk ? ': trying the other link' : ': reloading the link'), null, v._dk || '');
-  if (!pk) { try { v.load(); } catch (e) {} } else { el._tried = t; v._url = pk.url; v.src = pk.url; DIAG.loadStart(v, id, pk.kind, 'on screen'); try { v.load(); v.playbackRate = 1; } catch (e) {} }
+  DIAG.note(id, why + ': trying the other link', null, v._dk || '');
+  { el._tried = t; v._url = pk.url; v.src = pk.url; DIAG.loadStart(v, id, pk.kind, 'on screen'); try { v.load(); v.playbackRate = 1; } catch (e) {} }
   if (pos > 0.05) { const go = () => { try { v.currentTime = pos; } catch (e) {} }; if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true }); }
   playWithSound(el, v); DIAG.watch(el, v);
 }
