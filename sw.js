@@ -6,7 +6,7 @@
 // TikTok's video server lets pages read the bytes (Access-Control-Allow-Origin: *) but hides Content-Range, so the total
 // size comes from Content-Length of a request without a range, and Content-Range is written here.
 // Older releases never ask for v?… addresses, so going back to one is harmless while this worker stays installed.
-const VERSION = 'sw-49';
+const VERSION = 'sw-50';
 // v49 (v47 froze ~6 s in on Ian's phone, Nov 21 night: the rest of a video was asked for only when the player ran out of
 // the stored 1 MB, and TikTok then took 3-7 s): when the app says a video is on screen (and which is next), the rest
 // of each (the next 3 MB) is fetched at once into a growing buffer, and the player's requests are answered from it as it
@@ -16,7 +16,7 @@ const meta = new Map();                                           // id -> { tot
 const mem = new Map();                                            // id -> Uint8Array, the most recent few, for speed
 let queue = [], busy = 0;
 const TAIL = 3 * 1048576, tails = new Map();                     // id -> { start, end, buf, got, done, err, wait: [] } (at most 3)
-const LANES = 2;
+const LANES = 5;                                                  // v50: 5 at once (v49: 2 could not keep up with quick flicking at night; the phone loads several at once barely slower, Nov 21)
 const keyOf = (id) => new Request(self.registration.scope + '__start/' + encodeURIComponent(id));
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
