@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SW trial</title><style>body{font:14px system-ui;background:#111;color:#eee}#box{position:absolute;left:-300vw;top:0;width:100px;height:100px;overflow:hidden}</style>
+<p>Trial page (Nov 21): video from a stored start via a service worker. Muted; not part of the app.</p><div id="box"></div>
+<script>
+'use strict';
+window.__ready = navigator.serviceWorker.register('swtest-sw.js', { scope: './' }).then(() => navigator.serviceWorker.ready).then(() => new Promise(res => { if (navigator.serviceWorker.controller) res(1); else navigator.serviceWorker.addEventListener('controllerchange', () => res(1), { once: true }); }));
+const ask = (msg) => new Promise(res => { const c = new MessageChannel(); c.port1.onmessage = (e) => res(e.data); navigator.serviceWorker.controller.postMessage(msg, [c.port2]); });
+window.__head = (u) => ask({ op: 'head', u, n: 1048576 });
+window.__swlog = () => ask({ op: 'log' });
+// play a video from the worker's address; follow it for `secs` seconds: first picture, then whether it keeps moving past the stored start
+window.__play = (u, secs) => new Promise(res => { const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; document.getElementById('box').appendChild(v);
+  const o = { waits: 0 }, t0 = performance.now();
+  v.addEventListener('loadedmetadata', () => { o.meta = Math.round(performance.now() - t0); o.dur = +v.duration.toFixed(1); });
+  v.addEventListener('loadeddata', () => { o.pic = Math.round(performance.now() - t0); });
+  v.addEventListener('waiting', () => { o.waits++; (o.waitAt = o.waitAt || []).push(+v.currentTime.toFixed(1)); });
+  v.addEventListener('error', () => { o.err = v.error && v.error.code; });
+  const ticks = []; const iv = setInterval(() => ticks.push(+v.currentTime.toFixed(1)), 1000);
+  setTimeout(() => { clearInterval(iv); o.ticks = ticks; o.muted = v.muted; try { v.pause(); v.removeAttribute('src'); v.load(); v.remove(); } catch (e) {} res(o); }, secs * 1000);
+  v.src = './v?u=' + encodeURIComponent(u); v.load(); const q = v.play(); if (q) q.catch(e => { o.playErr = e.name; }); });
+</script>
