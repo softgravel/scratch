@@ -6,12 +6,12 @@
 // TikTok's video server lets pages read the bytes (Access-Control-Allow-Origin: *) but hides Content-Range, so the total
 // size comes from Content-Length of a request without a range, and Content-Range is written here.
 // Older releases never ask for v?… addresses, so going back to one is harmless while this worker stays installed.
-const VERSION = 'sw-51';
+const VERSION = 'sw-52';
 // v49 (v47 froze ~6 s in on Ian's phone, Nov 21 night: the rest of a video was asked for only when the player ran out of
 // the stored 1 MB, and TikTok then took 3-7 s): when the app says a video is on screen (and which is next), the rest
 // of each (the next 3 MB) is fetched at once into a growing buffer, and the player's requests are answered from it as it
 // arrives. Nothing stored for a video: fetched from TikTok here too (v47 answered with a redirect).
-const CACHE = 'starts-v1', HEAD = 1048576, KEEP = 60;          // at most 60 starts (~60 MB), oldest out first
+const CACHE = 'starts-v1', HEAD = 1048576, KEEP = 150;         // at most 150 starts (~150 MB; v52, was 60), oldest out first
 const meta = new Map();                                           // id -> { total, final } (also kept in the cached response's headers)
 const mem = new Map();                                            // id -> Uint8Array, the most recent few, for speed
 let queue = [], busy = 0;
@@ -43,7 +43,7 @@ async function fetchStart(id, u) {
   const c = await caches.open(CACHE);
   await c.put(keyOf(id), new Response(buf, { headers: { 'content-type': 'video/mp4', 'x-total': String(m.total), 'x-final': m.final, 'x-at': String(Date.now()) } }));
   meta.set(id, m); remember(id, buf);
-  const keys = await c.keys(); for (let i = 0; i < keys.length - KEEP; i++) { await c.delete(keys[i]); const k = decodeURIComponent(keys[i].url.split('/__start/')[1] || ''); meta.delete(k); mem.delete(k); }
+  const keys = await c.keys(); for (let i = 0; i < keys.length - KEEP; i++) { await c.delete(keys[i]); const k = decodeURIComponent(keys[i].url.split('/__start/')[1] || ''); meta.delete(k); mem.delete(k); tell({ op: 'dropped', id: k }); }   // v52: the app is told
   return { ms: Date.now() - t0, bytes: buf.byteLength, total: m.total };
 }
 async function tell(msg) { for (const c of await self.clients.matchAll({ includeUncontrolled: true })) c.postMessage(msg); }

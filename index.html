@@ -441,7 +441,7 @@
   ['loadstart', 'play', 'playing', 'volumechange'].forEach(t => document.addEventListener(t, (e) => { if (e.target instanceof HTMLMediaElement) hush(e.target); }, true));
   window.__audible = () => [...document.querySelectorAll('video, audio')].filter(v => !MD.get.call(v) && VD.get.call(v) > 0 && !v.paused).length;
 })();
-var APP_VERSION = 51, APP_BUILT = 'Nov 21 9:38 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 52, APP_BUILT = 'Nov 21 9:44 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -2529,6 +2529,7 @@ const STARTS = (() => {
   if (sw && !window.__noSW && (!window.__officialBase || window.__swTest)) {
     sw.addEventListener('message', (e) => { const d = e.data || {};
       if (d.op === 'list') { have.clear(); (d.ids || []).forEach(id => have.add(String(id))); on = true; }
+      else if (d.op === 'dropped') have.delete(String(d.id));             // v52: the oldest start was removed (cap)
       else if (d.op === 'stored') have.add(String(d.id));                 // not logged: up to 10 per swipe would crowd out the rest
       else if (d.op === 'failed') DIAG.note(d.id, 'storing its start failed: ' + d.err, null, 'st'); });
     const ask = () => { if (sw.controller) sw.controller.postMessage({ op: 'list' }); };
