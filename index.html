@@ -441,7 +441,7 @@
   ['loadstart', 'play', 'playing', 'volumechange'].forEach(t => document.addEventListener(t, (e) => { if (e.target instanceof HTMLMediaElement) hush(e.target); }, true));
   window.__audible = () => [...document.querySelectorAll('video, audio')].filter(v => !MD.get.call(v) && VD.get.call(v) > 0 && !v.paused).length;
 })();
-var APP_VERSION = 48, APP_BUILT = 'Nov 21 9:25 PM';   // stamped by _dev/tools/release.py
+var APP_VERSION = 49, APP_BUILT = 'Nov 21 9:30 PM';   // stamped by _dev/tools/release.py
 
 /* ============================================================
    DATA
@@ -1803,6 +1803,7 @@ function startIncoming(dir) {
   if (!inc) return;
   inc._wantPlay = true; delete inc.dataset.userPaused;
   DIAG.arm(inc, 'swipe');
+  { const nx = feedList[curIndex + 2 * dir]; STARTS.focus([inc.dataset.id, nx && nx.id]); }      // v49
   blessPool();
   if (inc._vid && inc._vidId === inc.dataset.id) playWithSound(inc, inc._vid, true);
   else if (!inc.classList.contains('unavailable-slide') && cacheGet(inc.dataset.id)) { inc._gestureSound = true; mountSlot(inc, false); }   // v36: a cold video gets its link at the lift, not after the slide
@@ -2445,7 +2446,7 @@ function onFrame(v, cb) {
   if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) { try { v.requestVideoFrameCallback(() => cb()); return; } catch (e) {} }
   v.addEventListener('timeupdate', () => cb(), { once: true });
 }
-const KIND_NAME = { ttd: 'TikTok direct link', ttr: 'TikTok redirect link', tw: 'tikwm', off: 'TikTok player' };
+const KIND_NAME = { st: 'Stored start (v47)', ttd: 'TikTok direct link', ttr: 'TikTok redirect link', tw: 'tikwm', off: 'TikTok player' };
 const DIAG = (() => {
   const KEY = 'gallery-diag'; let d = null, dirty = false;
   const blank = () => ({ v: 1, since: Date.now(), k: {}, open: { n: 0, ms: [] }, sw: { n: 0, ready: 0, left: 0, ms: [] }, touch: { n: 0, fail: 0, ms: [] }, stall: 0, log: [] });
@@ -2513,9 +2514,47 @@ const DIAG = (() => {
 })();
 // Which of a video's links to hand to the player. `tried` = kinds already tried on this slide.
 let _pickN = 0;
+// v47: stored starts (sw.js). Ian, Nov 21: 'a via media between permanent storage and asking TikTok for each video every
+// time'. iPhone measurements, Nov 21: a video whose first 1 MB is already on the phone shows its first picture in ~83 ms
+// (from TikTok: 0.8-2.6 s). The service worker keeps the first 1 MB of the videos expected next (up to 60, oldest out)
+// and plays them from there; the rest of each video still comes from TikTok. Only TikTok's redirect links can be read
+// by a page, so only those are used. Look-ahead: 'few' (default; the next 3: Safari cannot tell Wi-Fi from cellular, so
+// it is one setting for both) or 'full' (the next 10 and a resting grid's tiles); Library & backup. Its own key.
+// Not registered under the Mac tests unless a test asks for it (window.__swTest), so the older tests keep testing v46.
+const STARTS = (() => {
+  const have = new Set(); let on = false;
+  let mode = 'few'; try { mode = localStorage.getItem('lookahead') === 'full' ? 'full' : 'few'; } catch (e) {}
+  const sw = navigator.serviceWorker;
+  const ok = () => on && !!sw && !!sw.controller;
+  if (sw && !window.__noSW && (!window.__officialBase || window.__swTest)) {
+    sw.addEventListener('message', (e) => { const d = e.data || {};
+      if (d.op === 'list') { have.clear(); (d.ids || []).forEach(id => have.add(String(id))); on = true; }
+      else if (d.op === 'stored') have.add(String(d.id));                 // not logged: up to 10 per swipe would crowd out the rest
+      else if (d.op === 'failed') DIAG.note(d.id, 'storing its start failed: ' + d.err, null, 'st'); });
+    const ask = () => { if (sw.controller) sw.controller.postMessage({ op: 'list' }); };
+    sw.register('sw.js', { scope: './', updateViaCache: 'none' }).then(() => sw.ready).then(() => {
+      if (sw.controller) ask(); else sw.addEventListener('controllerchange', ask, { once: true });
+    }).catch(() => {});
+  }
+  const redirOf = (r) => r && r.src === 'tt' && !r.images ? (r.viaRedir ? r.play : r.redir) || '' : '';
+  function url(id) { id = String(id); if (!ok() || !have.has(id)) return null; const u = redirOf(cacheGet(id)); if (!u) return null;
+    const a = 'v?id=' + encodeURIComponent(id) + '&u=' + encodeURIComponent(u); return _deadLink.has(a) ? null : a; }
+  function prepare(ids) { if (!ok()) return; const items = [];
+    ids.forEach(id => { id = String(id); if (have.has(id) || isGone(id) || items.some(x => x.id === id)) return; const u = redirOf(cacheGet(id)); if (u) items.push({ id, u }); });
+    sw.controller.postMessage({ op: 'prepare', items }); }
+  // v49: the video now on screen and the next one: the worker fetches the rest of each at once (v47 waited until the
+  // player ran out of the stored 1 MB, and TikTok then took 3-7 s on Ian's phone: frozen ~6 s in)
+  function focus(ids) { if (!ok()) return; const items = [];
+    ids.forEach(id => { if (!id) return; id = String(id); if (!have.has(id)) return; const u = redirOf(cacheGet(id)); if (u) items.push({ id, u }); });
+    if (items.length) sw.controller.postMessage({ op: 'focus', items }); }
+  return { url, prepare, focus, ok, has: (id) => have.has(String(id)), count: () => have.size, mode: () => mode,
+    depth: () => mode === 'full' ? 10 : 3, grid: () => mode === 'full' ? 12 : 4,
+    setMode(m) { mode = m === 'full' ? 'full' : 'few'; try { localStorage.setItem('lookahead', mode); } catch (e) {} } };
+})();
 function pickLink(id, r, tried) {
   if (!r || !r.play) return null;
   if (r.src !== 'tt') return { url: r.play, kind: 'tw' };
+  if (!(tried && tried.st)) { const su = STARTS.url(id); if (su) return { url: su, kind: 'st' }; }     // v47
   const c = [];
   if (!r.viaRedir && r.play !== r.redir) c.push({ url: r.play, kind: 'ttd' });
   const rd = r.viaRedir ? r.play : r.redir; if (rd) c.push({ url: rd, kind: 'ttr' });
@@ -2586,7 +2625,7 @@ const TOUCH = (() => {
     while (q.length && busy < lanes) {
       if (navigator.onLine === false || document.hidden) { q = []; return; }
       const now = Date.now(); hour = hour.filter(t => t > now - 3600e3); if (hour.length >= 400) { q = []; return; }
-      const id = q.shift(), r = cacheGet(id), pk = (r && r.src === 'tt' && !r.images && !fresh(id) && !control(id)) ? pickLink(id, r) : null;
+      const id = q.shift(), r = cacheGet(id), pk = (r && r.src === 'tt' && !r.images && !fresh(id) && !control(id) && !STARTS.has(id)) ? pickLink(id, r) : null;
       if (!pk) continue;
       at.set(id, now); hour.push(now); busy++;
       const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null, t0 = performance.now(), to = setTimeout(() => { try { ac && ac.abort(); } catch (e) {} }, 6000); let ok = true;
@@ -2609,7 +2648,7 @@ function gridTouchSoon() {
     if (document.getElementById('feed').classList.contains('open') || !document.getElementById('gridView').classList.contains('open')) return;
     const H = window.innerHeight, ids = [];
     document.querySelectorAll('#gridScroll .thumb-tile[data-id]').forEach(t => { const b = t.getBoundingClientRect(); if (b.bottom > 0 && b.top < H) ids.push(t.dataset.id); });
-    TOUCH.grid(ids);
+    TOUCH.grid(ids); STARTS.prepare(ids.slice(0, STARTS.grid()));
   }, 500);
 }
 // Home at rest: warm the videos Shuffle will show first (its session is already drawn), so the first one answers at once.
@@ -2618,7 +2657,7 @@ function homeTouchSoon() {
   clearTimeout(_homeTouchT);
   _homeTouchT = setTimeout(() => {
     if (document.getElementById('feed').classList.contains('open') || document.getElementById('gridView').classList.contains('open')) return;
-    try { const sess = SH[SH.mode]; if (sess && sess.served && sess.served.length) TOUCH.grid(sess.served.slice(sess.pos, sess.pos + 3).map(String)); } catch (e) {}
+    try { const sess = SH[SH.mode]; if (sess && sess.served && sess.served.length) { const n = sess.served.slice(sess.pos, sess.pos + 3).map(String); TOUCH.grid(n); STARTS.prepare(n); } } catch (e) {}
   }, 900);
 }
 // One more player, kept loaded two videos ahead in the direction of travel and handed to that video's slide
@@ -2652,7 +2691,10 @@ function loadWarm(w, id, role) {
   onFrame(v, settle); setTimeout(settle, 2500);
 }
 function warmOf(id) { return WARMS.find(w => w.v && w.id === String(id)) || null; }
-function touchAhead() { const ahead = []; for (let d = 2; d <= 8; d++) { const it = feedList[curIndex + d * _travel]; if (it && !warmOf(it.id)) ahead.push(String(it.id)); } TOUCH.feed(ahead); }
+function startsAhead() { if (!STARTS.ok()) return; const ids = [], n = STARTS.depth();      // v47: the next ones in the direction of travel, then the one behind
+  for (let d = 1; d <= n; d++) { const it = feedList[curIndex + d * _travel]; if (it) ids.push(String(it.id)); }
+  const back = feedList[curIndex - _travel]; if (back) ids.push(String(back.id)); STARTS.prepare(ids); }
+function touchAhead() { startsAhead(); const ahead = []; for (let d = 2; d <= 8; d++) { const it = feedList[curIndex + d * _travel]; if (it && !warmOf(it.id)) ahead.push(String(it.id)); } TOUCH.feed(ahead); }
 // v34: real TikTok is swiped in bursts (Ian's screen recording, Nov 17: 37 swipes in 24 s, often 0.3 s apart) and
 // still shows a moving picture after most of them. Until v33 the next videos were prepared only once the feed had
 // rested 250 ms, which never happens inside a burst (measured at that pace on the real network: 22 of 26 videos
@@ -3029,6 +3071,7 @@ function pauseSlide(el){ if(el && el._vid){ el._vid.pause(); if(el._state===1) e
 // isn't wasted on videos already scrolled past.
 function syncSlots(){
   const cur = slotEls['0'];
+  if (cur) { const nx = feedList[curIndex + _travel]; STARTS.focus([cur.dataset.id, nx && nx.id]); }      // v49 (also after opening)
   if(cur) mountSlot(cur, true);
   // v32: the video on screen has the connection and the decoder to itself until its first picture (0.9 s at
   // most); then the neighbour in the direction of travel, the other one, and the video two ahead.
@@ -3537,6 +3580,8 @@ document.getElementById('libBtn').onclick = () => {
     { label: 'Paste links', onClick: () => inputModal({ title: 'Paste links', placeholder: 'One or many TikTok links', confirmLabel: 'Import', onSubmit: (v) => { setTimeout(() => importList(v), 60); } }) },
     { label: 'Save a backup of my categories', onClick: exportBackup },
     { label: 'Restore categories from a backup', onClick: () => pickFile(importBackup) },
+    { label: 'Look ahead: ' + (STARTS.mode() === 'full' ? '10 videos (more data)' : 'next few videos (saves data)') + (STARTS.ok() ? ' · ' + STARTS.count() + ' ready' : ''),
+      onClick: () => { STARTS.setMode(STARTS.mode() === 'full' ? 'few' : 'full'); toast(STARTS.mode() === 'full' ? 'Looking 10 videos ahead (more data)' : 'Looking a few videos ahead (saves data)'); } },   // v47
     { label: 'Keep playing when the app is closed: ' + (bgPlay ? 'on' : 'off'), onClick: () => { setBgPlay(!bgPlay); toast(bgPlay ? 'Videos keep playing when the app is closed' : 'Videos stop when the app is closed'); } },   // v44
     { label: 'App status', onClick: appStatus },
     { label: 'Share diagnostics (a small text file)', onClick: () => DIAG.share() }
